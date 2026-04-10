@@ -60,8 +60,8 @@ from config import (
     DOWNSAMPLE_X,
     DOWNSAMPLE_Y,
 )
-from utils.mat_io import load_mat, save_mat, load_cellmask_h5, save_cellmask_h5
-from utils.image_io import imread_tiff, imwrite_tiff
+from utilities.mat_io import load_mat, save_mat, load_cellmask_h5, save_cellmask_h5
+from utilities.image_io import imread_tiff, imwrite_tiff
 
 
 def imresize_nearest(image: np.ndarray, output_shape: tuple) -> np.ndarray:

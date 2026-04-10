@@ -38,9 +38,9 @@ from config import (
     QC_MIN_GENES,
     get_threshold_folder,
 )
-from utils.mat_io import load_filt_neurons, load_mat, save_mat, get_expression_column
-from utils.graph_utils import parse_fov_grid_positions
-from utils.visualization import visualize_subslice
+from utilities.mat_io import load_filt_neurons, load_mat, save_mat, get_expression_column
+from utilities.graph_utils import parse_fov_grid_positions
+from utilities.visualization import visualize_subslice
 
 
 def display_subslice(subslice: dict):
@@ -212,7 +212,7 @@ def view_overlay_image(slice_id: int, overlay_dir: Path):
     print(f"\n  Opening overlay image: {overlay_file}")
 
     try:
-        from utils.image_io import imread_tiff
+        from utilities.image_io import imread_tiff
         overlay_img = imread_tiff(overlay_file)
 
         plt.figure(figsize=(12, 9))

@@ -43,15 +43,15 @@ from config import (
     QC_MIN_READS,
     QC_MIN_GENES,
 )
-from utils.mat_io import load_filt_neurons, save_mat, sparse_to_dense, get_expression_column
-from utils.graph_utils import (
+from utilities.mat_io import load_filt_neurons, save_mat, sparse_to_dense, get_expression_column
+from utilities.graph_utils import (
     parse_fov_grid_positions,
     build_adjacency_8connected,
     find_connected_components,
     add_bridge_fovs,
     get_largest_component,
 )
-from utils.visualization import visualize_subslice
+from utilities.visualization import visualize_subslice
 
 
 def identify_mscarlet_subslices(test_mode: bool = False, target_slice: int = None):

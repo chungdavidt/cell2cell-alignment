@@ -37,8 +37,8 @@ import pandas as pd
 
 from scipy.ndimage import map_coordinates
 
-from utils.mat_io import load_mat, save_mat
-from utils.image_io import imwrite_tiff
+from utilities.mat_io import load_mat, save_mat
+from utilities.image_io import imwrite_tiff
 
 try:
     from skimage.transform import resize

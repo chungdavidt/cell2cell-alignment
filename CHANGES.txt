@@ -1,0 +1,92 @@
+cell2cell-alignment — Changes needed to make standalone Python repo runnable
+=============================================================================
+Generated: 2026-04-09
+
+INPUT ASSUMPTION: filt_neurons.mat + hyb/ directory are external inputs
+(produced upstream by BARseq processing, not by this pipeline).
+
+
+1. IMPORT PATH CHANGES (utils.* → utilities.*)
+-----------------------------------------------
+The utilities directory was renamed from utils/ to utilities/, but 8
+preprocessing scripts still import from the old name.
+
+  1a. preprocessing/identify_mscarlet_subslices.py (lines 47-54)
+      - from utils.mat_io import ...
+      - from utils.graph_utils import ...
+      - from utils.visualization import ...
+
+  1b. preprocessing/stitch_subslices.py (lines 49-52)
+      - from utils.mat_io import ...
+      - from utils.image_io import ...
+      - from utils.regression import ...
+
+  1c. preprocessing/downsample_subslices_cellmask_anisotropic.py (lines 63-64)
+      - from utils.mat_io import ...
+      - from utils.image_io import ...
+
+  1d. preprocessing/generate_mscarlet_cellmask_subslice_anisotropic.py (lines 58-60)
+      - from utils.mat_io import ...
+      - from utils.image_io import ...
+      - from utils.visualization import ...
+
+  1e. preprocessing/interactive_mscarlet_threshold_cellmask_subslice_anisotropic.py (lines 50-51)
+      - from utils.mat_io import ...
+      - from utils.visualization import ...
+
+  1f. preprocessing/generate_mscarlet_overlay_labelled.py (lines 56-57)
+      - from utils.mat_io import ...
+      - from utils.regression import ...
+
+  1g. preprocessing/edit_subslice_definitions.py (lines 41-43)
+      - from utils.mat_io import ...
+      - from utils.graph_utils import ...
+      - from utils.visualization import ...
+
+  1h. preprocessing/refine_subslices_by_threshold.py (line 48)
+      - from utils.mat_io import ...
+
+
+2. CONFIG NAME BUG
+------------------
+  preprocessing/refine_subslices_by_threshold.py (line 47)
+    Imports MSCARLET_COL_IDX from config.
+    config.py defines MSCARLET_COLUMN_INDEX (different name).
+    Script will fail at import.
+
+
+3. MISSING FILE
+---------------
+  utilities/graph_viz_fix.py
+    Referenced by castalign_testground.ipynb:
+      from utilities.graph_viz_fix import patch_castalign_visualise
+    Exists in rotation project at:
+      dtc-li-lab-rotation-project/scripts/linestuffup_dtc/utilities/graph_viz_fix.py
+    Not copied to cell2cell-alignment.
+    Purpose: monkey-patches Graph.visualise() to render SVG instead of PDF
+    (workaround for GraphViz Pango DLL bug).
+
+
+4. HARDCODED PATHS
+------------------
+  4a. alignment/subslice_graph_builder.py (line 28)
+      CASTALIGN_ROOT = Path("/home/dtc/lab/programs/castalign")
+      Not platform-aware. The notebook (castalign_testground.ipynb) detects
+      Mac vs Linux and sets the path accordingly, but this script does not.
+
+  4b. preprocessing/run_pipeline.py (line 155)
+      venv_python = Path('/home/dtc/lab/venvs/preprocessing/bin/python')
+      Hardcoded Linux venv path.
+
+  4c. preprocessing/config.py (lines 18-22)
+      DATA_ROOT and OUTPUT_ROOT hardcoded to Linux server paths.
+      This is expected (user must configure per environment), just noting it.
+
+
+5. WORKING DIRECTORY / IMPORT RESOLUTION
+-----------------------------------------
+  preprocessing/ scripts use: from config import ...
+  This only resolves when the working directory IS preprocessing/.
+  run_pipeline.py handles this by setting cwd=script_dir when calling
+  subprocess, but direct invocation from the repo root will fail.
+  No setup.py or sys.path manipulation exists to handle this.

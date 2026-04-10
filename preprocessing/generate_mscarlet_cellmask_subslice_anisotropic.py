@@ -55,9 +55,9 @@ from config import (
     MSCARLET_BOOST,
     get_threshold_folder,
 )
-from utils.mat_io import load_filt_neurons, load_mat, load_cellmask_h5, get_expression_column
-from utils.image_io import imwrite_tiff
-from utils.visualization import create_comparison_figure
+from utilities.mat_io import load_filt_neurons, load_mat, load_cellmask_h5, get_expression_column
+from utilities.image_io import imwrite_tiff
+from utilities.visualization import create_comparison_figure
 
 
 def generate_mscarlet_cellmask_subslice_anisotropic(

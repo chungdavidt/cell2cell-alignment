@@ -46,9 +46,9 @@ from config import (
     HYB_STITCHED_DIR,
     FOV_SIZE,
 )
-from utils.mat_io import load_filt_neurons, load_mat, save_mat, save_cellmask_h5
-from utils.image_io import load_fov_images, imwrite_tiff, get_file_size_mb
-from utils.regression import calculate_fov_offset
+from utilities.mat_io import load_filt_neurons, load_mat, save_mat, save_cellmask_h5
+from utilities.image_io import load_fov_images, imwrite_tiff, get_file_size_mb
+from utilities.regression import calculate_fov_offset
 
 
 def stitch_fov_channels(

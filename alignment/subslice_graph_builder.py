@@ -22,10 +22,15 @@ Date: 2024-12-15
 """
 
 import sys
+import platform
 from pathlib import Path
 
-# Add castalign to path
-CASTALIGN_ROOT = Path("/home/dtc/lab/programs/castalign")
+# Add castalign to path (platform-aware)
+if platform.system() == "Darwin":
+    CASTALIGN_ROOT = Path("/Users/dtc32/Library/CloudStorage/OneDrive-DukeUniversity/Documents/Medical School/PhD/GS 1/Li Lab/programs/castalign")
+else:
+    CASTALIGN_ROOT = Path("/home/dtc/lab/programs/castalign")
+
 if str(CASTALIGN_ROOT) not in sys.path:
     sys.path.insert(0, str(CASTALIGN_ROOT))
 

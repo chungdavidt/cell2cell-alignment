@@ -47,8 +47,8 @@ from config import (
     INVIVO_XY_UM_PER_PX,
     INVIVO_Z_UM_PER_PX,
 )
-from utils.mat_io import load_filt_neurons, load_mat, load_cellmask_h5, get_expression_column
-from utils.visualization import create_histogram
+from utilities.mat_io import load_filt_neurons, load_mat, load_cellmask_h5, get_expression_column
+from utilities.visualization import create_histogram
 
 # Module-level cache for data persistence across function calls
 _CACHE = {

@@ -53,8 +53,8 @@ from config import (
     LABEL_TEXT_COLOR,
     get_threshold_folder,
 )
-from utils.mat_io import load_filt_neurons, load_mat, get_expression_column
-from utils.regression import calculate_fov_offset
+from utilities.mat_io import load_filt_neurons, load_mat, get_expression_column
+from utilities.regression import calculate_fov_offset
 
 
 def imresize_nearest(image: np.ndarray, output_shape: tuple) -> np.ndarray:
