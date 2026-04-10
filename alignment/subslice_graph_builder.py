@@ -22,30 +22,37 @@ Date: 2024-12-15
 """
 
 import sys
-import platform
 from pathlib import Path
+from typing import Optional, Union, List
 
-# Add castalign to path (platform-aware)
-if platform.system() == "Darwin":
-    CASTALIGN_ROOT = Path("/Users/dtc32/Library/CloudStorage/OneDrive-DukeUniversity/Documents/Medical School/PhD/GS 1/Li Lab/programs/castalign")
-else:
-    CASTALIGN_ROOT = Path("/home/dtc/lab/programs/castalign")
+# Add project root to path for local_config import
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
-if str(CASTALIGN_ROOT) not in sys.path:
-    sys.path.insert(0, str(CASTALIGN_ROOT))
+try:
+    from local_config import CASTALIGN_ROOT, OUTPUT_ROOT
+except ImportError:
+    raise ImportError(
+        "local_config.py not found.\n"
+        "Copy local_config.example.py to local_config.py and fill in your paths:\n"
+        "    cp local_config.example.py local_config.py"
+    )
+
+# Add castalign to path
+if CASTALIGN_ROOT not in sys.path:
+    sys.path.insert(0, CASTALIGN_ROOT)
 
 import castalign as ca
 import numpy as np
 import imageio.v2 as imageio
-from pathlib import Path
-from typing import Optional, Union, List
 
 
 # ============================================
 # Configuration
 # ============================================
 
-OUTPUT_ROOT = Path("/home/dtc/lab/output")
+OUTPUT_ROOT = Path(OUTPUT_ROOT)
 INVIVO_PATH = OUTPUT_ROOT / "in_vivo_flip_corrected" / "JH302_1x_ch2_flipped.tiff"
 
 # Anisotropic subslices directory (Python-generated cellmask overlays)

@@ -27,10 +27,12 @@ from pathlib import Path
 import tifffile
 import time
 
-# Default paths (Linux)
-DEFAULT_RAW_DATA_ROOT = Path("/home/dtc/lab/raw_data/Data_ALM_cell_type_transcriptom/Batch3_JH302")
+# Default paths (from local_config via config.py)
+from config import DATA_ROOT, OUTPUT_ROOT
+
+DEFAULT_RAW_DATA_ROOT = Path(DATA_ROOT)
 DEFAULT_INVIVO_DIR = DEFAULT_RAW_DATA_ROOT / "in_vivo_stack"
-DEFAULT_OUTPUT_ROOT = Path("/home/dtc/lab/output")
+DEFAULT_OUTPUT_ROOT = Path(OUTPUT_ROOT)
 
 
 def flip_invivo_stack(

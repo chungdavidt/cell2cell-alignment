@@ -6,20 +6,26 @@ All other paths are derived from these.
 """
 
 import os
+import sys
 from pathlib import Path
 
 # =============================================================================
-# USER CONFIGURATION - Update these paths for your environment
+# USER CONFIGURATION - loaded from local_config.py at project root
 # =============================================================================
 
-# Data paths (user must configure)
-# Windows example: "C:/Users/Li Lab/Documents/Data_ALM_cell_type_transcriptom/Batch3_JH302"
-# Mac/Linux example: "/Volumes/home/lab/Data_ALM_cell_type_transcriptom/Batch3_JH302"
-DATA_ROOT = "/home/dtc/lab/raw_data/Data_ALM_cell_type_transcriptom/Batch3_JH302"
+# Add project root to path for local_config import
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
-# Output directory
-# Windows example: "C:/Users/Li Lab/Documents/Rotation_Project/output"
-OUTPUT_ROOT = "/home/dtc/lab/output"
+try:
+    from local_config import DATA_ROOT, OUTPUT_ROOT
+except ImportError:
+    raise ImportError(
+        "local_config.py not found.\n"
+        "Copy local_config.example.py to local_config.py and fill in your paths:\n"
+        "    cp local_config.example.py local_config.py"
+    )
 
 # =============================================================================
 # DERIVED PATHS - Automatically computed from DATA_ROOT and OUTPUT_ROOT

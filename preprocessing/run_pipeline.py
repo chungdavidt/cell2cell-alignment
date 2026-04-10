@@ -151,12 +151,7 @@ Examples:
     if args.python:
         python_exe = args.python
     else:
-        # Try to use the venv python
-        venv_python = Path('/home/dtc/lab/venvs/preprocessing/bin/python')
-        if venv_python.exists():
-            python_exe = str(venv_python)
-        else:
-            python_exe = sys.executable
+        python_exe = sys.executable
 
     # Build extra arguments for scripts
     extra_args = []
@@ -228,13 +223,17 @@ Examples:
         print(f"Status: FAILED at step {failed_step}")
         sys.exit(1)
     else:
+        from config import (
+            OUTPUT_ROOT, SUBSLICE_DEFINITIONS_DIR, HYB_STITCHED_DIR,
+            HYB_DOWNSAMPLED_DIR, MSCARLET_CELLMASK_DIR, MSCARLET_INTERACTIVE_DIR,
+        )
         print("Status: COMPLETED successfully")
         print(f"\nOutput locations:")
-        print(f"  Subslice definitions: /home/dtc/lab/output/subslice_definitions/")
-        print(f"  Stitched images: /home/dtc/lab/output/HYB_subslice_stitched_tif/")
-        print(f"  Downsampled: /home/dtc/lab/output/HYB_subslice_stitched_tif_downsampled_micronwise_anisotropic/")
-        print(f"  Overlays: /home/dtc/lab/output/mScarlet_cellmask_subslice/")
-        print(f"  Figures: /home/dtc/lab/output/mScarlet_cellmask_interactive_subslice_anisotropic/")
+        print(f"  Subslice definitions: {SUBSLICE_DEFINITIONS_DIR}")
+        print(f"  Stitched images: {HYB_STITCHED_DIR}")
+        print(f"  Downsampled: {HYB_DOWNSAMPLED_DIR}")
+        print(f"  Overlays: {MSCARLET_CELLMASK_DIR}")
+        print(f"  Figures: {MSCARLET_INTERACTIVE_DIR}")
 
 
 if __name__ == '__main__':
