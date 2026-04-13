@@ -71,10 +71,17 @@ You need **at least one** set, or the builder raises a `ValueError` ("nothing to
 ### What each variable holds
 
 **`CASTALIGN_ROOT`**
-Path to the folder that *contains* the `castalign/` package folder — not the package itself. Whatever you point this at must have `castalign/castalign/base.py` inside it. Point it at wherever you cloned the castalign repo on your machine.
+Path to the folder that *contains* the `castalign/` package folder. Not the package itself.
+```python
+CASTALIGN_ROOT = "/Users/yourname/code/castalign"
+# where castalign/castalign/base.py exists
+```
 
 **`GRAPH_PATH`**
-Full file path to the alignment graph. Used by both the graph builder (writes here) and the notebook (reads from here). Ends in `.db`. Put it somewhere with enough disk space — graphs with full BARseq subslices can run hundreds of MB.
+Where the alignment graph file lives. Used by both the graph builder (writes here) and the notebook (reads from here). Typically ends in `.db`. Put it somewhere with enough disk space — graphs with full BARseq subslices can run hundreds of MB.
+```python
+GRAPH_PATH = "/Users/yourname/data/linestuffup_output/my_experiment.db"
+```
 
 **`INVIVO_PATH`**
 A single multi-page TIFF of the in vivo 2P volume.
