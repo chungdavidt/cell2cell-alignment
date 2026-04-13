@@ -5,3 +5,4 @@ __pycache__/
 .ipynb_checkpoints/
 local_config.py
 .castalign-venv/
+.vscode/
