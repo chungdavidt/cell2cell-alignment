@@ -71,17 +71,10 @@ You need **at least one** set, or the builder raises a `ValueError` ("nothing to
 ### What each variable holds
 
 **`CASTALIGN_ROOT`**
-Path to the folder that *contains* the `castalign/` package folder. Not the package itself.
-```python
-CASTALIGN_ROOT = "/Users/yourname/code/castalign"
-# where castalign/castalign/base.py exists
-```
+Path to the folder that *contains* the `castalign/` package folder — not the package itself. Whatever you point this at must have `castalign/castalign/base.py` inside it. Point it at wherever you cloned the castalign repo on your machine.
 
 **`GRAPH_PATH`**
-Where the alignment graph file lives. Used by both the graph builder (writes here) and the notebook (reads from here). Typically ends in `.db`. Put it somewhere with enough disk space — graphs with full BARseq subslices can run hundreds of MB.
-```python
-GRAPH_PATH = "/Users/yourname/data/linestuffup_output/my_experiment.db"
-```
+Full file path to the alignment graph. Used by both the graph builder (writes here) and the notebook (reads from here). Ends in `.db`. Put it somewhere with enough disk space — graphs with full BARseq subslices can run hundreds of MB.
 
 **`INVIVO_PATH`**
 A single multi-page TIFF of the in vivo 2P volume.
@@ -91,11 +84,13 @@ A single multi-page TIFF of the in vivo 2P volume.
 **`BLOCK_STACK_PATH`**
 A single multi-page TIFF of the ex vivo tissue block (2P volume imaged before slicing).
 
-**`SUBSLICE_DIR`**
-Only used for BARseq. Directory containing the anisotropic `slice*_subslice_mScarlet_cellmask.tif` overlays that come out of the preprocessing pipeline. Leave blank if you don't have BARseq data.
+**`SUBSLICE_DIR`, `DATA_ROOT`, `OUTPUT_ROOT`** — BARseq preprocessing variables
+All three are used by the BARseq preprocessing stage (Section 4) and the subslice nodes it produces:
+- `DATA_ROOT` — where the raw BARseq data lives
+- `OUTPUT_ROOT` — where preprocessing writes its intermediate outputs
+- `SUBSLICE_DIR` — the specific subfolder under `OUTPUT_ROOT` containing the final anisotropic `slice*_subslice_mScarlet_cellmask.tif` overlays that the graph builder consumes
 
-**`DATA_ROOT` / `OUTPUT_ROOT`**
-Only used by the BARseq preprocessing pipeline under `preprocessing/`. Leave blank if you're not running preprocessing.
+Leave all three blank if you aren't running BARseq preprocessing right now. You can fill them in and re-run the graph builder any time later — it will pick up the subslices then.
 
 ### Microscope resolution
 
@@ -110,11 +105,9 @@ If your microscope isn't in the list, the builder errors with a copy-pasteable t
 
 ---
 
-## 4. Optional — BARseq preprocessing
+## 4. BARseq preprocessing
 
-Only run this if you have BARseq data. It generates the anisotropic subslice overlays that `SUBSLICE_DIR` should point at. If you don't have BARseq data, skip this section entirely and leave `SUBSLICE_DIR`, `DATA_ROOT`, `OUTPUT_ROOT` blank.
-
-Requires raw BARseq data laid out under `DATA_ROOT`.
+Generates the anisotropic subslice overlays that `SUBSLICE_DIR` points at. Requires raw BARseq data laid out under `DATA_ROOT`.
 
 ```bash
 cd preprocessing/
@@ -154,7 +147,7 @@ After aligning, the notebook has sections for verification (Pearson r, napari ov
 
 ---
 
-## 6. Project layout
+## 7. Project layout
 
 ```
 cell2cell-alignment/
@@ -175,7 +168,7 @@ cell2cell-alignment/
 
 ---
 
-## 7. Common issues
+## 8. Common issues
 
 **`ImportError: local_config.py not found`**
 You haven't copied the template yet. Run `cp local_config.example.py local_config.py`.
