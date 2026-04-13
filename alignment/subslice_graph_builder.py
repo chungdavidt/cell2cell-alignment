@@ -438,6 +438,45 @@ def load_graph(path: Union[str, Path], verbose: bool = True) -> ca.Graph:
 # High-Level Pipeline
 # ============================================
 
+def _derive_graph_path(
+    block_path: Optional[Path],
+    invivo_path: Optional[Path],
+) -> Path:
+    """
+    Derive a default GRAPH_PATH when not set in local_config.py.
+
+    Rule: ``<parent_of_data_file>/alignment/<parent_folder_name>_graph.db``
+
+    Prefers BLOCK_STACK_PATH, falls back to INVIVO_PATH. Raises ValueError
+    if neither is set, or if both are set but live in different parent
+    folders (which would make the "one graph per subject" convention
+    ambiguous — in that case, set GRAPH_PATH manually in local_config.py).
+    """
+    if block_path is None and invivo_path is None:
+        raise ValueError(
+            "Cannot auto-derive GRAPH_PATH: neither BLOCK_STACK_PATH nor\n"
+            "INVIVO_PATH is set. If you're running a BARseq-only graph\n"
+            "(SUBSLICE_DIR only), please set GRAPH_PATH manually in\n"
+            "local_config.py."
+        )
+
+    if block_path is not None and invivo_path is not None:
+        if block_path.parent != invivo_path.parent:
+            raise ValueError(
+                "Cannot auto-derive GRAPH_PATH: BLOCK_STACK_PATH and\n"
+                "INVIVO_PATH live in different folders:\n"
+                f"  BLOCK_STACK_PATH parent: {block_path.parent}\n"
+                f"  INVIVO_PATH parent:      {invivo_path.parent}\n"
+                "Please set GRAPH_PATH manually in local_config.py."
+            )
+
+    # Prefer block, fall back to invivo
+    anchor = block_path if block_path is not None else invivo_path
+    parent = anchor.parent
+    subject_name = parent.name
+    return parent / "alignment" / f"{subject_name}_graph.db"
+
+
 def build_subslice_graph(
     force_rebuild: bool = False,
     save_every: int = 10
@@ -466,16 +505,8 @@ def build_subslice_graph(
         Path to saved graph (GRAPH_PATH from config)
     """
     # -------------------------------------------------------------
-    # Resolve + validate config
+    # Resolve + validate data paths
     # -------------------------------------------------------------
-    if not GRAPH_PATH:
-        raise ValueError(
-            "GRAPH_PATH is not set in local_config.py.\n"
-            "Set it to where you want the alignment graph saved, e.g.:\n"
-            "    GRAPH_PATH = '/path/to/output/linestuffup_output/castalign_test.db'"
-        )
-    output_path = Path(GRAPH_PATH)
-
     invivo_path = Path(INVIVO_PATH) if INVIVO_PATH else None
     block_path = Path(BLOCK_STACK_PATH) if BLOCK_STACK_PATH else None
     subslice_dir = Path(SUBSLICE_DIR) if SUBSLICE_DIR else None
@@ -508,12 +539,34 @@ def build_subslice_graph(
             "  SUBSLICE_DIR        (BARseq anisotropic subslices)"
         )
 
+    # -------------------------------------------------------------
+    # Resolve GRAPH_PATH (config value, or auto-derive from data)
+    # -------------------------------------------------------------
+    if GRAPH_PATH:
+        output_path = Path(GRAPH_PATH)
+        graph_path_source = "config"
+    else:
+        output_path = _derive_graph_path(block_path, invivo_path)
+        graph_path_source = "derived"
+
+    # -------------------------------------------------------------
+    # Detect whether the alignment folder already exists, then create
+    # -------------------------------------------------------------
+    alignment_folder_existed = output_path.parent.exists()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
     print("GRAPH BUILDER")
     print("=" * 60)
     print(f"Graph: {output_path}")
+    if graph_path_source == "derived":
+        print(f"       (GRAPH_PATH not set in local_config.py — auto-derived.)")
+        print(f"       (Set GRAPH_PATH manually to pin to a different location.)")
+    if alignment_folder_existed:
+        print(f"Alignment folder: exists")
+    else:
+        print(f"Alignment folder: created (did not exist)")
+    print()
     print(f"Inputs:")
     print(f"  invivo:    {invivo_path if invivo_path else '(not set, skipping)'}")
     print(f"  block:     {block_path if block_path else '(not set, skipping)'}")
@@ -592,7 +645,7 @@ def build_subslice_graph(
     if subslice_dir:
         n_fixed = int(bool(invivo_path)) + int(bool(block_path))
         print(f"  - {len(g.nodes) - n_fixed} ex vivo subslices")
-    print(f"\nReady for alignment in LineStuffUp!")
+    print(f"\nReady for alignment in CASTalign!")
 
     return output_path
 
