@@ -201,6 +201,66 @@ def get_tiff_info(filepath: Union[str, Path]) -> dict:
         }
 
 
+def get_tiff_resolution(filepath: Union[str, Path]) -> dict:
+    """
+    Extract physical resolution from TIFF metadata.
+
+    Reads XResolution/YResolution TIFF tags and ImageJ metadata
+    to determine pixel size in microns.
+
+    Returns:
+        Dictionary with keys:
+            - xy_um_per_px: XY pixel size in microns (None if undetectable)
+            - z_um_per_px: Z spacing in microns (None if not in metadata)
+            - shape: Volume dimensions
+            - dtype: Data type
+    """
+    filepath = Path(filepath)
+    if not filepath.exists():
+        raise FileNotFoundError(f"TIFF file not found: {filepath}")
+
+    if not HAS_TIFFFILE:
+        raise ImportError("tifffile is required for resolution autodetection")
+
+    with tifffile.TiffFile(str(filepath)) as tif:
+        page = tif.pages[0]
+        shape = tif.series[0].shape
+        dtype = tif.series[0].dtype
+        ij_meta = tif.imagej_metadata or {}
+
+        # XY resolution from TIFF tags
+        xy_um_per_px = None
+        x_tag = page.tags.get('XResolution')
+
+        if x_tag is not None:
+            num, denom = x_tag.value
+            if num > 0 and denom > 0:
+                pixels_per_unit = num / denom
+                unit = ij_meta.get('unit', '')
+                res_unit_tag = page.tags.get('ResolutionUnit')
+                res_unit = res_unit_tag.value if res_unit_tag else None
+
+                if unit == 'micron':
+                    # ImageJ stores pixels_per_micron in XResolution when unit='micron'
+                    xy_um_per_px = 1.0 / pixels_per_unit
+                elif res_unit == 3:  # centimeter
+                    xy_um_per_px = 1e4 / pixels_per_unit
+                elif res_unit == 2:  # inch
+                    xy_um_per_px = 25400.0 / pixels_per_unit
+
+        # Z spacing from ImageJ metadata
+        z_um_per_px = None
+        if 'spacing' in ij_meta:
+            z_um_per_px = float(ij_meta['spacing'])
+
+        return {
+            'xy_um_per_px': xy_um_per_px,
+            'z_um_per_px': z_um_per_px,
+            'shape': shape,
+            'dtype': dtype,
+        }
+
+
 def load_fov_images(
     fov_name: str,
     hyb_root: Union[str, Path],

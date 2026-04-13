@@ -31,13 +31,28 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 try:
-    from local_config import CASTALIGN_ROOT, OUTPUT_ROOT
+    import local_config
 except ImportError:
     raise ImportError(
         "local_config.py not found.\n"
         "Copy local_config.example.py to local_config.py and fill in your paths:\n"
         "    cp local_config.example.py local_config.py"
     )
+
+# Required: castalign repo + output graph location
+try:
+    CASTALIGN_ROOT = local_config.CASTALIGN_ROOT
+    GRAPH_PATH = local_config.GRAPH_PATH
+except AttributeError as e:
+    raise ImportError(
+        f"local_config.py is missing a required variable: {e}\n"
+        "CASTALIGN_ROOT and GRAPH_PATH are required. See local_config.example.py."
+    )
+
+# Optional data inputs — blank string or missing attribute = skip that node
+INVIVO_PATH = getattr(local_config, "INVIVO_PATH", "")
+BLOCK_STACK_PATH = getattr(local_config, "BLOCK_STACK_PATH", "")
+SUBSLICE_DIR = getattr(local_config, "SUBSLICE_DIR", "")
 
 # Add castalign to path
 if CASTALIGN_ROOT not in sys.path:
@@ -46,17 +61,12 @@ if CASTALIGN_ROOT not in sys.path:
 import castalign as ca
 import numpy as np
 import imageio.v2 as imageio
+from utilities.image_io import get_tiff_resolution
 
 
 # ============================================
 # Configuration
 # ============================================
-
-OUTPUT_ROOT = Path(OUTPUT_ROOT)
-INVIVO_PATH = OUTPUT_ROOT / "in_vivo_flip_corrected" / "JH302_1x_ch2_flipped.tiff"
-
-# Anisotropic subslices directory (Python-generated cellmask overlays)
-ANISO_SUBSLICE_DIR = OUTPUT_ROOT / "mScarlet_cellmask_subslice" / "threshold_0.30_cellmask_0.50_anisotropic"
 
 # Resolution parameters
 INVIVO_XY_UM_PER_PX = 2.34   # In vivo X/Y resolution
@@ -64,12 +74,28 @@ INVIVO_Z_UM_PER_PX = 1.0     # In vivo Z resolution
 EXVIVO_X_UM_PER_PX = 2.34    # Anisotropic ex vivo X (matches in vivo X/Y)
 EXVIVO_Y_UM_PER_PX = 1.0     # Anisotropic ex vivo Y (matches in vivo Z)
 
+# Known microscope profiles for resolution autodetection.
+# XY resolution identifies the microscope; Z comes from metadata or falls back to default.
+# To add a new microscope, add an entry here.
+MICROSCOPE_PROFILES = {
+    'li_lab': {
+        'xy_um_per_px': 2.34,       # 512 px / 1200 µm FOV
+        'z_um_per_px': 1.0,
+        'description': 'Li lab 2P (1200 µm FOV)',
+    },
+    'huang_lab': {
+        'xy_um_per_px': 1.1055,     # 512 px / 566.08 µm FOV
+        'z_um_per_px': 2.0,
+        'description': 'Huang lab 2P (566.08 µm FOV)',
+    },
+}
+
 
 # ============================================
 # Data Loading Functions
 # ============================================
 
-def load_invivo_stack(path: Union[str, Path] = INVIVO_PATH) -> np.ndarray:
+def load_invivo_stack(path: Union[str, Path]) -> np.ndarray:
     """
     Load in vivo TIFF stack.
 
@@ -87,13 +113,12 @@ def load_invivo_stack(path: Union[str, Path] = INVIVO_PATH) -> np.ndarray:
 
     print(f"  Shape: {stack.shape} (Z, Y, X)")
     print(f"  Type: {stack.dtype}")
-    print(f"  Resolution: {INVIVO_Z_UM_PER_PX} µm/px (Z), {INVIVO_XY_UM_PER_PX} µm/px (Y/X)")
 
     return stack
 
 
 def discover_aniso_subslices(
-    directory: Union[str, Path] = ANISO_SUBSLICE_DIR
+    directory: Union[str, Path]
 ) -> List[Path]:
     """
     Discover available anisotropic subslice files.
@@ -135,6 +160,97 @@ def load_single_subslice(path: Union[str, Path]) -> np.ndarray:
     return img
 
 
+def load_block_stack(path: Union[str, Path]) -> np.ndarray:
+    """
+    Load ex-vivo block TIFF stack.
+
+    Returns
+    -------
+    np.ndarray
+        3D stack as float32
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Block image not found: {path}")
+
+    print(f"Loading block stack: {path.name}")
+    stack = imageio.volread(str(path)).astype(np.float32)
+
+    print(f"  Shape: {stack.shape}")
+    print(f"  Type: {stack.dtype}")
+
+    return stack
+
+
+def detect_spacing(
+    tiff_path: Union[str, Path],
+    tolerance: float = 0.05
+) -> tuple:
+    """
+    Autodetect microscope from TIFF metadata and return spacing.
+
+    Reads XY resolution from TIFF tags, matches against MICROSCOPE_PROFILES.
+
+    Parameters
+    ----------
+    tiff_path : Path
+        Path to TIFF stack
+    tolerance : float
+        Relative tolerance for XY matching (default 5%)
+
+    Returns
+    -------
+    tuple
+        ((z, y, x) spacing in µm/px, microscope_name)
+
+    Raises
+    ------
+    ValueError
+        If no resolution metadata or no matching microscope profile
+    """
+    res = get_tiff_resolution(tiff_path)
+
+    if res['xy_um_per_px'] is None:
+        raise ValueError(
+            f"No XY resolution metadata in: {Path(tiff_path).name}\n"
+            "Add resolution in ImageJ (Image > Properties) or set spacing manually."
+        )
+
+    xy = res['xy_um_per_px']
+    z = res['z_um_per_px']
+
+    for name, profile in MICROSCOPE_PROFILES.items():
+        expected_xy = profile['xy_um_per_px']
+        if abs(xy - expected_xy) / expected_xy < tolerance:
+            if z is None:
+                z = profile['z_um_per_px']
+                print(f"  Z spacing not in metadata, using {name} default: {z} µm/px")
+            print(f"  Detected microscope: {name} ({profile['description']})")
+            print(f"  Spacing (Z, Y, X): ({z}, {xy:.4f}, {xy:.4f}) µm/px")
+            return (z, xy, xy), name
+
+    profile_lines = "\n".join(
+        f"    '{name}': XY = {p['xy_um_per_px']} µm/px ({p['description']})"
+        for name, p in MICROSCOPE_PROFILES.items()
+    )
+    raise ValueError(
+        f"\n{'='*60}\n"
+        f"Could not identify microscope from image resolution.\n\n"
+        f"  Your image:  {Path(tiff_path).name}\n"
+        f"  XY detected: {xy:.4f} µm/px\n\n"
+        f"This doesn't match any known microscope:\n"
+        f"{profile_lines}\n\n"
+        f"To fix, add your microscope to MICROSCOPE_PROFILES\n"
+        f"in {Path(__file__).name}:\n\n"
+        f"    'your_scope_name': {{\n"
+        f"        'xy_um_per_px': {xy:.4f},\n"
+        f"        'z_um_per_px': <your Z spacing in µm>,\n"
+        f"        'description': '<scope name> (<FOV size> FOV)',\n"
+        f"    }},\n"
+        f"{'='*60}"
+    )
+
+
 # ============================================
 # Graph Operations
 # ============================================
@@ -148,17 +264,22 @@ def create_subslice_graph(name: str = "castalign_test") -> ca.Graph:
 def add_invivo_to_graph(
     graph: ca.Graph,
     invivo_stack: np.ndarray,
-    node_name: str = "invivo_ref"
+    node_name: str = "invivo_ref",
+    spacing: Optional[tuple] = None
 ) -> ca.Graph:
     """
     Add in vivo reference to graph with correct spacing metadata.
 
-    Spacing: (Z, Y, X) = (1.0, 2.34, 2.34) µm/px
+    Parameters
+    ----------
+    spacing : tuple, optional
+        (Z, Y, X) in µm/px. If None, uses hardcoded Li lab defaults.
     """
     print(f"Adding in vivo reference '{node_name}' to graph...")
 
-    # In vivo spacing: (Z, Y, X) in µm/pixel
-    metadata = {'spacing': (INVIVO_Z_UM_PER_PX, INVIVO_XY_UM_PER_PX, INVIVO_XY_UM_PER_PX)}
+    if spacing is None:
+        spacing = (INVIVO_Z_UM_PER_PX, INVIVO_XY_UM_PER_PX, INVIVO_XY_UM_PER_PX)
+    metadata = {'spacing': spacing}
 
     graph.add_node(node_name, image=invivo_stack, compression="high", metadata=metadata)
 
@@ -168,9 +289,37 @@ def add_invivo_to_graph(
     return graph
 
 
+def add_block_to_graph(
+    graph: ca.Graph,
+    block_stack: np.ndarray,
+    node_name: str = "ex_vivo_block",
+    spacing: Optional[tuple] = None
+) -> ca.Graph:
+    """
+    Add ex-vivo block volume to graph.
+
+    Parameters
+    ----------
+    spacing : tuple, optional
+        (Z, Y, X) in µm/px. If None, uses hardcoded Li lab defaults.
+    """
+    print(f"Adding ex-vivo block '{node_name}' to graph...")
+
+    if spacing is None:
+        spacing = (INVIVO_Z_UM_PER_PX, INVIVO_XY_UM_PER_PX, INVIVO_XY_UM_PER_PX)
+    metadata = {'spacing': spacing}
+
+    graph.add_node(node_name, image=block_stack, compression="high", metadata=metadata)
+
+    print(f"  Added: {block_stack.shape}")
+    print(f"  Spacing: {metadata['spacing']} µm/px (Z, Y, X)")
+
+    return graph
+
+
 def add_subslices_to_graph(
     graph: ca.Graph,
-    subslice_dir: Union[str, Path] = ANISO_SUBSLICE_DIR,
+    subslice_dir: Union[str, Path],
     save_every: int = 10,
     output_path: Optional[Union[str, Path]] = None,
     verbose: bool = True
@@ -290,89 +439,159 @@ def load_graph(path: Union[str, Path], verbose: bool = True) -> ca.Graph:
 # ============================================
 
 def build_subslice_graph(
-    output_path: Optional[Union[str, Path]] = None,
     force_rebuild: bool = False,
     save_every: int = 10
 ) -> Path:
     """
-    Build complete subslice alignment graph.
+    Build alignment graph from whatever is configured in local_config.py.
+
+    Reads INVIVO_PATH, BLOCK_STACK_PATH, SUBSLICE_DIR from config. For each:
+    - blank (or missing attribute) → skip that node type
+    - set but file/dir doesn't exist → hard error
+    - set and exists → add to graph if not already a node
+
+    Re-running after editing config augments the existing graph. Use
+    force_rebuild=True to wipe and start over.
 
     Parameters
     ----------
-    output_path : Path, optional
-        Where to save graph (default: linestuffup_output/JH302_subslice_graph.db)
     force_rebuild : bool
-        If True, rebuild even if graph exists
+        If True, delete existing graph before building
     save_every : int
-        Save checkpoint every N subslices
+        Save subslice checkpoint every N subslices
 
     Returns
     -------
     Path
-        Path to saved graph
+        Path to saved graph (GRAPH_PATH from config)
     """
-    if output_path is None:
-        output_path = OUTPUT_ROOT / "linestuffup_output" / "castalign_test.db"
-    output_path = Path(output_path)
+    # -------------------------------------------------------------
+    # Resolve + validate config
+    # -------------------------------------------------------------
+    if not GRAPH_PATH:
+        raise ValueError(
+            "GRAPH_PATH is not set in local_config.py.\n"
+            "Set it to where you want the alignment graph saved, e.g.:\n"
+            "    GRAPH_PATH = '/path/to/output/linestuffup_output/castalign_test.db'"
+        )
+    output_path = Path(GRAPH_PATH)
+
+    invivo_path = Path(INVIVO_PATH) if INVIVO_PATH else None
+    block_path = Path(BLOCK_STACK_PATH) if BLOCK_STACK_PATH else None
+    subslice_dir = Path(SUBSLICE_DIR) if SUBSLICE_DIR else None
+
+    # Configured-but-missing = hard error (catches typos)
+    if invivo_path and not invivo_path.exists():
+        raise FileNotFoundError(
+            f"INVIVO_PATH is set in local_config.py but the file does not exist:\n"
+            f"  {invivo_path}\n"
+            f"Fix the path or leave INVIVO_PATH blank to skip the in vivo node."
+        )
+    if block_path and not block_path.exists():
+        raise FileNotFoundError(
+            f"BLOCK_STACK_PATH is set in local_config.py but the file does not exist:\n"
+            f"  {block_path}\n"
+            f"Fix the path or leave BLOCK_STACK_PATH blank to skip the block node."
+        )
+    if subslice_dir and not subslice_dir.is_dir():
+        raise FileNotFoundError(
+            f"SUBSLICE_DIR is set in local_config.py but is not a directory:\n"
+            f"  {subslice_dir}\n"
+            f"Fix the path or leave SUBSLICE_DIR blank to skip subslices."
+        )
+
+    if not (invivo_path or block_path or subslice_dir):
+        raise ValueError(
+            "No inputs configured in local_config.py — set at least one of:\n"
+            "  INVIVO_PATH         (in vivo 2P stack)\n"
+            "  BLOCK_STACK_PATH    (ex vivo block)\n"
+            "  SUBSLICE_DIR        (BARseq anisotropic subslices)"
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
-    print("SUBSLICE GRAPH BUILDER")
+    print("GRAPH BUILDER")
     print("=" * 60)
-    print(f"\nResolution Configuration:")
-    print(f"  In vivo:  Z={INVIVO_Z_UM_PER_PX} µm/px, Y/X={INVIVO_XY_UM_PER_PX} µm/px")
-    print(f"  Ex vivo:  Y={EXVIVO_Y_UM_PER_PX} µm/px, X={EXVIVO_X_UM_PER_PX} µm/px")
-    print(f"  After xrotate=90: Ex vivo Y → In vivo Z (matched!)")
+    print(f"Graph: {output_path}")
+    print(f"Inputs:")
+    print(f"  invivo:    {invivo_path if invivo_path else '(not set, skipping)'}")
+    print(f"  block:     {block_path if block_path else '(not set, skipping)'}")
+    print(f"  subslices: {subslice_dir if subslice_dir else '(not set, skipping)'}")
     print()
 
-    # Check if graph exists
-    if output_path.exists() and not force_rebuild:
-        print(f"Graph already exists: {output_path.name}")
-        print(f"  Size: {output_path.stat().st_size/1e6:.1f} MB")
-        print("\nTo rebuild, use force_rebuild=True")
-        return output_path
-
+    # -------------------------------------------------------------
+    # Load or create graph
+    # -------------------------------------------------------------
     if force_rebuild and output_path.exists():
-        print("Force rebuild - recreating graph...")
+        print("Force rebuild — deleting existing graph")
         output_path.unlink()
 
-    # Check for partial graph (resume)
     if output_path.exists():
-        print("Partial graph found - resuming...")
+        print("Existing graph found — augmenting with any missing nodes")
         g = load_graph(output_path)
     else:
-        # Start fresh
-        print("\n1. Loading in vivo stack...")
-        print("-" * 60)
-        invivo = load_invivo_stack()
-
-        print("\n2. Creating graph...")
-        print("-" * 60)
+        print("Creating new graph")
         g = create_subslice_graph()
-        add_invivo_to_graph(g, invivo)
 
-        del invivo  # Free memory
+    existing_nodes = set(g.nodes)
 
-        print("\nSaving initial checkpoint...")
-        save_graph(g, output_path, verbose=False)
+    # -------------------------------------------------------------
+    # Add nodes (idempotent: skip any already present)
+    # -------------------------------------------------------------
+    if invivo_path:
+        if "invivo_ref" in existing_nodes:
+            print("\nIn vivo node already in graph — skipping")
+        else:
+            print("\n1. Adding in vivo reference")
+            print("-" * 60)
+            invivo = load_invivo_stack(invivo_path)
+            invivo_spacing, _ = detect_spacing(invivo_path)
+            add_invivo_to_graph(g, invivo, spacing=invivo_spacing)
+            del invivo
+            save_graph(g, output_path, verbose=False)
 
-    # Add subslices
-    print("\n3. Adding anisotropic subslices...")
-    print("-" * 60)
-    add_subslices_to_graph(g, save_every=save_every, output_path=output_path)
+    if block_path:
+        if "ex_vivo_block" in existing_nodes:
+            print("\nEx vivo block already in graph — skipping")
+        else:
+            print("\n2. Adding ex vivo block")
+            print("-" * 60)
+            block_stack = load_block_stack(block_path)
+            block_spacing, _ = detect_spacing(block_path)
+            add_block_to_graph(g, block_stack, spacing=block_spacing)
+            del block_stack
+            save_graph(g, output_path, verbose=False)
 
-    # Final save
-    print("\n4. Saving final graph...")
+    if subslice_dir:
+        print("\n3. Adding anisotropic subslices")
+        print("-" * 60)
+        add_subslices_to_graph(
+            g,
+            subslice_dir=subslice_dir,
+            save_every=save_every,
+            output_path=output_path,
+        )
+
+    # -------------------------------------------------------------
+    # Final save + summary
+    # -------------------------------------------------------------
+    print("\nSaving final graph")
     print("-" * 60)
     save_graph(g, output_path)
 
-    # Summary
     print("\n" + "=" * 60)
-    print("SUBSLICE GRAPH COMPLETE")
+    print("GRAPH BUILD COMPLETE")
     print("=" * 60)
     print(f"Graph: {output_path}")
-    print(f"Nodes: {len(g.nodes)}")
-    print(f"  - 1 in vivo reference")
-    print(f"  - {len(g.nodes) - 1} ex vivo subslices")
+    print(f"Total nodes: {len(g.nodes)}")
+    if invivo_path:
+        print(f"  - 1 in vivo reference")
+    if block_path:
+        print(f"  - 1 ex vivo block")
+    if subslice_dir:
+        n_fixed = int(bool(invivo_path)) + int(bool(block_path))
+        print(f"  - {len(g.nodes) - n_fixed} ex vivo subslices")
     print(f"\nReady for alignment in LineStuffUp!")
 
     return output_path
@@ -383,14 +602,4 @@ def build_subslice_graph(
 # ============================================
 
 if __name__ == "__main__":
-    # Build graph
-    graph_path = build_subslice_graph()
-
-    print("\n" + "=" * 60)
-    print("NEXT STEPS")
-    print("=" * 60)
-    print("1. Open JH302_alignment_workflow.ipynb")
-    print("2. Update GRAPH_SAVE_PATH to:", graph_path)
-    print("3. Launch alignment GUI")
-    print("4. Use xrotate=90 to rotate coronal slices")
-    print("5. Align subslices to in vivo reference")
+    build_subslice_graph()
