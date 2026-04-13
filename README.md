@@ -1,9 +1,8 @@
 # cell2cell-alignment
 
-Python pipeline for aligning ex vivo brain slice images to in vivo 2-photon imaging volumes, using the castalign / LineStuffUp GUI for interactive registration. Supports two workflows:
+Python pipeline for aligning ex vivo brain slice images to in vivo 2-photon imaging volumes, using the castalign / LineStuffUp GUI for interactive registration.
 
-- **2P-only alignment** — align an ex vivo block to an in vivo stack directly. No BARseq data needed.
-- **BARseq + 2P alignment** — preprocess BARseq coronal slices (FOV stitching, mScarlet cell detection, anisotropic downsampling), then align to both an ex vivo block and the in vivo volume via a two-hop graph.
+The pipeline is config-driven: you fill in `local_config.py` with whatever data you have (in vivo stack, ex vivo block, BARseq subslices — any subset), the graph builder adds a node for each one, and you align them in the notebook. BARseq users run an optional preprocessing pipeline first to generate the subslice overlays.
 
 ---
 
@@ -96,7 +95,7 @@ A single multi-page TIFF of the ex vivo tissue block (2P volume imaged before sl
 Only used for BARseq. Directory containing the anisotropic `slice*_subslice_mScarlet_cellmask.tif` overlays that come out of the preprocessing pipeline. Leave blank if you don't have BARseq data.
 
 **`DATA_ROOT` / `OUTPUT_ROOT`**
-Only used by the preprocessing pipeline under `preprocessing/`. Leave blank if you're doing 2P-only alignment.
+Only used by the BARseq preprocessing pipeline under `preprocessing/`. Leave blank if you're not running preprocessing.
 
 ### Microscope resolution
 
@@ -111,48 +110,47 @@ If your microscope isn't in the list, the builder errors with a copy-pasteable t
 
 ---
 
-## 4. Running the alignment (2P-only workflow)
+## 4. Optional — BARseq preprocessing
 
-Minimal setup. Skip all of `preprocessing/`.
+Only run this if you have BARseq data. It generates the anisotropic subslice overlays that `SUBSLICE_DIR` should point at. If you don't have BARseq data, skip this section entirely and leave `SUBSLICE_DIR`, `DATA_ROOT`, `OUTPUT_ROOT` blank.
 
-1. Fill in `local_config.py`: `CASTALIGN_ROOT`, `INVIVO_PATH`, `BLOCK_STACK_PATH`, `GRAPH_PATH`. Leave `SUBSLICE_DIR`, `DATA_ROOT`, `OUTPUT_ROOT` blank.
-2. Build the graph:
-   ```bash
-   python alignment/subslice_graph_builder.py
-   ```
-   This adds one `invivo_ref` node and one `ex_vivo_block` node, then saves to `GRAPH_PATH`.
-3. Open the notebook:
-   ```
-   alignment/castalign_testground.ipynb
-   ```
-4. Run cells 0–6 (imports + load graph). Skip the slice-selector and Modes A/B/C (those are for BARseq subslices you don't have). Jump to **Section 9 — Mode D: Block → In-Vivo Alignment**.
-5. Align (`R` for affine, then `V` for 3D triangulation). Press `q` to save + quit.
-6. Run the verification + export cells (Sections 11–12).
+Requires raw BARseq data laid out under `DATA_ROOT`.
 
-### Re-running the builder
+```bash
+cd preprocessing/
+python run_pipeline.py                # all slices
+python run_pipeline.py --test         # slice 22 only, quick sanity check
+python run_pipeline.py --start-from 3 # resume from step N
+```
 
-The builder is idempotent — if the graph already exists, it loads it and adds whatever configured nodes are missing. So if you later decide to also add a `SUBSLICE_DIR`, just fill in the config and re-run. Use `force_rebuild=True` (edit the `__main__` call) to wipe and start over.
+The outputs land under `OUTPUT_ROOT`. Point `SUBSLICE_DIR` in `local_config.py` at the resulting `mScarlet_cellmask_subslice/threshold_*_anisotropic/` folder.
 
 ---
 
-## 5. Running the alignment (BARseq + 2P workflow)
+## 5. Build the graph
 
-Full pipeline. Requires the raw BARseq output layout under `DATA_ROOT`.
+```bash
+python alignment/subslice_graph_builder.py
+```
 
-1. Fill in **all** of `local_config.py` (all 7 variables, including `SUBSLICE_DIR` and `DATA_ROOT` / `OUTPUT_ROOT`).
-2. Run preprocessing:
-   ```bash
-   cd preprocessing/
-   python run_pipeline.py               # all slices
-   python run_pipeline.py --test        # slice 22 only, for a quick check
-   python run_pipeline.py --start-from 3 # resume from step N
-   ```
-   This generates stitched subslices, anisotropic downsampling, and mScarlet overlays under `OUTPUT_ROOT`. Point `SUBSLICE_DIR` at the `mScarlet_cellmask_subslice/threshold_*_anisotropic/` folder it produces.
-3. Build the graph:
-   ```bash
-   python alignment/subslice_graph_builder.py
-   ```
-4. Open `alignment/castalign_testground.ipynb` and work through all modes (A/B/C for per-slice alignment to the block, D for block → in vivo).
+The builder reads `INVIVO_PATH`, `BLOCK_STACK_PATH`, and `SUBSLICE_DIR` from your config and adds a node to the graph for each one that's set. It saves to `GRAPH_PATH`.
+
+**Re-runs are idempotent.** If the graph already exists, it loads and adds any configured nodes that aren't already in it. So if you later fill in another path, just re-run. To wipe and rebuild, edit the `__main__` call to pass `force_rebuild=True`.
+
+---
+
+## 6. Align in the notebook
+
+Open `alignment/castalign_testground.ipynb`. Run cells 0–6 (imports + load graph). From there, use whichever modes match the nodes you put in your graph:
+
+| Mode | What it aligns | Requires |
+|---|---|---|
+| A / B / C | BARseq subslice → ex vivo block | `SUBSLICE_DIR` + `BLOCK_STACK_PATH` |
+| D | Ex vivo block → in vivo | `BLOCK_STACK_PATH` + `INVIVO_PATH` |
+
+A typical session: run Mode D first (it's the one-time 3D → 3D registration), then Modes A/B/C per slice if you have BARseq subslices. Use `R` (affine) followed by `V` (3D triangulation) for the best results. Press `q` in the GUI to save and quit.
+
+After aligning, the notebook has sections for verification (Pearson r, napari overlay), nonlinear refinement, and warped-image export.
 
 ---
 
@@ -164,11 +162,11 @@ cell2cell-alignment/
 ├── local_config.py                ← your paths (gitignored)
 ├── local_config.example.py        ← template (tracked)
 │
-├── alignment/                     ← for 2P-only or post-preprocessing
+├── alignment/                     ← graph builder + alignment notebook
 │   ├── subslice_graph_builder.py  ← builds the alignment graph from config
 │   └── castalign_testground.ipynb ← interactive alignment GUI
 │
-├── preprocessing/                 ← BARseq only — skip for 2P-only workflow
+├── preprocessing/                 ← optional, BARseq only
 │   ├── run_pipeline.py            ← 5-step orchestrator
 │   └── ...                        ← individual steps + optional utilities
 │
