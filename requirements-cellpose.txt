@@ -1,0 +1,4 @@
+# cellpose env — for 3D cell segmentation and alignment validation (see README)
+# No segmentation code exists yet; this file documents intended env contents.
+cellpose[gui]
+numpy<2  # defensive pin: cellpose 3.x install failed with numpy 2 (reason this env exists)

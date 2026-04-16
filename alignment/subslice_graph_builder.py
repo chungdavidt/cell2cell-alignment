@@ -39,24 +39,19 @@ except ImportError:
         "    cp local_config.example.py local_config.py"
     )
 
-# Required: castalign repo + output graph location
+# Required: output graph location
 try:
-    CASTALIGN_ROOT = local_config.CASTALIGN_ROOT
     GRAPH_PATH = local_config.GRAPH_PATH
 except AttributeError as e:
     raise ImportError(
         f"local_config.py is missing a required variable: {e}\n"
-        "CASTALIGN_ROOT and GRAPH_PATH are required. See local_config.example.py."
+        "GRAPH_PATH is required. See local_config.example.py."
     )
 
 # Optional data inputs — blank string or missing attribute = skip that node
 INVIVO_PATH = getattr(local_config, "INVIVO_PATH", "")
 BLOCK_STACK_PATH = getattr(local_config, "BLOCK_STACK_PATH", "")
 SUBSLICE_DIR = getattr(local_config, "SUBSLICE_DIR", "")
-
-# Add castalign to path
-if CASTALIGN_ROOT not in sys.path:
-    sys.path.insert(0, CASTALIGN_ROOT)
 
 import castalign as ca
 import numpy as np

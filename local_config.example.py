@@ -7,14 +7,6 @@ local_config.py is gitignored and will not be committed.
 Each person sets their own paths once.
 """
 
-# Path to the castalign repository root
-# This is the folder that CONTAINS the castalign/ package folder
-# Examples:
-#   Windows:  "C:/Users/YourName/Desktop/castalign"
-#   Mac:      "/Users/yourname/programs/castalign"
-#   Linux:    "/home/yourname/lab/programs/castalign"
-CASTALIGN_ROOT = ""
-
 # Path to raw BARseq data (Batch3_JH302)
 # Examples:
 #   Windows:  "C:/Users/Li Lab/Documents/Data_ALM_cell_type_transcriptom/Batch3_JH302"

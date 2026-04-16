@@ -1,0 +1,14 @@
+# castalign env — used by alignment/ and castalign_testground.ipynb
+# Preprocessing/ may also work in this env (TBD — see README)
+castalign
+numpy
+scipy
+tifffile
+h5py
+Pillow
+scikit-image
+matplotlib
+pandas
+imageio
+ipywidgets
+graphviz

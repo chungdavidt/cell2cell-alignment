@@ -10,28 +10,9 @@ Usage in Jupyter:
     visualise_graph_png(g, filename='my_graph.png')  # Saves to file
 """
 
-import sys
 import tempfile
 import os
 from pathlib import Path
-
-# Add project root to path for local_config import
-_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
-
-try:
-    from local_config import CASTALIGN_ROOT
-except ImportError:
-    raise ImportError(
-        "local_config.py not found.\n"
-        "Copy local_config.example.py to local_config.py and fill in your paths:\n"
-        "    cp local_config.example.py local_config.py"
-    )
-
-# Add castalign to path
-if CASTALIGN_ROOT not in sys.path:
-    sys.path.insert(0, CASTALIGN_ROOT)
 
 
 def visualise_graph_png(graph, filename=None, nearby=None, format='svg', view=True):

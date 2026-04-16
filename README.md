@@ -8,26 +8,37 @@ The pipeline is config-driven: you fill in `local_config.py` with whatever data 
 
 ## 1. Prerequisites
 
-- Python 3.9+ (a conda env is recommended)
-- A local clone of the castalign repo (separate from this one) — you'll point this repo at it via `CASTALIGN_ROOT`
-- Python packages: `numpy`, `scipy`, `matplotlib`, `tifffile`, `h5py`, `scikit-image`, `Pillow`, `pandas`, `imageio`
+- Python 3.9+
+- Two separate Python venvs, because castalign and cellpose have incompatible dependencies (cellpose pins older numpy, plus pulls in the torch/torchvision ML stack that you don't want bloating the alignment env).
 
-There is no `requirements.txt` yet. Install manually:
+| Env | Used for | Install |
+|---|---|---|
+| `.castalign-venv/` | Alignment graph builder + `castalign_testground.ipynb`. Preprocessing pipeline likely also runs here (TBD — see note). | `pip install -r requirements-castalign.txt` |
+| `.cellpose-venv/` | Cellpose 3D segmentation for alignment validation (code pending). | `pip install -r requirements-cellpose.txt` |
+
+Both venvs live at project root and are gitignored.
 
 ```bash
-conda create -n castalign python=3.10
-conda activate castalign
-pip install numpy scipy matplotlib tifffile h5py scikit-image pillow pandas imageio
-# castalign itself is imported by path (see CASTALIGN_ROOT below), not pip-installed
+# castalign env
+python3 -m venv .castalign-venv
+source .castalign-venv/bin/activate
+pip install -r requirements-castalign.txt
+
+# cellpose env (separate terminal recommended)
+python3 -m venv .cellpose-venv
+source .cellpose-venv/bin/activate
+pip install -r requirements-cellpose.txt
 ```
+
+**Preprocessing env — TBD.** The `preprocessing/` scripts use numpy/scipy/h5py/tifffile/scikit-image and don't touch castalign or cellpose directly. Currently assumed to run in `.castalign-venv/`. Needs review — may warrant its own `.preprocessing-venv/` if version conflicts emerge.
 
 ---
 
 ## 2. Initial setup (one-time per machine)
 
-### Step 1 — Clone both repos
+### Step 1 — Clone this repo and create the envs
 
-Clone this repo and the castalign repo to wherever you want them on your disk. They don't need to live in the same folder — you'll connect them via `CASTALIGN_ROOT` in the next step.
+Clone this repo, then follow the env-creation commands in Section 1. castalign installs as a pip dependency — no separate clone needed.
 
 ### Step 2 — Create your local config
 
@@ -50,7 +61,6 @@ This is the only file you need to edit to get running. It holds all machine-spec
 
 | Variable | Required? | Used by | Purpose |
 |---|---|---|---|
-| `CASTALIGN_ROOT` | **Yes** | Graph builder + notebook | Path to your local castalign repo clone |
 | `GRAPH_PATH` | **Yes** | Graph builder + notebook | Where the alignment graph `.db` file is saved / loaded |
 | `INVIVO_PATH` | Optional | Graph builder | Path to in vivo 2P TIFF stack |
 | `BLOCK_STACK_PATH` | Optional | Graph builder | Path to ex vivo block TIFF stack |
@@ -69,13 +79,6 @@ This is the only file you need to edit to get running. It holds all machine-spec
 You need **at least one** set, or the builder raises a `ValueError` ("nothing to build").
 
 ### What each variable holds
-
-**`CASTALIGN_ROOT`**
-Path to the folder that *contains* the `castalign/` package folder. Not the package itself.
-```python
-CASTALIGN_ROOT = "/Users/yourname/code/castalign"
-# where castalign/castalign/base.py exists
-```
 
 **`GRAPH_PATH`**
 Where the alignment graph file lives. Used by both the graph builder (writes here) and the notebook (reads from here). Typically ends in `.db`. Put it somewhere with enough disk space — graphs with full BARseq subslices can run hundreds of MB.
