@@ -21,12 +21,14 @@ Both venvs live at project root and are gitignored.
 ```bash
 # castalign env
 python3 -m venv .castalign-venv
-source .castalign-venv/bin/activate
+source .castalign-venv/bin/activate        # Linux/Mac
+# .castalign-venv\Scripts\activate         # Windows (PowerShell/cmd)
 pip install -r requirements-castalign.txt
 
 # cellpose env (separate terminal recommended)
 python3 -m venv .cellpose-venv
-source .cellpose-venv/bin/activate
+source .cellpose-venv/bin/activate         # Linux/Mac
+# .cellpose-venv\Scripts\activate          # Windows (PowerShell/cmd)
 pip install -r requirements-cellpose.txt
 ```
 

@@ -15,7 +15,8 @@ Outputs go to ``<tiff parent>/sweep_in_vivo_<YYYYMMDD_HHMMSS>/`` — never into
 the repo.
 
 Usage:
-    source .cellpose-venv/bin/activate
+    source .cellpose-venv/bin/activate          # Linux/Mac
+    # .cellpose-venv\Scripts\activate            # Windows
     python alignment/sweep_in_vivo_2d.py                               # use local_config.INVIVO_PATH
     python alignment/sweep_in_vivo_2d.py --tiff <path>                 # override input
     python alignment/sweep_in_vivo_2d.py --z-planes 20,60,100,140,180  # override Z picker

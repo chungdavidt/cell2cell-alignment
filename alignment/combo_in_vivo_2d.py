@@ -18,7 +18,8 @@ Outputs go to ``<tiff parent>/combo_in_vivo_<YYYYMMDD_HHMMSS>/`` — never into
 the repo.
 
 Usage:
-    source .cellpose-venv/bin/activate
+    source .cellpose-venv/bin/activate          # Linux/Mac
+    # .cellpose-venv\Scripts\activate            # Windows
     python alignment/combo_in_vivo_2d.py                               # auto-pick latest sweep next to local_config.INVIVO_PATH
     python alignment/combo_in_vivo_2d.py --dry-run                     # auto-pick + preview
     python alignment/combo_in_vivo_2d.py --from-sweep <sweep_dir>      # explicit override

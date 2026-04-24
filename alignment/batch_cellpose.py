@@ -16,7 +16,8 @@ Behavior:
   - Prints a per-image + total summary at the end.
 
 Usage:
-    source .cellpose-venv/bin/activate
+    source .cellpose-venv/bin/activate          # Linux/Mac
+    # .cellpose-venv\Scripts\activate            # Windows
     python alignment/batch_cellpose.py               # full batch
     python alignment/batch_cellpose.py --force       # re-run even if _seg.npy exists
     python alignment/batch_cellpose.py --dry-run     # list images only, no model load
@@ -31,10 +32,10 @@ from pathlib import Path
 
 
 IMAGES_TO_PROCESS: list[str] = [
-    "/Users/dtc32/Library/CloudStorage/OneDrive-DukeUniversity/Documents/Medical School/PhD/Lab/Projects/cell_type/data/by94/gad2 by94 red exvivo max proj.tif",
-    "/Users/dtc32/Library/CloudStorage/OneDrive-DukeUniversity/Documents/Medical School/PhD/Lab/Projects/cell_type/data/by94/gad2 by94 red invivo max proj.tif",
-    "/Users/dtc32/Library/CloudStorage/OneDrive-DukeUniversity/Documents/Medical School/PhD/Lab/Projects/cell_type/data/by84/gad2-cre by84 exvivo red max proj.tif",
-    "/Users/dtc32/Library/CloudStorage/OneDrive-DukeUniversity/Documents/Medical School/PhD/Lab/Projects/cell_type/data/by84/gad2-c re by84 invivo red max 16x.tif",
+    "C:/Users/David/lab_local/projects/cell_type/data/by94/gad2 by94 red exvivo max proj.tif",
+    "C:/Users/David/lab_local/projects/cell_type/data/by94/gad2 by94 red invivo max proj.tif",
+    "C:/Users/David/lab_local/projects/cell_type/data/by84/gad2-cre by84 exvivo red max proj.tif",
+    "C:/Users/David/lab_local/projects/cell_type/data/by84/gad2-c re by84 invivo red max 16x.tif",
 ]
 
 EVAL_PARAMS = {

@@ -1,11 +1,12 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(xargs grep *)"
+    ]
+  },
   "sandbox": {
     "enabled": false,
     "autoAllowBashIfSandboxed": false
-  },
-  "permissions": {
-    "allow": [
-      "Bash(python:*)"
-    ]
   }
 }
