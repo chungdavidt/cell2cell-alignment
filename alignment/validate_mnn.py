@@ -33,8 +33,11 @@ from scipy.spatial import cKDTree
 
 
 HUANG_UM_PER_VOXEL = (2.0, 1.1055, 1.1055)
-DEFAULT_NODE_MOVABLE = "invivo_ref"
-DEFAULT_NODE_FIXED = "ex_vivo_block"
+# Validation operates on the red (sparse) alignment channel by design — it's the
+# segmentation channel and the only side with a fitted rigid edge. Green is
+# joined via Identity in the graph but is not segmented here.
+DEFAULT_NODE_MOVABLE = "invivo_ref_red"
+DEFAULT_NODE_FIXED = "ex_vivo_block_red"
 
 
 # ------------------------------------------------------------------
@@ -298,8 +301,8 @@ def main(argv: Optional[list] = None) -> int:
         sys.path.insert(0, str(project_root))
     import local_config
 
-    invivo_path = Path(local_config.INVIVO_PATH)
-    exvivo_path = Path(local_config.BLOCK_STACK_PATH)
+    invivo_path = Path(local_config.INVIVO_PATH_RED)
+    exvivo_path = Path(local_config.BLOCK_STACK_PATH_RED)
     out_dir = invivo_path.parent / "cellpose"
 
     if args.graph_path:

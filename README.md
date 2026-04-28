@@ -64,21 +64,34 @@ This is the only file you need to edit to get running. It holds all machine-spec
 | Variable | Required? | Used by | Purpose |
 |---|---|---|---|
 | `GRAPH_PATH` | **Yes** | Graph builder + notebook | Where the alignment graph `.db` file is saved / loaded |
-| `INVIVO_PATH` | Optional | Graph builder | Path to in vivo 2P TIFF stack |
-| `BLOCK_STACK_PATH` | Optional | Graph builder | Path to ex vivo block TIFF stack |
+| `INVIVO_PATH_RED` | Optional | Graph builder | In vivo 2P TIFF — red (alignment) channel |
+| `INVIVO_PATH_GREEN` | Optional | Graph builder | In vivo 2P TIFF — green (signal) channel |
+| `BLOCK_STACK_PATH_RED` | Optional | Graph builder | Ex vivo block TIFF — red (alignment) channel |
+| `BLOCK_STACK_PATH_GREEN` | Optional | Graph builder | Ex vivo block TIFF — green (signal) channel |
 | `SUBSLICE_DIR` | Optional | Graph builder | Directory of BARseq anisotropic subslice overlays |
 | `DATA_ROOT` | BARseq only | Preprocessing pipeline | Raw BARseq data root |
 | `OUTPUT_ROOT` | BARseq only | Preprocessing pipeline | Where preprocessing writes its outputs |
 
-### Rules for the three optional data inputs
+### Rules for the optional data inputs
 
-`INVIVO_PATH`, `BLOCK_STACK_PATH`, and `SUBSLICE_DIR` are the three things the graph builder can add as nodes. The rules are intentionally strict:
+The graph builder turns each path into a node. The rules are intentionally strict:
 
-- **Blank (`""`)** → skip that node type, don't add it to the graph
+- **Blank (`""`)** → skip that node, don't add it to the graph
 - **Set but the file/directory doesn't exist** → hard error (catches typos)
 - **Set and exists** → add to the graph
+- **GREEN set without RED for the same volume** → hard error (would dangle the Identity edge)
 
-You need **at least one** set, or the builder raises a `ValueError` ("nothing to build").
+You need **at least one** of the four 2P paths or `SUBSLICE_DIR` set, or the builder raises a `ValueError` ("nothing to build").
+
+### Multi-channel volumes — red + green
+
+Each 2P volume is acquired in two channels: red (sparsely-labelled, used for alignment fitting and Cellpose segmentation) and green (signal of interest). The two channels share a voxel grid in hardware, so they enter the graph as sibling nodes joined by `castalign.base.Identity()`. Rigid + nonlinear edges are fitted only on the `_red ↔ _red` pair; queries between green channels (or red↔green) compose through Identity automatically and cost nothing.
+
+Per-volume node names:
+- `invivo_ref_red`, `invivo_ref_green`
+- `ex_vivo_block_red`, `ex_vivo_block_green`
+
+If you only have a red channel today, leave the green path blank — the green node and Identity edge are simply skipped, and you can add green later by setting the path and re-running the builder (idempotent).
 
 ### What each variable holds
 
@@ -88,13 +101,13 @@ Where the alignment graph file lives. Used by both the graph builder (writes her
 GRAPH_PATH = "/Users/yourname/data/linestuffup_output/my_experiment.db"
 ```
 
-**`INVIVO_PATH`**
-A single multi-page TIFF of the in vivo 2P volume.
+**`INVIVO_PATH_RED` / `INVIVO_PATH_GREEN`**
+Multi-page TIFFs of the in vivo 2P volume, one per channel. Both channels must come from the same acquisition (same voxel grid). The builder asserts this from TIFF metadata.
 - Li lab data: typically the flipped output from `prepare_invivo_volume.py` (Y-axis mirror correction).
-- Huang lab data: typically the raw max-projection TIFF — no preprocessing needed.
+- Huang lab data: typically the raw max-projection TIFFs — no preprocessing needed.
 
-**`BLOCK_STACK_PATH`**
-A single multi-page TIFF of the ex vivo tissue block (2P volume imaged before slicing).
+**`BLOCK_STACK_PATH_RED` / `BLOCK_STACK_PATH_GREEN`**
+Multi-page TIFFs of the ex vivo tissue block (2P volume imaged before slicing), one per channel.
 
 **`SUBSLICE_DIR`, `DATA_ROOT`, `OUTPUT_ROOT`** — BARseq preprocessing variables
 All three are used by the BARseq preprocessing stage (Section 4) and the subslice nodes it produces:
@@ -138,7 +151,7 @@ The outputs land under `OUTPUT_ROOT`. Point `SUBSLICE_DIR` in `local_config.py` 
 python alignment/subslice_graph_builder.py
 ```
 
-The builder reads `INVIVO_PATH`, `BLOCK_STACK_PATH`, and `SUBSLICE_DIR` from your config and adds a node to the graph for each one that's set. It saves to `GRAPH_PATH`.
+The builder reads the red/green 2P paths and `SUBSLICE_DIR` from your config and adds nodes for whichever are set. Sibling red/green channels of one volume are joined by `castalign.base.Identity`. It saves to `GRAPH_PATH`.
 
 **Re-runs are idempotent.** If the graph already exists, it loads and adds any configured nodes that aren't already in it. So if you later fill in another path, just re-run. To wipe and rebuild, edit the `__main__` call to pass `force_rebuild=True`.
 
@@ -150,8 +163,8 @@ Open `alignment/castalign_testground.ipynb`. Run cells 0–6 (imports + load gra
 
 | Mode | What it aligns | Requires |
 |---|---|---|
-| A / B / C | BARseq subslice → ex vivo block | `SUBSLICE_DIR` + `BLOCK_STACK_PATH` |
-| D | Ex vivo block → in vivo | `BLOCK_STACK_PATH` + `INVIVO_PATH` |
+| A / B / C | BARseq subslice → ex vivo block | `SUBSLICE_DIR` + `BLOCK_STACK_PATH_RED` |
+| D | Ex vivo block → in vivo | `BLOCK_STACK_PATH_RED` + `INVIVO_PATH_RED` |
 
 A typical session: run Mode D first (it's the one-time 3D → 3D registration), then Modes A/B/C per slice if you have BARseq subslices. Use `R` (affine) followed by `V` (3D triangulation) for the best results. Press `q` in the GUI to save and quit.
 
@@ -185,11 +198,17 @@ cell2cell-alignment/
 **`ImportError: local_config.py not found`**
 You haven't copied the template yet. Run `cp local_config.example.py local_config.py`.
 
-**`FileNotFoundError: INVIVO_PATH is set ... but the file does not exist`**
+**`FileNotFoundError: INVIVO_PATH_RED is set ... but the file does not exist`**
 Typo in the path. The builder refuses to silently skip configured-but-broken paths — fix the path or leave it blank to skip the node.
 
 **`ValueError: No inputs configured`**
-All three of `INVIVO_PATH`, `BLOCK_STACK_PATH`, `SUBSLICE_DIR` are blank. Set at least one.
+All four 2P paths and `SUBSLICE_DIR` are blank. Set at least one.
+
+**`ValueError: ..._GREEN is set but ..._RED is blank`**
+Green-without-red would dangle the Identity edge in the graph. Either set the matching `_RED` path or leave the `_GREEN` path blank.
+
+**`ValueError: Loaded graph contains legacy non-suffixed nodes`**
+The graph predates the multi-channel refactor. Rebuild with `force_rebuild=True` to migrate to the new `_red` / `_green` naming. Rigid fits will need to be redone (typically minutes via Mode D).
 
 **`ValueError: Could not identify microscope from image resolution`**
 Your TIFF's XY resolution doesn't match any profile in `MICROSCOPE_PROFILES`. The error message prints a copy-pasteable block — paste it into `alignment/subslice_graph_builder.py` and re-run.

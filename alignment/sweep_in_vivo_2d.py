@@ -349,9 +349,9 @@ def main(argv: list | None = None) -> int:
         tiff_path = Path(args.tiff)
     else:
         import local_config
-        if not getattr(local_config, "INVIVO_PATH", None):
-            sys.exit("local_config.INVIVO_PATH is empty — pass --tiff instead.")
-        tiff_path = Path(local_config.INVIVO_PATH)
+        if not getattr(local_config, "INVIVO_PATH_RED", None):
+            sys.exit("local_config.INVIVO_PATH_RED is empty — pass --tiff instead.")
+        tiff_path = Path(local_config.INVIVO_PATH_RED)
 
     if not tiff_path.exists():
         sys.exit(f"TIFF not found: {tiff_path}")

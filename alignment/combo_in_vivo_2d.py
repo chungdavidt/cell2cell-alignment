@@ -357,12 +357,12 @@ def main(argv: list | None = None) -> int:
             except ImportError:
                 sys.exit("No --from-sweep passed and local_config.py not importable. "
                          "Pass --from-sweep explicitly.")
-            invivo_path = getattr(local_config, "INVIVO_PATH", None)
+            invivo_path = getattr(local_config, "INVIVO_PATH_RED", None)
             if not invivo_path:
-                sys.exit("No --from-sweep passed and local_config.INVIVO_PATH is empty. "
-                         "Pass --from-sweep explicitly or set INVIVO_PATH.")
+                sys.exit("No --from-sweep passed and local_config.INVIVO_PATH_RED is empty. "
+                         "Pass --from-sweep explicitly or set INVIVO_PATH_RED.")
             search_near = Path(invivo_path).parent
-            search_label = f"local_config.INVIVO_PATH parent ({search_near})"
+            search_label = f"local_config.INVIVO_PATH_RED parent ({search_near})"
         sweep_dir = find_latest_sweep(search_near)
         if sweep_dir is None:
             sys.exit(f"No sweep_in_vivo_* dir with summary.csv + config.json found in "

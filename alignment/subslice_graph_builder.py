@@ -48,10 +48,19 @@ except AttributeError as e:
         "GRAPH_PATH is required. See local_config.example.py."
     )
 
-# Optional data inputs — blank string or missing attribute = skip that node
-INVIVO_PATH = getattr(local_config, "INVIVO_PATH", "")
-BLOCK_STACK_PATH = getattr(local_config, "BLOCK_STACK_PATH", "")
+# Optional data inputs — blank string or missing attribute = skip that node.
+# Each 2P volume has two co-registered channels (red = sparse alignment channel,
+# green = signal of interest). Both channels enter the graph as sibling nodes
+# joined by `castalign.base.Identity`; rigid + nonlinear fits run only on red.
+INVIVO_PATH_RED = getattr(local_config, "INVIVO_PATH_RED", "")
+INVIVO_PATH_GREEN = getattr(local_config, "INVIVO_PATH_GREEN", "")
+BLOCK_STACK_PATH_RED = getattr(local_config, "BLOCK_STACK_PATH_RED", "")
+BLOCK_STACK_PATH_GREEN = getattr(local_config, "BLOCK_STACK_PATH_GREEN", "")
 SUBSLICE_DIR = getattr(local_config, "SUBSLICE_DIR", "")
+
+# Legacy node names from the pre-multi-channel schema. Presence of either in a
+# loaded graph triggers the migration guard in build_subslice_graph().
+LEGACY_NODE_NAMES = {"invivo_ref", "ex_vivo_block"}
 
 import castalign as ca
 import numpy as np
@@ -256,60 +265,108 @@ def create_subslice_graph(name: str = "castalign_test") -> ca.Graph:
     return ca.Graph(name)
 
 
-def add_invivo_to_graph(
+def _add_volume_channels(
     graph: ca.Graph,
-    invivo_stack: np.ndarray,
-    node_name: str = "invivo_ref",
-    spacing: Optional[tuple] = None
+    base_name: str,
+    *,
+    red_stack: Optional[np.ndarray] = None,
+    green_stack: Optional[np.ndarray] = None,
+    red_spacing: Optional[tuple] = None,
+    green_spacing: Optional[tuple] = None,
 ) -> ca.Graph:
     """
-    Add in vivo reference to graph with correct spacing metadata.
+    Add red and/or green channel nodes for a 2P volume, joined by a
+    `castalign.base.Identity` edge once both channels exist.
 
-    Parameters
-    ----------
-    spacing : tuple, optional
-        (Z, Y, X) in µm/px. If None, uses hardcoded Li lab defaults.
+    Per-channel idempotent: if a node already exists in the graph it is
+    skipped silently. The Identity edge is added only once both `_red` and
+    `_green` nodes are present and is itself idempotent.
     """
-    print(f"Adding in vivo reference '{node_name}' to graph...")
+    red_node = f"{base_name}_red"
+    green_node = f"{base_name}_green"
+    default_spacing = (INVIVO_Z_UM_PER_PX, INVIVO_XY_UM_PER_PX, INVIVO_XY_UM_PER_PX)
 
-    if spacing is None:
-        spacing = (INVIVO_Z_UM_PER_PX, INVIVO_XY_UM_PER_PX, INVIVO_XY_UM_PER_PX)
-    metadata = {'spacing': spacing}
+    if red_stack is not None and red_node not in graph.nodes:
+        spacing = red_spacing if red_spacing is not None else default_spacing
+        graph.add_node(
+            red_node, image=red_stack, compression="high",
+            metadata={'spacing': spacing},
+        )
+        print(f"  Added node: {red_node}  shape {red_stack.shape}  spacing {spacing} µm/px (Z, Y, X)")
 
-    graph.add_node(node_name, image=invivo_stack, compression="high", metadata=metadata)
+    if green_stack is not None and green_node not in graph.nodes:
+        spacing = green_spacing if green_spacing is not None else default_spacing
+        graph.add_node(
+            green_node, image=green_stack, compression="high",
+            metadata={'spacing': spacing},
+        )
+        print(f"  Added node: {green_node}  shape {green_stack.shape}  spacing {spacing} µm/px (Z, Y, X)")
 
-    print(f"  Added: {invivo_stack.shape}")
-    print(f"  Spacing: {metadata['spacing']} µm/px (Z, Y, X)")
+    if red_node in graph.nodes and green_node in graph.nodes:
+        if green_node not in graph.edges.get(red_node, {}):
+            graph.add_edge(red_node, green_node, ca.Identity())
+            print(f"  Added Identity edge: {red_node} <-> {green_node}")
 
     return graph
+
+
+def add_invivo_to_graph(
+    graph: ca.Graph,
+    *,
+    red_stack: Optional[np.ndarray] = None,
+    green_stack: Optional[np.ndarray] = None,
+    red_spacing: Optional[tuple] = None,
+    green_spacing: Optional[tuple] = None,
+    base_name: str = "invivo_ref",
+) -> ca.Graph:
+    """Add in-vivo red/green nodes joined by Identity. See `_add_volume_channels`."""
+    print(f"Adding in-vivo channels under base '{base_name}'...")
+    return _add_volume_channels(
+        graph, base_name,
+        red_stack=red_stack, green_stack=green_stack,
+        red_spacing=red_spacing, green_spacing=green_spacing,
+    )
 
 
 def add_block_to_graph(
     graph: ca.Graph,
-    block_stack: np.ndarray,
-    node_name: str = "ex_vivo_block",
-    spacing: Optional[tuple] = None
+    *,
+    red_stack: Optional[np.ndarray] = None,
+    green_stack: Optional[np.ndarray] = None,
+    red_spacing: Optional[tuple] = None,
+    green_spacing: Optional[tuple] = None,
+    base_name: str = "ex_vivo_block",
 ) -> ca.Graph:
-    """
-    Add ex-vivo block volume to graph.
+    """Add ex-vivo block red/green nodes joined by Identity. See `_add_volume_channels`."""
+    print(f"Adding ex-vivo block channels under base '{base_name}'...")
+    return _add_volume_channels(
+        graph, base_name,
+        red_stack=red_stack, green_stack=green_stack,
+        red_spacing=red_spacing, green_spacing=green_spacing,
+    )
 
-    Parameters
-    ----------
-    spacing : tuple, optional
-        (Z, Y, X) in µm/px. If None, uses hardcoded Li lab defaults.
-    """
-    print(f"Adding ex-vivo block '{node_name}' to graph...")
 
-    if spacing is None:
-        spacing = (INVIVO_Z_UM_PER_PX, INVIVO_XY_UM_PER_PX, INVIVO_XY_UM_PER_PX)
-    metadata = {'spacing': spacing}
-
-    graph.add_node(node_name, image=block_stack, compression="high", metadata=metadata)
-
-    print(f"  Added: {block_stack.shape}")
-    print(f"  Spacing: {metadata['spacing']} µm/px (Z, Y, X)")
-
-    return graph
+def _assert_spacing_match(
+    spacing_a: tuple,
+    spacing_b: tuple,
+    label_a: str,
+    label_b: str,
+    tolerance: float = 0.02,
+) -> None:
+    """Raise if two (Z, Y, X) spacings differ by more than `tolerance` (relative)."""
+    a = np.asarray(spacing_a, dtype=float)
+    b = np.asarray(spacing_b, dtype=float)
+    if a.shape != (3,) or b.shape != (3,):
+        raise ValueError(f"Expected (Z, Y, X) spacing tuples, got {spacing_a!r} / {spacing_b!r}")
+    rel_diff = np.abs(a - b) / np.maximum(np.abs(b), 1e-12)
+    if np.any(rel_diff > tolerance):
+        raise ValueError(
+            f"Spacing mismatch between {label_a} and {label_b} (>{tolerance:.0%} relative):\n"
+            f"  {label_a}: {tuple(a)} µm/px\n"
+            f"  {label_b}: {tuple(b)} µm/px\n"
+            "Red and green channels of one volume must share a voxel grid. "
+            "Check that the two TIFFs come from the same acquisition."
+        )
 
 
 def add_subslices_to_graph(
@@ -434,39 +491,39 @@ def load_graph(path: Union[str, Path], verbose: bool = True) -> ca.Graph:
 # ============================================
 
 def _derive_graph_path(
-    block_path: Optional[Path],
-    invivo_path: Optional[Path],
+    block_red_path: Optional[Path],
+    invivo_red_path: Optional[Path],
 ) -> Path:
     """
     Derive a default GRAPH_PATH when not set in local_config.py.
 
     Rule: ``<parent_of_data_file>/alignment/<parent_folder_name>_graph.db``
 
-    Prefers BLOCK_STACK_PATH, falls back to INVIVO_PATH. Raises ValueError
-    if neither is set, or if both are set but live in different parent
-    folders (which would make the "one graph per subject" convention
-    ambiguous — in that case, set GRAPH_PATH manually in local_config.py).
+    Anchored on the red-channel paths (red is canonical, green is sibling).
+    Prefers BLOCK_STACK_PATH_RED, falls back to INVIVO_PATH_RED. Raises
+    ValueError if neither is set, or if both are set but live in different
+    parent folders.
     """
-    if block_path is None and invivo_path is None:
+    if block_red_path is None and invivo_red_path is None:
         raise ValueError(
-            "Cannot auto-derive GRAPH_PATH: neither BLOCK_STACK_PATH nor\n"
-            "INVIVO_PATH is set. If you're running a BARseq-only graph\n"
+            "Cannot auto-derive GRAPH_PATH: neither BLOCK_STACK_PATH_RED nor\n"
+            "INVIVO_PATH_RED is set. If you're running a BARseq-only graph\n"
             "(SUBSLICE_DIR only), please set GRAPH_PATH manually in\n"
             "local_config.py."
         )
 
-    if block_path is not None and invivo_path is not None:
-        if block_path.parent != invivo_path.parent:
+    if block_red_path is not None and invivo_red_path is not None:
+        if block_red_path.parent != invivo_red_path.parent:
             raise ValueError(
-                "Cannot auto-derive GRAPH_PATH: BLOCK_STACK_PATH and\n"
-                "INVIVO_PATH live in different folders:\n"
-                f"  BLOCK_STACK_PATH parent: {block_path.parent}\n"
-                f"  INVIVO_PATH parent:      {invivo_path.parent}\n"
+                "Cannot auto-derive GRAPH_PATH: BLOCK_STACK_PATH_RED and\n"
+                "INVIVO_PATH_RED live in different folders:\n"
+                f"  BLOCK_STACK_PATH_RED parent: {block_red_path.parent}\n"
+                f"  INVIVO_PATH_RED parent:      {invivo_red_path.parent}\n"
                 "Please set GRAPH_PATH manually in local_config.py."
             )
 
     # Prefer block, fall back to invivo
-    anchor = block_path if block_path is not None else invivo_path
+    anchor = block_red_path if block_red_path is not None else invivo_red_path
     parent = anchor.parent
     subject_name = parent.name
     return parent / "alignment" / f"{subject_name}_graph.db"
@@ -502,23 +559,39 @@ def build_subslice_graph(
     # -------------------------------------------------------------
     # Resolve + validate data paths
     # -------------------------------------------------------------
-    invivo_path = Path(INVIVO_PATH) if INVIVO_PATH else None
-    block_path = Path(BLOCK_STACK_PATH) if BLOCK_STACK_PATH else None
+    invivo_red_path = Path(INVIVO_PATH_RED) if INVIVO_PATH_RED else None
+    invivo_green_path = Path(INVIVO_PATH_GREEN) if INVIVO_PATH_GREEN else None
+    block_red_path = Path(BLOCK_STACK_PATH_RED) if BLOCK_STACK_PATH_RED else None
+    block_green_path = Path(BLOCK_STACK_PATH_GREEN) if BLOCK_STACK_PATH_GREEN else None
     subslice_dir = Path(SUBSLICE_DIR) if SUBSLICE_DIR else None
 
+    # Green-without-red on the same modality would dangle the Identity edge.
+    if invivo_green_path and not invivo_red_path:
+        raise ValueError(
+            "INVIVO_PATH_GREEN is set but INVIVO_PATH_RED is blank.\n"
+            "Green-without-red would dangle the Identity edge. Either set\n"
+            "INVIVO_PATH_RED or leave INVIVO_PATH_GREEN blank."
+        )
+    if block_green_path and not block_red_path:
+        raise ValueError(
+            "BLOCK_STACK_PATH_GREEN is set but BLOCK_STACK_PATH_RED is blank.\n"
+            "Green-without-red would dangle the Identity edge. Either set\n"
+            "BLOCK_STACK_PATH_RED or leave BLOCK_STACK_PATH_GREEN blank."
+        )
+
     # Configured-but-missing = hard error (catches typos)
-    if invivo_path and not invivo_path.exists():
-        raise FileNotFoundError(
-            f"INVIVO_PATH is set in local_config.py but the file does not exist:\n"
-            f"  {invivo_path}\n"
-            f"Fix the path or leave INVIVO_PATH blank to skip the in vivo node."
-        )
-    if block_path and not block_path.exists():
-        raise FileNotFoundError(
-            f"BLOCK_STACK_PATH is set in local_config.py but the file does not exist:\n"
-            f"  {block_path}\n"
-            f"Fix the path or leave BLOCK_STACK_PATH blank to skip the block node."
-        )
+    for label, p in [
+        ("INVIVO_PATH_RED",       invivo_red_path),
+        ("INVIVO_PATH_GREEN",     invivo_green_path),
+        ("BLOCK_STACK_PATH_RED",  block_red_path),
+        ("BLOCK_STACK_PATH_GREEN", block_green_path),
+    ]:
+        if p and not p.exists():
+            raise FileNotFoundError(
+                f"{label} is set in local_config.py but the file does not exist:\n"
+                f"  {p}\n"
+                f"Fix the path or leave {label} blank to skip that node."
+            )
     if subslice_dir and not subslice_dir.is_dir():
         raise FileNotFoundError(
             f"SUBSLICE_DIR is set in local_config.py but is not a directory:\n"
@@ -526,12 +599,14 @@ def build_subslice_graph(
             f"Fix the path or leave SUBSLICE_DIR blank to skip subslices."
         )
 
-    if not (invivo_path or block_path or subslice_dir):
+    any_invivo = bool(invivo_red_path or invivo_green_path)
+    any_block = bool(block_red_path or block_green_path)
+    if not (any_invivo or any_block or subslice_dir):
         raise ValueError(
             "No inputs configured in local_config.py — set at least one of:\n"
-            "  INVIVO_PATH         (in vivo 2P stack)\n"
-            "  BLOCK_STACK_PATH    (ex vivo block)\n"
-            "  SUBSLICE_DIR        (BARseq anisotropic subslices)"
+            "  INVIVO_PATH_RED / INVIVO_PATH_GREEN          (in vivo 2P stack)\n"
+            "  BLOCK_STACK_PATH_RED / BLOCK_STACK_PATH_GREEN (ex vivo block)\n"
+            "  SUBSLICE_DIR                                  (BARseq subslices)"
         )
 
     # -------------------------------------------------------------
@@ -541,7 +616,7 @@ def build_subslice_graph(
         output_path = Path(GRAPH_PATH)
         graph_path_source = "config"
     else:
-        output_path = _derive_graph_path(block_path, invivo_path)
+        output_path = _derive_graph_path(block_red_path, invivo_red_path)
         graph_path_source = "derived"
 
     # -------------------------------------------------------------
@@ -563,9 +638,11 @@ def build_subslice_graph(
         print(f"Alignment folder: created (did not exist)")
     print()
     print(f"Inputs:")
-    print(f"  invivo:    {invivo_path if invivo_path else '(not set, skipping)'}")
-    print(f"  block:     {block_path if block_path else '(not set, skipping)'}")
-    print(f"  subslices: {subslice_dir if subslice_dir else '(not set, skipping)'}")
+    print(f"  invivo  red:   {invivo_red_path   if invivo_red_path   else '(not set, skipping)'}")
+    print(f"  invivo  green: {invivo_green_path if invivo_green_path else '(not set, skipping)'}")
+    print(f"  block   red:   {block_red_path    if block_red_path    else '(not set, skipping)'}")
+    print(f"  block   green: {block_green_path  if block_green_path  else '(not set, skipping)'}")
+    print(f"  subslices:     {subslice_dir      if subslice_dir      else '(not set, skipping)'}")
     print()
 
     # -------------------------------------------------------------
@@ -582,33 +659,105 @@ def build_subslice_graph(
         print("Creating new graph")
         g = create_subslice_graph()
 
+    # -------------------------------------------------------------
+    # Migration guard: legacy non-suffixed nodes from the pre-multi-channel
+    # schema must be migrated explicitly so the rigid fits aren't silently
+    # orphaned by the rename.
+    # -------------------------------------------------------------
+    legacy_present = LEGACY_NODE_NAMES & set(g.nodes)
+    if legacy_present:
+        raise ValueError(
+            "Loaded graph contains legacy non-suffixed nodes from the\n"
+            "pre-multi-channel schema:\n"
+            f"  {sorted(legacy_present)}\n\n"
+            "Rebuild with `force_rebuild=True` to migrate to the new\n"
+            "_red / _green naming. Rigid fits will need to be redone\n"
+            "(typically minutes via Mode D in the notebook).\n\n"
+            "    build_subslice_graph(force_rebuild=True)"
+        )
+
     existing_nodes = set(g.nodes)
 
     # -------------------------------------------------------------
-    # Add nodes (idempotent: skip any already present)
+    # Add in-vivo channels
     # -------------------------------------------------------------
-    if invivo_path:
-        if "invivo_ref" in existing_nodes:
-            print("\nIn vivo node already in graph — skipping")
-        else:
-            print("\n1. Adding in vivo reference")
-            print("-" * 60)
-            invivo = load_invivo_stack(invivo_path)
-            invivo_spacing, _ = detect_spacing(invivo_path)
-            add_invivo_to_graph(g, invivo, spacing=invivo_spacing)
-            del invivo
+    if any_invivo:
+        print("\n1. Adding in-vivo channels")
+        print("-" * 60)
+
+        red_stack = green_stack = None
+        red_spacing = green_spacing = None
+
+        if invivo_red_path:
+            if "invivo_ref_red" in existing_nodes:
+                print(f"  invivo_ref_red already in graph — skipping")
+            else:
+                red_stack = load_invivo_stack(invivo_red_path)
+                red_spacing, _ = detect_spacing(invivo_red_path)
+
+        if invivo_green_path:
+            if "invivo_ref_green" in existing_nodes:
+                print(f"  invivo_ref_green already in graph — skipping")
+            else:
+                green_stack = load_invivo_stack(invivo_green_path)
+                green_spacing, _ = detect_spacing(invivo_green_path)
+                # Sanity check: green must share the red channel's voxel grid.
+                # When red was just loaded, compare to red_spacing; when red is
+                # already a graph node, re-detect from the red TIFF (cheap —
+                # metadata only).
+                ref_spacing = red_spacing
+                if ref_spacing is None and invivo_red_path:
+                    ref_spacing, _ = detect_spacing(invivo_red_path)
+                if ref_spacing is not None:
+                    _assert_spacing_match(ref_spacing, green_spacing,
+                                          "INVIVO_PATH_RED", "INVIVO_PATH_GREEN")
+
+        if red_stack is not None or green_stack is not None:
+            add_invivo_to_graph(
+                g,
+                red_stack=red_stack, green_stack=green_stack,
+                red_spacing=red_spacing, green_spacing=green_spacing,
+            )
+            del red_stack, green_stack
             save_graph(g, output_path, verbose=False)
 
-    if block_path:
-        if "ex_vivo_block" in existing_nodes:
-            print("\nEx vivo block already in graph — skipping")
-        else:
-            print("\n2. Adding ex vivo block")
-            print("-" * 60)
-            block_stack = load_block_stack(block_path)
-            block_spacing, _ = detect_spacing(block_path)
-            add_block_to_graph(g, block_stack, spacing=block_spacing)
-            del block_stack
+    # -------------------------------------------------------------
+    # Add ex-vivo block channels
+    # -------------------------------------------------------------
+    if any_block:
+        print("\n2. Adding ex-vivo block channels")
+        print("-" * 60)
+
+        red_stack = green_stack = None
+        red_spacing = green_spacing = None
+
+        if block_red_path:
+            if "ex_vivo_block_red" in existing_nodes:
+                print(f"  ex_vivo_block_red already in graph — skipping")
+            else:
+                red_stack = load_block_stack(block_red_path)
+                red_spacing, _ = detect_spacing(block_red_path)
+
+        if block_green_path:
+            if "ex_vivo_block_green" in existing_nodes:
+                print(f"  ex_vivo_block_green already in graph — skipping")
+            else:
+                green_stack = load_block_stack(block_green_path)
+                green_spacing, _ = detect_spacing(block_green_path)
+                ref_spacing = red_spacing
+                if ref_spacing is None and block_red_path:
+                    ref_spacing, _ = detect_spacing(block_red_path)
+                if ref_spacing is not None:
+                    _assert_spacing_match(ref_spacing, green_spacing,
+                                          "BLOCK_STACK_PATH_RED", "BLOCK_STACK_PATH_GREEN")
+
+        if red_stack is not None or green_stack is not None:
+            add_block_to_graph(
+                g,
+                red_stack=red_stack, green_stack=green_stack,
+                red_spacing=red_spacing, green_spacing=green_spacing,
+            )
+            del red_stack, green_stack
             save_graph(g, output_path, verbose=False)
 
     if subslice_dir:
@@ -633,13 +782,18 @@ def build_subslice_graph(
     print("=" * 60)
     print(f"Graph: {output_path}")
     print(f"Total nodes: {len(g.nodes)}")
-    if invivo_path:
-        print(f"  - 1 in vivo reference")
-    if block_path:
-        print(f"  - 1 ex vivo block")
+    n_anchor = 0
+    for label, present in [
+        ("invivo_ref_red",      "invivo_ref_red" in g.nodes),
+        ("invivo_ref_green",    "invivo_ref_green" in g.nodes),
+        ("ex_vivo_block_red",   "ex_vivo_block_red" in g.nodes),
+        ("ex_vivo_block_green", "ex_vivo_block_green" in g.nodes),
+    ]:
+        if present:
+            print(f"  - {label}")
+            n_anchor += 1
     if subslice_dir:
-        n_fixed = int(bool(invivo_path)) + int(bool(block_path))
-        print(f"  - {len(g.nodes) - n_fixed} ex vivo subslices")
+        print(f"  - {len(g.nodes) - n_anchor} ex vivo subslices")
     print(f"\nReady for alignment in CASTalign!")
 
     return output_path
