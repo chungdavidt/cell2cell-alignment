@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(python:*)",
-      "Bash(xargs grep *)"
+      "Bash(xargs grep *)",
+      "Read(//c/Users/David/.claude/**)",
+      "Bash(echo \"jq exit: $?\")",
+      "Bash(rm \"C:/Users/David/.claude/.merge_settings.py\")"
     ]
   },
   "sandbox": {
