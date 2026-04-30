@@ -81,3 +81,14 @@ SUBSLICE_DIR = ""
 #   Mac:      "/Volumes/home/lab/output/linestuffup_output/castalign_test.db"
 #   Linux:    "/home/yourname/lab/output/linestuffup_output/castalign_test.db"
 GRAPH_PATH = ""
+
+# ---------------------------------------------------------------------
+# Scope fallback for files lacking pixel calibration metadata.
+# Values: "li_lab" | "huang_lab" | "" (blank).
+# Behavior: if the TIFF has XResolution metadata, the autodetector uses it
+# (this fallback is ignored). If metadata is absent, the builder uses the
+# scope named here for that modality. Blank with absent metadata is a hard
+# error.
+# ---------------------------------------------------------------------
+SCOPE_FALLBACK_INVIVO = ""
+SCOPE_FALLBACK_BLOCK = ""

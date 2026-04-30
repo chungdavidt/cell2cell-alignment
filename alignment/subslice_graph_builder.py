@@ -58,6 +58,20 @@ BLOCK_STACK_PATH_RED = getattr(local_config, "BLOCK_STACK_PATH_RED", "")
 BLOCK_STACK_PATH_GREEN = getattr(local_config, "BLOCK_STACK_PATH_GREEN", "")
 SUBSLICE_DIR = getattr(local_config, "SUBSLICE_DIR", "")
 
+# Scope fallback knobs — used when a TIFF lacks XResolution metadata so the
+# user can declare which scope produced it. Direct attribute access (no
+# default): old local_config.py without these vars must be updated.
+try:
+    SCOPE_FALLBACK_INVIVO = local_config.SCOPE_FALLBACK_INVIVO
+    SCOPE_FALLBACK_BLOCK = local_config.SCOPE_FALLBACK_BLOCK
+except AttributeError as e:
+    raise ImportError(
+        f"local_config.py is missing a required variable: {e}\n"
+        "SCOPE_FALLBACK_INVIVO and SCOPE_FALLBACK_BLOCK are required\n"
+        '(set to "" if your TIFFs have XResolution metadata).\n'
+        "See local_config.example.py."
+    )
+
 # Legacy node names from the pre-multi-channel schema. Presence of either in a
 # loaded graph triggers the migration guard in build_subslice_graph().
 LEGACY_NODE_NAMES = {"invivo_ref", "ex_vivo_block"}
@@ -255,6 +269,78 @@ def detect_spacing(
     )
 
 
+def resolve_spacing(
+    tiff_path: Union[str, Path],
+    fallback_scope: str,
+    fallback_var_name: str,
+) -> tuple:
+    """
+    Resolve (Z, Y, X) spacing for a TIFF.
+
+    Tries metadata first via `detect_spacing`. If the TIFF lacks XY
+    resolution metadata, falls back to MICROSCOPE_PROFILES[fallback_scope]
+    when set; otherwise raises pointing the user at fallback_var_name in
+    local_config.py. Errors from `detect_spacing` other than missing-XY
+    (e.g. unknown-scope) propagate unchanged.
+
+    Parameters
+    ----------
+    tiff_path : Path
+        Path to TIFF stack.
+    fallback_scope : str
+        Scope name from local_config (e.g. "huang_lab"), or "" to disable.
+    fallback_var_name : str
+        Name of the local_config variable to surface in error messages.
+
+    Returns
+    -------
+    tuple
+        ((z, y, x) spacing in µm/px, microscope_name)
+    """
+    try:
+        spacing, name = detect_spacing(tiff_path)
+        print(f"  Source: TIFF metadata")
+        return spacing, name
+    except ValueError as e:
+        # Only intercept the no-XY-metadata case. Unknown-scope errors carry
+        # different content and must keep propagating loudly.
+        if "No XY resolution metadata" not in str(e):
+            raise
+
+    # Metadata absent — try fallback.
+    valid_scopes = sorted(MICROSCOPE_PROFILES.keys())
+    if fallback_scope == "":
+        raise ValueError(
+            f"\n{'='*60}\n"
+            f"No XY resolution metadata in: {Path(tiff_path).name}\n\n"
+            f"Set {fallback_var_name} in local_config.py to declare which\n"
+            f"microscope produced this file. Valid values:\n"
+            f"  {valid_scopes}\n\n"
+            f"Example:\n"
+            f"    {fallback_var_name} = \"huang_lab\"\n"
+            f"{'='*60}"
+        )
+
+    if fallback_scope not in MICROSCOPE_PROFILES:
+        raise ValueError(
+            f"\n{'='*60}\n"
+            f"{fallback_var_name} = '{fallback_scope}' is not a known scope.\n"
+            f"Valid values: {valid_scopes}\n"
+            f"Edit local_config.py.\n"
+            f"{'='*60}"
+        )
+
+    profile = MICROSCOPE_PROFILES[fallback_scope]
+    z = profile['z_um_per_px']
+    xy = profile['xy_um_per_px']
+    print(f"  No XY metadata in {Path(tiff_path).name}")
+    print(f"  Falling back to {fallback_var_name} = '{fallback_scope}'")
+    print(f"    Microscope: {fallback_scope} ({profile['description']})")
+    print(f"    Spacing (Z, Y, X): ({z}, {xy:.4f}, {xy:.4f}) µm/px")
+    print(f"    Source: local_config fallback")
+    return (z, xy, xy), fallback_scope
+
+
 # ============================================
 # Graph Operations
 # ============================================
@@ -411,6 +497,9 @@ def add_subslices_to_graph(
 
     # Subslice spacing: anisotropic to match in vivo after rotation
     # (Z, Y, X) where Z is slice thickness, Y/X are the pixel spacings
+    # TODO: when BARseq subslices land for non-Li-lab datasets, replace this
+    # hardcoded tuple with a SCOPE_FALLBACK_SUBSLICE knob mirroring the invivo/
+    # block fallbacks. See plans/tender-floating-horizon.md.
     metadata = {
         'spacing': (20.0, EXVIVO_Y_UM_PER_PX, EXVIVO_X_UM_PER_PX),  # (Z, Y, X) µm/px
         'anisotropic': True,
@@ -693,21 +782,27 @@ def build_subslice_graph(
                 print(f"  invivo_ref_red already in graph — skipping")
             else:
                 red_stack = load_invivo_stack(invivo_red_path)
-                red_spacing, _ = detect_spacing(invivo_red_path)
+                red_spacing, _ = resolve_spacing(
+                    invivo_red_path, SCOPE_FALLBACK_INVIVO, "SCOPE_FALLBACK_INVIVO"
+                )
 
         if invivo_green_path:
             if "invivo_ref_green" in existing_nodes:
                 print(f"  invivo_ref_green already in graph — skipping")
             else:
                 green_stack = load_invivo_stack(invivo_green_path)
-                green_spacing, _ = detect_spacing(invivo_green_path)
+                green_spacing, _ = resolve_spacing(
+                    invivo_green_path, SCOPE_FALLBACK_INVIVO, "SCOPE_FALLBACK_INVIVO"
+                )
                 # Sanity check: green must share the red channel's voxel grid.
                 # When red was just loaded, compare to red_spacing; when red is
                 # already a graph node, re-detect from the red TIFF (cheap —
                 # metadata only).
                 ref_spacing = red_spacing
                 if ref_spacing is None and invivo_red_path:
-                    ref_spacing, _ = detect_spacing(invivo_red_path)
+                    ref_spacing, _ = resolve_spacing(
+                        invivo_red_path, SCOPE_FALLBACK_INVIVO, "SCOPE_FALLBACK_INVIVO"
+                    )
                 if ref_spacing is not None:
                     _assert_spacing_match(ref_spacing, green_spacing,
                                           "INVIVO_PATH_RED", "INVIVO_PATH_GREEN")
@@ -736,17 +831,23 @@ def build_subslice_graph(
                 print(f"  ex_vivo_block_red already in graph — skipping")
             else:
                 red_stack = load_block_stack(block_red_path)
-                red_spacing, _ = detect_spacing(block_red_path)
+                red_spacing, _ = resolve_spacing(
+                    block_red_path, SCOPE_FALLBACK_BLOCK, "SCOPE_FALLBACK_BLOCK"
+                )
 
         if block_green_path:
             if "ex_vivo_block_green" in existing_nodes:
                 print(f"  ex_vivo_block_green already in graph — skipping")
             else:
                 green_stack = load_block_stack(block_green_path)
-                green_spacing, _ = detect_spacing(block_green_path)
+                green_spacing, _ = resolve_spacing(
+                    block_green_path, SCOPE_FALLBACK_BLOCK, "SCOPE_FALLBACK_BLOCK"
+                )
                 ref_spacing = red_spacing
                 if ref_spacing is None and block_red_path:
-                    ref_spacing, _ = detect_spacing(block_red_path)
+                    ref_spacing, _ = resolve_spacing(
+                        block_red_path, SCOPE_FALLBACK_BLOCK, "SCOPE_FALLBACK_BLOCK"
+                    )
                 if ref_spacing is not None:
                     _assert_spacing_match(ref_spacing, green_spacing,
                                           "BLOCK_STACK_PATH_RED", "BLOCK_STACK_PATH_GREEN")
