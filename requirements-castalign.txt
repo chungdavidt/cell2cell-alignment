@@ -1,5 +1,13 @@
 # castalign env — used by alignment/ and castalign_testground.ipynb
 # Preprocessing/ may also work in this env (TBD — see README)
+#
+# castalign: installed from local clone at C:\Users\David\lab_local\programs\castalign
+# PINNED to commit 1360831 (pre-v0.3) on branch pre-v0.3-rollback.
+# DO NOT `git pull` or `pip install --upgrade castalign` — v0.3 has a
+# QApplication-quit bug in the new align_interactive Qt dialog that breaks
+# Mode D in castalign_testground.ipynb. See:
+#   ~/.claude/plans/great-yes-proceed-with-sprightly-lovelace.md
+#   ~/.claude/projects/C--Users-David-lab-local-projects-cell-type-code-cell2cell-alignment/memory/project_castalign_v0_3_qapplication_bug.md
 castalign
 numpy
 scipy
