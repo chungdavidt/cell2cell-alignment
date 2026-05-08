@@ -19,4 +19,19 @@ matplotlib
 pandas
 imageio
 ipywidgets
+# `graphviz` (Python) is a thin wrapper that shells out to native `dot.exe`.
+# On a fresh machine you ALSO need the system Graphviz install, which is NOT
+# tracked here:
+#   Windows:
+#     1. winget install --id Graphviz.Graphviz
+#     2. Append C:\Program Files\Graphviz\bin to user PATH manually -- winget
+#        14.1.5 does NOT register PATH (verified 2026-05-07):
+#          $d='C:\Program Files\Graphviz\bin'
+#          $p=[Environment]::GetEnvironmentVariable('Path','User')
+#          [Environment]::SetEnvironmentVariable('Path',"$p;$d",'User')
+#     3. Fully relaunch JupyterLab from a fresh terminal (kernel restart alone
+#        is NOT sufficient -- server inherits stale PATH).
+#   macOS:    brew install graphviz   (PATH usually already wired up)
+# Without it, `g.visualise()` raises ExecutableNotFound: WindowsPath('dot').
+# See memory/project_graphviz_native_dep.md.
 graphviz
