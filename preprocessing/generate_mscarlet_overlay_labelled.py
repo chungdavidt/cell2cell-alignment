@@ -39,7 +39,7 @@ except ImportError:
     HAS_SKIMAGE = False
     from scipy.ndimage import zoom
 
-from config import (
+from preprocessing_config import (
     FILT_NEURONS_PATH,
     HYB_ROOT,
     MSCARLET_LABELLED_DIR,

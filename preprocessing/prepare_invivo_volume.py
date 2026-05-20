@@ -28,7 +28,7 @@ import tifffile
 import time
 
 # Default paths (from local_config via config.py)
-from config import DATA_ROOT, OUTPUT_ROOT
+from preprocessing_config import DATA_ROOT, OUTPUT_ROOT
 
 DEFAULT_RAW_DATA_ROOT = Path(DATA_ROOT)
 DEFAULT_INVIVO_DIR = DEFAULT_RAW_DATA_ROOT / "in_vivo_stack"

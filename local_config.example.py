@@ -14,11 +14,12 @@ Each person sets their own paths once.
 #   Linux:    "/home/yourname/lab/raw_data/Data_ALM_cell_type_transcriptom/Batch3_JH302"
 DATA_ROOT = ""
 
-# Path to output directory
-# Examples:
-#   Windows:  "C:/Users/Li Lab/Documents/output"
-#   Mac:      "/Volumes/home/lab/output"
-#   Linux:    "/home/yourname/lab/output"
+# Path to the preprocessing output directory.
+# Leave BLANK to auto-derive to <DATA_ROOT>/preprocessing/ (recommended — keeps
+# derived outputs co-located with the dataset, in their own subfolder separate
+# from the raw hyb/ + filt_neurons.mat). Set an absolute path only if you want
+# outputs somewhere other than under DATA_ROOT. Consumed only by preprocessing;
+# the alignment graph builder ignores it.
 OUTPUT_ROOT = ""
 
 # ---------------------------------------------------------------------

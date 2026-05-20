@@ -223,7 +223,7 @@ Examples:
         print(f"Status: FAILED at step {failed_step}")
         sys.exit(1)
     else:
-        from config import (
+        from preprocessing_config import (
             OUTPUT_ROOT, SUBSLICE_DEFINITIONS_DIR, HYB_STITCHED_DIR,
             HYB_DOWNSAMPLED_DIR, MSCARLET_CELLMASK_DIR, MSCARLET_INTERACTIVE_DIR,
         )

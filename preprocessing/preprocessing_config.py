@@ -19,12 +19,36 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 try:
-    from local_config import DATA_ROOT, OUTPUT_ROOT
+    import local_config
 except ImportError:
     raise ImportError(
         "local_config.py not found.\n"
         "Copy local_config.example.py to local_config.py and fill in your paths:\n"
         "    cp local_config.example.py local_config.py"
+    )
+
+DATA_ROOT = getattr(local_config, "DATA_ROOT", "")
+if not DATA_ROOT:
+    raise ValueError(
+        "DATA_ROOT is not set in local_config.py.\n"
+        "Set it to the dataset folder containing filt_neurons.mat and hyb/."
+    )
+
+# OUTPUT_ROOT derives from DATA_ROOT when left blank: outputs co-locate under
+# <DATA_ROOT>/preprocessing/, in their own subfolder separate from the raw
+# hyb/ + filt_neurons.mat. An explicit non-blank OUTPUT_ROOT in local_config.py
+# overrides this (same "blank = auto-derive" idiom as GRAPH_PATH on the
+# alignment side). OUTPUT_ROOT is consumed only by preprocessing.
+OUTPUT_ROOT = getattr(local_config, "OUTPUT_ROOT", "") or os.path.join(DATA_ROOT, "preprocessing")
+
+# Guard: a relative OUTPUT_ROOT would silently resolve against the run cwd
+# (run_pipeline.py runs each step with cwd=preprocessing/), dumping outputs into
+# the code folder. Require absolute so that footgun can never recur.
+if not os.path.isabs(OUTPUT_ROOT):
+    raise ValueError(
+        f"OUTPUT_ROOT resolved to a non-absolute path: {OUTPUT_ROOT!r}\n"
+        "Set DATA_ROOT (and OUTPUT_ROOT, if you set it explicitly) to absolute "
+        "paths in local_config.py."
     )
 
 # =============================================================================

@@ -37,7 +37,7 @@ import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for server
 import matplotlib.pyplot as plt
 
-from config import (
+from preprocessing_config import (
     FILT_NEURONS_PATH,
     SUBSLICE_DEFINITIONS_FILE,
     SUBSLICE_DEFINITIONS_DIR,

@@ -38,7 +38,7 @@ from pathlib import Path
 from scipy import sparse
 import time
 
-from config import (
+from preprocessing_config import (
     FILT_NEURONS_PATH,
     SUBSLICE_DEFINITIONS_FILE,
     HYB_ROOT,

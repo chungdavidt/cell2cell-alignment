@@ -51,7 +51,7 @@ except ImportError:
     HAS_SKIMAGE = False
     from scipy.ndimage import zoom
 
-from config import (
+from preprocessing_config import (
     HYB_STITCHED_DIR,
     HYB_DOWNSAMPLED_DIR,
     EXVIVO_UM_PER_PX,

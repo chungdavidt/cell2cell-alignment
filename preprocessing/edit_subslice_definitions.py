@@ -28,7 +28,7 @@ import numpy as np
 from pathlib import Path
 from scipy import sparse
 
-from config import (
+from preprocessing_config import (
     FILT_NEURONS_PATH,
     SUBSLICE_DEFINITIONS_DIR,
     SUBSLICE_DEFINITIONS_FILE,

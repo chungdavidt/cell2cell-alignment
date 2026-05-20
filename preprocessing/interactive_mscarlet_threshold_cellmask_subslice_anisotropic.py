@@ -36,7 +36,7 @@ import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for server use
 import matplotlib.pyplot as plt
 
-from config import (
+from preprocessing_config import (
     FILT_NEURONS_PATH,
     HYB_DOWNSAMPLED_DIR,
     MSCARLET_INTERACTIVE_DIR,

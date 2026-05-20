@@ -40,7 +40,7 @@ from scipy import sparse
 import re
 import time
 
-from config import (
+from preprocessing_config import (
     FILT_NEURONS_PATH,
     HYB_DOWNSAMPLED_DIR,
     MSCARLET_CELLMASK_DIR,
