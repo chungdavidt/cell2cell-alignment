@@ -200,6 +200,16 @@ def load_block_stack(path: Union[str, Path]) -> np.ndarray:
     return stack
 
 
+# Largest XY pixel size (µm/px) we'll accept as a *real* microscope calibration.
+# Cellular 2P imaging is sub-~5 µm/px (li_lab 2.34, huang_lab 1.11). Anything
+# coarser read from TIFF metadata is almost always an uncalibrated screen/print
+# DPI default rather than a true pixel size — e.g. the 72-DPI inch default reads
+# as 25400/72 = 352.78 µm/px (300-DPI → 84.7, 600-DPI → 42.3, all > 20). Treated
+# as "uncalibrated" so the SCOPE_FALLBACK_* mechanism takes over (loud warning,
+# no hard break). Tune here if a genuinely coarse scope is ever added.
+MAX_PLAUSIBLE_XY_UM_PER_PX = 20.0
+
+
 def detect_spacing(
     tiff_path: Union[str, Path],
     tolerance: float = 0.05
@@ -224,7 +234,13 @@ def detect_spacing(
     Raises
     ------
     ValueError
-        If no resolution metadata or no matching microscope profile
+        - "No XY resolution metadata ..." if the TIFF has no XY calibration
+        - "Uncalibrated XY resolution ..." if the detected XY exceeds
+          MAX_PLAUSIBLE_XY_UM_PER_PX (a DPI default, not a real scope)
+        - "Could not identify microscope ..." if XY is plausible but matches
+          no MICROSCOPE_PROFILES entry (a genuine new scope to add)
+        `resolve_spacing` treats the first two as fall-back-able and lets the
+        third propagate.
     """
     res = get_tiff_resolution(tiff_path)
 
@@ -236,6 +252,18 @@ def detect_spacing(
 
     xy = res['xy_um_per_px']
     z = res['z_um_per_px']
+
+    # Metadata present but implausibly coarse → an uncalibrated DPI default, not
+    # a real scope. Raise a DISTINCT error so resolve_spacing can warn + fall
+    # back (rather than the hard "unknown scope" error, which is reserved for a
+    # plausible-but-unrecognized resolution that warrants a new profile).
+    if xy > MAX_PLAUSIBLE_XY_UM_PER_PX:
+        raise ValueError(
+            f"Uncalibrated XY resolution in {Path(tiff_path).name}: detected "
+            f"{xy:.4f} µm/px (> {MAX_PLAUSIBLE_XY_UM_PER_PX} µm/px plausibility "
+            f"ceiling). This is almost certainly a screen/print DPI default "
+            f"(e.g. 72 DPI → 352.78 µm/px), not a real microscope calibration."
+        )
 
     for name, profile in MICROSCOPE_PROFILES.items():
         expected_xy = profile['xy_um_per_px']
@@ -277,11 +305,17 @@ def resolve_spacing(
     """
     Resolve (Z, Y, X) spacing for a TIFF.
 
-    Tries metadata first via `detect_spacing`. If the TIFF lacks XY
-    resolution metadata, falls back to MICROSCOPE_PROFILES[fallback_scope]
-    when set; otherwise raises pointing the user at fallback_var_name in
-    local_config.py. Errors from `detect_spacing` other than missing-XY
-    (e.g. unknown-scope) propagate unchanged.
+    Tries metadata first via `detect_spacing`. Falls back to
+    MICROSCOPE_PROFILES[fallback_scope] (when set) in TWO cases:
+      - the TIFF lacks XY resolution metadata ("absent"), or
+      - the metadata is present but bogus — an uncalibrated DPI default above
+        MAX_PLAUSIBLE_XY_UM_PER_PX ("bogus"). This prints a LOUD warning that
+        the file's pixel size is wrong and the chosen fallback scope is being
+        trusted instead.
+    A plausible-but-unrecognized resolution (genuine new scope) still
+    propagates unchanged, so the user adds a MICROSCOPE_PROFILES entry rather
+    than silently inheriting a fallback. With fallback_scope set, neither
+    uncalibrated case is a hard break; only a blank fallback raises.
 
     Parameters
     ----------
@@ -297,22 +331,42 @@ def resolve_spacing(
     tuple
         ((z, y, x) spacing in µm/px, microscope_name)
     """
+    uncalibrated_reason = None
     try:
         spacing, name = detect_spacing(tiff_path)
         print(f"  Source: TIFF metadata")
         return spacing, name
     except ValueError as e:
-        # Only intercept the no-XY-metadata case. Unknown-scope errors carry
-        # different content and must keep propagating loudly.
-        if "No XY resolution metadata" not in str(e):
+        msg = str(e)
+        if "No XY resolution metadata" in msg:
+            # Metadata absent — fall back quietly with a notice.
+            uncalibrated_reason = "absent"
+        elif "Uncalibrated XY resolution" in msg:
+            # Metadata present but bogus (DPI default) — fall back, but LOUDLY.
+            uncalibrated_reason = "bogus"
+        else:
+            # Plausible-but-unrecognized resolution = a genuine new scope.
+            # Keep propagating so the user adds a MICROSCOPE_PROFILES entry.
             raise
 
-    # Metadata absent — try fallback.
+        if uncalibrated_reason == "bogus":
+            print("=" * 60)
+            print("⚠️  WARNING: WRONG / UNCALIBRATED pixel resolution detected")
+            print(f"  {msg.strip()}")
+            print(f"  Ignoring the file's metadata and falling back by scope.")
+            print(f"  >>> If {fallback_var_name} is not the scope that actually")
+            print(f"  >>> produced this file, the spacing WILL BE WRONG. <<<")
+            print("=" * 60)
+
+    # Metadata absent or bogus — try fallback.
     valid_scopes = sorted(MICROSCOPE_PROFILES.keys())
+    problem = ("Uncalibrated (bogus DPI-default) XY resolution"
+               if uncalibrated_reason == "bogus"
+               else "No XY resolution metadata")
     if fallback_scope == "":
         raise ValueError(
             f"\n{'='*60}\n"
-            f"No XY resolution metadata in: {Path(tiff_path).name}\n\n"
+            f"{problem} in: {Path(tiff_path).name}\n\n"
             f"Set {fallback_var_name} in local_config.py to declare which\n"
             f"microscope produced this file. Valid values:\n"
             f"  {valid_scopes}\n\n"
@@ -333,7 +387,7 @@ def resolve_spacing(
     profile = MICROSCOPE_PROFILES[fallback_scope]
     z = profile['z_um_per_px']
     xy = profile['xy_um_per_px']
-    print(f"  No XY metadata in {Path(tiff_path).name}")
+    print(f"  {problem} in {Path(tiff_path).name}")
     print(f"  Falling back to {fallback_var_name} = '{fallback_scope}'")
     print(f"    Microscope: {fallback_scope} ({profile['description']})")
     print(f"    Spacing (Z, Y, X): ({z}, {xy:.4f}, {xy:.4f}) µm/px")
