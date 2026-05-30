@@ -6,4 +6,6 @@ __pycache__/
 local_config.py
 .castalign-venv/
 .cellpose-venv/
+.venv/
 .vscode/
+.claude/scheduled_tasks.lock
