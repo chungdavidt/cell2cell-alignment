@@ -102,20 +102,34 @@ MICROSCOPE_PROFILES = {
         'z_um_per_px': 1.0,
         'description': 'Li lab 2P (1200 µm FOV)',
     },
+    # The Huang lab 2P runs one 512-px scanner at two zoom settings, ~2.83x
+    # apart. 'huang_lab' is the CURRENT one (200.19 µm FOV, 1 µm Z, 401 z
+    # levels) — that is what a bare SCOPE_FALLBACK_* = "huang_lab" means.
+    # The older 566.08 µm setting keeps its own key and is still needed here:
+    # by84/by94 carry 1.1055 in their TIFF tags, and an XY matching no profile
+    # is a hard error, so removing it would break autodetection on those files.
     'huang_lab': {
-        'xy_um_per_px': 1.1055,     # 512 px / 566.08 µm FOV
-        'z_um_per_px': 2.0,
-        'description': 'Huang lab 2P (566.08 µm FOV)',
-    },
-    # Same 512-px scanner as 'huang_lab', zoomed ~2.83x. Both settings are in
-    # use; the two XY values are far enough apart that autodetection separates
-    # them, but a blind SCOPE_FALLBACK_* pick between them is a 2.83x error.
-    'huang_lab_200um': {
         'xy_um_per_px': 0.3910,     # 512 px / 200.19 µm FOV
-        'z_um_per_px': 1.0,
+        'z_um_per_px': 1.0,         # 401 z levels
         'description': 'Huang lab 2P (200.19 µm FOV, 1 µm Z)',
     },
+    'huang_lab_566um': {
+        'xy_um_per_px': 1.1055,     # 512 px / 566.08 µm FOV
+        'z_um_per_px': 2.0,
+        'description': 'Huang lab 2P, older zoom (566.08 µm FOV, 2 µm Z)',
+    },
 }
+
+# Accepted SCOPE_FALLBACK_* spellings that are not profile keys. Kept so a
+# config written against the 2026-08-21 naming keeps working.
+SCOPE_ALIASES = {
+    'huang_lab_200um': 'huang_lab',
+}
+
+
+def resolve_scope_name(name: str) -> str:
+    """Map a SCOPE_FALLBACK_* value through SCOPE_ALIASES to a profile key."""
+    return SCOPE_ALIASES.get(name, name)
 
 
 # ============================================
@@ -210,7 +224,7 @@ def load_block_stack(path: Union[str, Path]) -> np.ndarray:
 
 
 # Largest XY pixel size (µm/px) we'll accept as a *real* microscope calibration.
-# Cellular 2P imaging is sub-~5 µm/px (li_lab 2.34, huang_lab 1.11 / 0.39). Anything
+# Cellular 2P imaging is sub-~5 µm/px (li_lab 2.34, huang_lab 0.39 / 1.11). Anything
 # coarser read from TIFF metadata is almost always an uncalibrated screen/print
 # DPI default rather than a true pixel size — e.g. the 72-DPI inch default reads
 # as 25400/72 = 352.78 µm/px (300-DPI → 84.7, 600-DPI → 42.3, all > 20). Treated
@@ -332,6 +346,9 @@ def resolve_spacing(
         Path to TIFF stack.
     fallback_scope : str
         Scope name from local_config (e.g. "huang_lab"), or "" to disable.
+        Passed through `resolve_scope_name`, so SCOPE_ALIASES spellings work.
+        Note "huang_lab" is the 200.19 µm-FOV / 1 µm-Z setting; the older
+        566.08 µm one is "huang_lab_566um" (by84, by94, by89).
     fallback_var_name : str
         Name of the local_config variable to surface in error messages.
 
@@ -368,6 +385,7 @@ def resolve_spacing(
             print("=" * 60)
 
     # Metadata absent or bogus — try fallback.
+    fallback_scope = resolve_scope_name(fallback_scope)
     valid_scopes = sorted(MICROSCOPE_PROFILES.keys())
     problem = ("Uncalibrated (bogus DPI-default) XY resolution"
                if uncalibrated_reason == "bogus"

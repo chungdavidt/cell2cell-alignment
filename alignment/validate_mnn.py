@@ -13,8 +13,9 @@ MVP scope. No size filter, no null shuffle, no pre-vs-post nonlinear comparison
 
 Both volumes are assumed to share a voxel pitch. Distances are reported in both
 voxel and um; per-axis um is also reported because Z and XY pitches differ. The
-pitch used for the um report defaults to the Huang lab 566.08 um-FOV setting and
-is overridden with --um-per-voxel (BY95: 1.0,0.3910,0.3910).
+pitch used for the um report defaults to the current Huang lab setting
+('huang_lab': 200.19 um FOV, 1 um Z) and is overridden with --um-per-voxel
+(by84/by94/by89, the older 566.08 um zoom: 2.0,1.1055,1.1055).
 
 CLI:
     python alignment/validate_mnn.py
@@ -34,11 +35,14 @@ from scipy.spatial import cKDTree
 
 
 # (Z, Y, X) µm/voxel used only to report MNN distances in µm. Default is the
-# 566.08 µm-FOV Huang lab setting (by84/by94/by89); BY95 and anything else on
-# the 200.19 µm-FOV / 1 µm-Z setting needs --um-per-voxel 1.0,0.3910,0.3910.
+# current Huang lab setting ('huang_lab': 200.19 µm FOV, 1 µm Z). The older
+# 566.08 µm zoom that by84/by94/by89 were acquired on needs
+# --um-per-voxel 2.0,1.1055,1.1055. The pitch in use is echoed in the header,
+# so a run is never scored in µm against an unstated pitch.
 # Keep in sync with MICROSCOPE_PROFILES in subslice_graph_builder.py (not
 # imported here — this script runs in .cellpose-venv, which has no castalign).
-HUANG_UM_PER_VOXEL = (2.0, 1.1055, 1.1055)
+HUANG_UM_PER_VOXEL = (1.0, 0.3910, 0.3910)
+HUANG_566UM_PER_VOXEL = (2.0, 1.1055, 1.1055)
 # Validation operates on the red (sparse) alignment channel by design — it's the
 # segmentation channel and the only side with a fitted rigid edge. Green is
 # joined via Identity in the graph but is not segmented here.
@@ -311,8 +315,9 @@ def main(argv: Optional[list] = None) -> int:
         help=(
             "Voxel pitch in µm for the µm-distance report, as Z,Y,X. "
             f"Default {','.join(str(v) for v in HUANG_UM_PER_VOXEL)} "
-            "(Huang lab 566.08 µm FOV). Use 1.0,0.3910,0.3910 for the "
-            "200.19 µm FOV / 1 µm Z setting (BY95)."
+            "(huang_lab, 200.19 µm FOV / 1 µm Z). Use "
+            f"{','.join(str(v) for v in HUANG_566UM_PER_VOXEL)} for the older "
+            "566.08 µm zoom (by84, by94, by89)."
         ),
     )
     parser.add_argument("--node-movable", default=DEFAULT_NODE_MOVABLE)
@@ -371,6 +376,8 @@ def main(argv: Optional[list] = None) -> int:
     print(f"In-vivo:    {invivo_seg}")
     print(f"Output dir: {out_dir}")
     print(f"Direction:  {args.node_movable} -> {args.node_fixed}")
+    print(f"µm/voxel:   {um_per_voxel} (Z, Y, X)"
+          f"{'' if args.um_per_voxel else ' — default; override with --um-per-voxel'}")
     print()
 
     out_dir.mkdir(parents=True, exist_ok=True)
