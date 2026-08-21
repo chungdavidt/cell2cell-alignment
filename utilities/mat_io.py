@@ -310,9 +310,11 @@ def load_filt_neurons(filepath):
         - fov: FOV names (list of strings)
         - fov_names: Unique FOV names (if fov is numeric indices)
         - slice: Slice IDs
+        - genes: Gene names (list of strings), when the export ships one
 
-    IMPORTANT: mScarlet is in column index 113 (0-indexed in Python).
-    In MATLAB it was column 114 (1-indexed).
+    expmat is oriented to (cells, genes) on load; the marker column is resolved
+    by gene name via resolve_marker_column() when a gene list is present, else
+    from the dataset-specific MSCARLET_COLUMN_INDEX (113 for JH302).
     """
     data = load_mat(filepath, squeeze_me=True, struct_as_record=False)
 
@@ -332,6 +334,12 @@ def load_filt_neurons(filepath):
 
     # Normalize FOV names to list of strings
     result = _normalize_fov_names(result)
+
+    # Normalize the gene list ('Genes' in the Allen/BY95 export, 'genes' in JH302)
+    result = _normalize_gene_names(result)
+
+    # Orient expmat as (cells, genes) — see _orient_expmat
+    result = _orient_expmat(result)
 
     # Fix array orientations from HDF5 (MATLAB stores column-major)
     # pos and pos40x should be (N, 2) not (2, N)
@@ -356,6 +364,110 @@ def load_filt_neurons(filepath):
             result['expmat'] = sparse.csr_matrix(expmat)
 
     return result
+
+
+def _normalize_gene_names(data):
+    """Normalize the gene-name list to ``data['genes']`` (list of str).
+
+    Accepts 'genes', 'Genes', 'gene_names', 'geneNames'. JH302 ships a 114x2
+    cell array (two name columns per gene), so a flat 2N-long list or an (N, 2)
+    array is folded back to N entries with the second column kept in
+    ``data['genes_alt']`` — flattening it would shift every gene index.
+    """
+    for key in ('genes', 'Genes', 'gene_names', 'geneNames'):
+        if key not in data:
+            continue
+        raw = data[key]
+
+        cols = None
+        if isinstance(raw, np.ndarray) and raw.ndim == 2 and raw.shape[1] == 2:
+            cols = [raw[:, 0], raw[:, 1]]
+        else:
+            flat = raw if isinstance(raw, (list, tuple)) else np.asarray(raw).flatten()
+            flat = list(flat)
+            n_genes = _n_genes_hint(data)
+            if n_genes and len(flat) == 2 * n_genes:
+                # MATLAB cells flatten column-major: first column, then second.
+                cols = [flat[:n_genes], flat[n_genes:]]
+            else:
+                cols = [flat]
+
+        data['genes'] = _as_str_list(cols[0])
+        if len(cols) > 1:
+            data['genes_alt'] = _as_str_list(cols[1])
+        return data
+    return data
+
+
+def _as_str_list(values):
+    out = []
+    for v in values:
+        if isinstance(v, bytes):
+            out.append(v.decode('utf-8').strip())
+        elif isinstance(v, np.ndarray):
+            out.append(''.join(str(x) for x in v.flatten()).strip())
+        else:
+            out.append(str(v).strip())
+    return out
+
+
+def _n_genes_hint(data):
+    """Gene count implied by expmat's smaller axis, or None."""
+    expmat = data.get('expmat') if hasattr(data, 'get') else None
+    if expmat is None or not hasattr(expmat, 'shape') or len(expmat.shape) != 2:
+        return None
+    return int(min(expmat.shape))
+
+
+def _n_cells_hint(data):
+    """Number of cells implied by the per-cell fields, or None."""
+    for key in ('slice', 'fov', 'pos', 'pos40x', 'id', 'depth'):
+        if key not in data:
+            continue
+        v = data[key]
+        if isinstance(v, (list, tuple)):
+            return len(v)
+        v = np.asarray(v)
+        if v.ndim == 1:
+            return int(v.shape[0])
+        if v.ndim == 2 and 2 in v.shape:
+            return int(v.shape[0] if v.shape[1] == 2 else v.shape[1])
+    return None
+
+
+def _orient_expmat(data):
+    """Ensure ``expmat`` is (cells, genes).
+
+    The pipeline indexes cells on axis 0 and genes on axis 1 throughout
+    (``expmat[:, marker_col]``, ``sum(axis=1)`` for per-cell QC totals). Exports
+    differ: JH302 ships cells x genes, the BY95 Allen export ships genes x cells.
+    Decide from the per-cell field lengths and the gene list rather than trusting
+    either convention, and transpose when they say so.
+    """
+    if 'expmat' not in data:
+        return data
+
+    expmat = data['expmat']
+    if not hasattr(expmat, 'ndim') or expmat.ndim != 2:
+        return data
+
+    n_rows, n_cols = expmat.shape
+    if n_rows == n_cols:
+        return data  # square: no way to tell, leave it alone
+
+    n_cells = _n_cells_hint(data)
+    n_genes = len(data['genes']) if 'genes' in data else None
+
+    transpose = None
+    if n_cells is not None and n_rows != n_cells and n_cols == n_cells:
+        transpose = f"per-cell fields imply {n_cells} cells"
+    elif n_genes is not None and n_rows == n_genes and n_cols != n_genes:
+        transpose = f"gene list implies {n_genes} genes"
+
+    if transpose:
+        print(f"  expmat: transposing {expmat.shape} -> (cells, genes) ({transpose})")
+        data['expmat'] = expmat.T.tocsr() if sparse.issparse(expmat) else expmat.T
+    return data
 
 
 def _normalize_fov_names(data):
@@ -409,6 +521,50 @@ def sparse_to_dense(mat):
     if sparse.issparse(mat):
         return mat.toarray()
     return np.asarray(mat)
+
+
+def resolve_marker_column(filt_neurons, gene_name, fallback_index=None):
+    """Column index of a marker gene in ``expmat``.
+
+    Looks the name up in the gene list (case-insensitive) when the export ships
+    one; otherwise falls back to the dataset-specific hardcoded index. Raises if
+    neither is available, since a wrong marker column fails silently — every
+    downstream cell just gets the wrong expression values.
+    """
+    get = filt_neurons.get if hasattr(filt_neurons, 'get') else lambda k, d=None: d
+    genes = get('genes')
+    if genes:
+        target = gene_name.lower()
+        # JH302's gene cell has two name columns; check both before giving up.
+        for column, names in (('genes', genes), ('genes_alt', get('genes_alt') or [])):
+            lowered = [g.lower() for g in names]
+            if target in lowered:
+                idx = lowered.index(target)
+                print(f"  marker '{gene_name}' resolved to expmat column {idx} "
+                      f"(exact match in {column})")
+                return idx
+            matches = [i for i, g in enumerate(lowered) if target in g]
+            if len(matches) == 1:
+                print(f"  marker '{gene_name}' resolved to expmat column {matches[0]} "
+                      f"('{names[matches[0]]}', substring match in {column})")
+                return matches[0]
+            if len(matches) > 1:
+                raise ValueError(
+                    f"Gene name {gene_name!r} matches several entries in {column}: "
+                    f"{[names[i] for i in matches]}. Set MSCARLET_GENE_NAME to the exact name."
+                )
+        raise ValueError(
+            f"Gene name {gene_name!r} not found in the {len(genes)}-gene list. "
+            f"Last 10 entries: {genes[-10:]}"
+        )
+
+    if fallback_index is None:
+        raise ValueError(
+            f"No gene list in filt_neurons.mat and no fallback column index for {gene_name!r}."
+        )
+    print(f"  marker '{gene_name}': no gene list in filt_neurons.mat, "
+          f"using hardcoded column {fallback_index}")
+    return fallback_index
 
 
 def get_expression_column(expmat, column_idx):

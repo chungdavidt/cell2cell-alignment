@@ -44,6 +44,7 @@ from preprocessing_config import (
     HYB_ROOT,
     MSCARLET_LABELLED_DIR,
     MSCARLET_COLUMN_INDEX,
+    MSCARLET_GENE_NAME,
     QC_MIN_READS,
     QC_MIN_GENES,
     DAPI_BRIGHTNESS,
@@ -53,7 +54,7 @@ from preprocessing_config import (
     LABEL_TEXT_COLOR,
     get_threshold_folder,
 )
-from utilities.mat_io import load_filt_neurons, load_mat, get_expression_column
+from utilities.mat_io import load_filt_neurons, load_mat, get_expression_column, resolve_marker_column
 from utilities.regression import calculate_fov_offset
 
 
@@ -175,7 +176,9 @@ def generate_mscarlet_overlay_labelled(
     print(f"QC filtering: {np.sum(pass_qc)} / {len(pass_qc)} cells pass ({100*np.sum(pass_qc)/len(pass_qc):.1f}%)")
 
     # Get mScarlet expression
-    mscarlet_expression = get_expression_column(expmat, MSCARLET_COLUMN_INDEX)
+    mscarlet_col = resolve_marker_column(
+        filt_neurons, MSCARLET_GENE_NAME, MSCARLET_COLUMN_INDEX)
+    mscarlet_expression = get_expression_column(expmat, mscarlet_col)
     max_expr = np.max(mscarlet_expression[pass_qc])
     print(f"Global max mScarlet (QC-passed): {max_expr} transcripts")
 

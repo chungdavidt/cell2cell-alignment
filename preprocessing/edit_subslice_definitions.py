@@ -34,11 +34,12 @@ from preprocessing_config import (
     SUBSLICE_DEFINITIONS_FILE,
     MSCARLET_LABELLED_DIR,
     MSCARLET_COLUMN_INDEX,
+    MSCARLET_GENE_NAME,
     QC_MIN_READS,
     QC_MIN_GENES,
     get_threshold_folder,
 )
-from utilities.mat_io import load_filt_neurons, load_mat, save_mat, get_expression_column
+from utilities.mat_io import load_filt_neurons, load_mat, save_mat, get_expression_column, resolve_marker_column
 from utilities.graph_utils import parse_fov_grid_positions
 from utilities.visualization import visualize_subslice
 
@@ -316,7 +317,9 @@ def edit_subslice_definitions(threshold: float = 0.0, target_slice: int = None):
         total_genes = np.sum(expmat > 0, axis=1)
 
     pass_qc = (total_reads >= QC_MIN_READS) & (total_genes >= QC_MIN_GENES)
-    mscarlet_expression = get_expression_column(expmat, MSCARLET_COLUMN_INDEX)
+    mscarlet_col = resolve_marker_column(
+        filt_neurons, MSCARLET_GENE_NAME, MSCARLET_COLUMN_INDEX)
+    mscarlet_expression = get_expression_column(expmat, mscarlet_col)
     mscarlet_positive = mscarlet_expression > 0
     mscarlet_qc_pass = pass_qc & mscarlet_positive
 

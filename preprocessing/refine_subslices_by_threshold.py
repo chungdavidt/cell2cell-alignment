@@ -44,8 +44,9 @@ from preprocessing_config import (
     QC_MIN_READS,
     QC_MIN_GENES,
     MSCARLET_COLUMN_INDEX,
+    MSCARLET_GENE_NAME,
 )
-from utilities.mat_io import load_filt_neurons, load_mat, save_mat
+from utilities.mat_io import load_filt_neurons, load_mat, save_mat, resolve_marker_column
 
 
 def build_adjacency_8connected(positions: np.ndarray) -> np.ndarray:
@@ -251,7 +252,9 @@ def refine_subslices_by_threshold(
     qc_pass = (total_reads >= QC_MIN_READS) & (genes_expressed >= QC_MIN_GENES)
 
     # Get mScarlet expression and normalize
-    mscarlet_expression = expmat[:, MSCARLET_COLUMN_INDEX]
+    mscarlet_col = resolve_marker_column(
+        filt_neurons, MSCARLET_GENE_NAME, MSCARLET_COLUMN_INDEX)
+    mscarlet_expression = expmat[:, mscarlet_col]
     qc_mscarlet = mscarlet_expression[qc_pass]
     max_mscarlet = np.max(qc_mscarlet) if len(qc_mscarlet) > 0 else 1.0
     mscarlet_normalized = mscarlet_expression / max_mscarlet

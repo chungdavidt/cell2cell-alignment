@@ -45,6 +45,7 @@ from preprocessing_config import (
     HYB_DOWNSAMPLED_DIR,
     MSCARLET_CELLMASK_DIR,
     MSCARLET_COLUMN_INDEX,
+    MSCARLET_GENE_NAME,
     QC_MIN_READS,
     QC_MIN_GENES,
     EXVIVO_UM_PER_PX,
@@ -55,7 +56,7 @@ from preprocessing_config import (
     MSCARLET_BOOST,
     get_threshold_folder,
 )
-from utilities.mat_io import load_filt_neurons, load_mat, load_cellmask_h5, get_expression_column
+from utilities.mat_io import load_filt_neurons, load_mat, load_cellmask_h5, get_expression_column, resolve_marker_column
 from utilities.image_io import imwrite_tiff
 from utilities.visualization import create_comparison_figure
 
@@ -129,7 +130,9 @@ def generate_mscarlet_cellmask_subslice_anisotropic(
     print(f"  QC filtering: {np.sum(pass_qc)} / {n_cells} cells pass ({100*np.sum(pass_qc)/n_cells:.1f}%)")
 
     # Get mScarlet expression
-    mscarlet_expression = get_expression_column(expmat, MSCARLET_COLUMN_INDEX)
+    mscarlet_col = resolve_marker_column(
+        filt_neurons, MSCARLET_GENE_NAME, MSCARLET_COLUMN_INDEX)
+    mscarlet_expression = get_expression_column(expmat, mscarlet_col)
 
     # Calculate global max from QC-passed cells ONLY
     max_expr = np.max(mscarlet_expression[pass_qc])

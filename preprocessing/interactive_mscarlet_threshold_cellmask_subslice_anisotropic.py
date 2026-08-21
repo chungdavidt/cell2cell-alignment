@@ -41,13 +41,14 @@ from preprocessing_config import (
     HYB_DOWNSAMPLED_DIR,
     MSCARLET_INTERACTIVE_DIR,
     MSCARLET_COLUMN_INDEX,
+    MSCARLET_GENE_NAME,
     QC_MIN_READS,
     QC_MIN_GENES,
     EXVIVO_UM_PER_PX,
     INVIVO_XY_UM_PER_PX,
     INVIVO_Z_UM_PER_PX,
 )
-from utilities.mat_io import load_filt_neurons, load_mat, load_cellmask_h5, get_expression_column
+from utilities.mat_io import load_filt_neurons, load_mat, load_cellmask_h5, get_expression_column, resolve_marker_column
 from utilities.visualization import create_histogram
 
 # Module-level cache for data persistence across function calls
@@ -137,7 +138,9 @@ def interactive_mscarlet_threshold_cellmask_subslice_anisotropic(
         pass_qc = (total_reads >= QC_MIN_READS) & (total_genes >= QC_MIN_GENES)
 
         # Get mScarlet expression
-        mscarlet_expression = get_expression_column(expmat, MSCARLET_COLUMN_INDEX)
+        mscarlet_col = resolve_marker_column(
+            filt_neurons, MSCARLET_GENE_NAME, MSCARLET_COLUMN_INDEX)
+        mscarlet_expression = get_expression_column(expmat, mscarlet_col)
         mscarlet_positive = pass_qc & (mscarlet_expression > 0)
         max_expr = np.max(mscarlet_expression[mscarlet_positive])
 

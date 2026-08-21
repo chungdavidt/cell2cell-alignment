@@ -40,10 +40,11 @@ from preprocessing_config import (
     SUBSLICE_DEFINITIONS_DIR,
     SUBSLICE_DEFINITIONS_FILE,
     MSCARLET_COLUMN_INDEX,
+    MSCARLET_GENE_NAME,
     QC_MIN_READS,
     QC_MIN_GENES,
 )
-from utilities.mat_io import load_filt_neurons, save_mat, sparse_to_dense, get_expression_column
+from utilities.mat_io import load_filt_neurons, save_mat, sparse_to_dense, get_expression_column, resolve_marker_column
 from utilities.graph_utils import (
     parse_fov_grid_positions,
     build_adjacency_8connected,
@@ -109,7 +110,9 @@ def identify_mscarlet_subslices(test_mode: bool = False, target_slice: int = Non
     # Find mScarlet+ cells
     print("\nFinding mScarlet+ cells...")
     # IMPORTANT: MATLAB column 114 -> Python index 113 (0-indexed)
-    mscarlet_expression = get_expression_column(expmat, MSCARLET_COLUMN_INDEX)
+    mscarlet_col = resolve_marker_column(
+        filt_neurons, MSCARLET_GENE_NAME, MSCARLET_COLUMN_INDEX)
+    mscarlet_expression = get_expression_column(expmat, mscarlet_col)
     mscarlet_positive = mscarlet_expression > 0
 
     print(f"  mScarlet+ cells (any expression): {np.sum(mscarlet_positive)} / {n_cells} "

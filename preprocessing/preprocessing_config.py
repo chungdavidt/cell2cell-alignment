@@ -130,6 +130,11 @@ DOWNSAMPLE_Y = INVIVO_Z_UM_PER_PX / EXVIVO_UM_PER_PX   # 3.125
 FOV_SIZE = 3200
 
 # mScarlet column index (0-indexed in Python, was 114 in MATLAB which is 1-indexed)
+# Marker gene. The name is looked up in filt_neurons' gene list when the export
+# ships one (resolve_marker_column); MSCARLET_COLUMN_INDEX is the fallback for
+# exports without a gene list — JH302's 114-gene panel puts mScarlet last
+# (MATLAB column 114 -> Python 113).
+MSCARLET_GENE_NAME = "mScarlet"
 MSCARLET_COLUMN_INDEX = 113  # Python 0-indexed
 
 # QC thresholds

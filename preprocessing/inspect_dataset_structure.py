@@ -46,9 +46,22 @@ def probe_filt_neurons(path):
     if "expmat" in fn:
         m = fn["expmat"]
         ncols = m.shape[1] if m.ndim == 2 else None
-        print(f"  expmat columns: {ncols} (JH302 expects mScarlet at index 113)")
-        if ncols is not None and ncols <= 113:
-            print("  !! fewer columns than 113 - MSCARLET_COLUMN_INDEX is invalid here")
+        print(f"  expmat shape after orientation: {m.shape} (cells, genes)")
+        print(f"  expmat gene columns: {ncols} (JH302 panel: 114, mScarlet last)")
+
+    genes = fn.get("genes")
+    if genes:
+        print(f"  gene list: {len(genes)} names, last 8: {genes[-8:]}")
+        if fn.get("genes_alt"):
+            print(f"  second name column present, last 8: {fn['genes_alt'][-8:]}")
+        from utilities.mat_io import resolve_marker_column
+        for marker in ("mScarlet", "GCaMP"):
+            try:
+                print(f"  {marker} -> column {resolve_marker_column(fn, marker)}")
+            except ValueError as e:
+                print(f"  {marker}: {e}")
+    else:
+        print("  no gene list — marker column falls back to MSCARLET_COLUMN_INDEX (113)")
     if "slice" in fn:
         s = np.asarray(fn["slice"]).ravel()
         print(f"  slice ids: n={s.size} unique={np.unique(s).size} range={s.min()}..{s.max()}")
