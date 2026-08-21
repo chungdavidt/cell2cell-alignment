@@ -35,13 +35,21 @@ def probe_filt_neurons(path):
         print(f"  load_filt_neurons FAILED: {type(e).__name__}: {e}")
         return
     print(f"  parsed fields: {sorted(fn.keys())}")
-    for key in ("expmat", "pos", "pos40x", "fov", "slice", "depth", "angle", "id"):
-        if key not in fn:
-            print(f"  {key:8s} ABSENT")
-            continue
+    for key in sorted(fn.keys()):
         v = fn[key]
-        shape = getattr(v, "shape", f"len={len(v)}" if hasattr(v, "__len__") else "?")
-        print(f"  {key:8s} shape={shape} type={type(v).__name__}")
+        # getattr's default must not be evaluated eagerly here: len() on a sparse
+        # matrix raises rather than returning a size.
+        if hasattr(v, "shape"):
+            shape = v.shape
+        elif hasattr(v, "__len__"):
+            shape = f"len={len(v)}"
+        else:
+            shape = "scalar"
+        print(f"  {key:16s} shape={shape} type={type(v).__name__}")
+
+    for key in ("expmat", "pos", "fov", "slice"):
+        if key not in fn:
+            print(f"  !! required field {key!r} is absent")
 
     if "expmat" in fn:
         m = fn["expmat"]
