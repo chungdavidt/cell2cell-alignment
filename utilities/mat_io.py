@@ -321,16 +321,21 @@ def load_filt_neurons(filepath):
     # Handle nested structure
     if 'filt_neurons' in data:
         fn = data['filt_neurons']
-        # Could be a numpy void (struct) or dict
-        if hasattr(fn, 'dtype') and fn.dtype.names is not None:
+        if hasattr(fn, 'dtype') and getattr(fn.dtype, 'names', None) is not None:
             # numpy structured array
             result = {name: fn[name] for name in fn.dtype.names}
         elif isinstance(fn, dict):
             result = fn
+        elif hasattr(fn, '_fieldnames'):
+            # scipy mat_struct (loadmat with struct_as_record=False)
+            result = {name: getattr(fn, name) for name in fn._fieldnames}
         else:
-            result = data
+            raise TypeError(
+                f"filt_neurons is a {type(fn).__name__}, which this loader cannot "
+                "unwrap. Expected a struct, dict, or structured array."
+            )
     else:
-        result = data
+        result = {k: v for k, v in data.items() if not k.startswith('__')}
 
     # Normalize FOV names to list of strings
     result = _normalize_fov_names(result)

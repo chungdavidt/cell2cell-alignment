@@ -76,24 +76,28 @@ def probe_hyb(hyb_root):
     if not hyb_root.exists():
         print("  MISSING")
         return
-    fov_dirs = sorted(p for p in hyb_root.iterdir() if p.is_dir())
-    print(f"  FOV dirs: {len(fov_dirs)}")
-    print(f"  names: {[p.name for p in fov_dirs[:5]]}")
+    all_dirs = sorted(p for p in hyb_root.iterdir() if p.is_dir())
+    print(f"  subdirectories: {len(all_dirs)}")
 
     from utilities.graph_utils import parse_fov_grid_positions
 
-    names = [p.name for p in fov_dirs]
+    names = [p.name for p in all_dirs]
+    fov_dirs = []
     if names:
         pos, valid = parse_fov_grid_positions(names)
+        fov_dirs = [d for d, v in zip(all_dirs, valid) if v]
         print(f"  MAX_Pos{{N}}_{{row}}_{{col}} parse: {valid.sum()}/{len(names)} valid")
+        print(f"  FOV names: {[p.name for p in fov_dirs[:5]]}")
         if valid.any():
             ok = pos[valid]
             print(f"  grid rows {ok[:,0].min():.0f}..{ok[:,0].max():.0f} "
                   f"cols {ok[:,1].min():.0f}..{ok[:,1].max():.0f}")
-        if not valid.all():
-            print(f"  unparsed sample: {[n for n, v in zip(names, valid) if not v][:5]}")
+        non_fov = [n for n, v in zip(names, valid) if not v]
+        if non_fov:
+            print(f"  non-FOV subdirs (ignored): {non_fov}")
 
     if not fov_dirs:
+        print("  no directory parsed as a FOV name")
         return
     d = fov_dirs[0]
     print(f"\n  --- contents of {d.name} ---")
