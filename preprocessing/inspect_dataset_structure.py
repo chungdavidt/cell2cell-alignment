@@ -16,6 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
+# Per-FOV raw dir name varies by dataset; mirrors preprocessing_config.
+HYB_DIRNAME_CANDIDATES = ("hyb", "hyb_raw_files")
+
 
 def probe_filt_neurons(path):
     print(f"\n=== filt_neurons.mat ===\n{path}")
@@ -56,7 +59,7 @@ def probe_filt_neurons(path):
 
 
 def probe_hyb(hyb_root):
-    print(f"\n=== hyb/ ===\n{hyb_root}")
+    print(f"\n=== {hyb_root.name}/ ===\n{hyb_root}")
     if not hyb_root.exists():
         print("  MISSING")
         return
@@ -133,7 +136,12 @@ def main():
             print(f"  {kind} {p.name}")
 
     probe_filt_neurons(data_root / "filt_neurons.mat")
-    probe_hyb(data_root / "hyb")
+
+    hyb_root = next(
+        (data_root / n for n in HYB_DIRNAME_CANDIDATES if (data_root / n).is_dir()),
+        data_root / HYB_DIRNAME_CANDIDATES[0],
+    )
+    probe_hyb(hyb_root)
 
 
 if __name__ == "__main__":

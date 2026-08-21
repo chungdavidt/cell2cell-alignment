@@ -22,6 +22,15 @@ DATA_ROOT = ""
 # the alignment graph builder ignores it.
 OUTPUT_ROOT = ""
 
+# Path to the per-FOV raw directory (the one holding MAX_Pos*_*_* folders, each
+# with alignedn2vhyb01.tif + cellmask.mat).
+# Leave BLANK to auto-detect: <DATA_ROOT>/hyb, then <DATA_ROOT>/hyb_raw_files.
+# Set an absolute path only when the folder is named something else or lives
+# outside DATA_ROOT. Consumed only by preprocessing.
+#   JH302:                      <DATA_ROOT>/hyb             (auto-detected)
+#   BY95 allen_transcriptomics: <DATA_ROOT>/hyb_raw_files   (auto-detected)
+HYB_ROOT = ""
+
 # ---------------------------------------------------------------------
 # Graph inputs — the graph builder adds nodes for the paths that are set.
 #

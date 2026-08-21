@@ -31,7 +31,8 @@ DATA_ROOT = getattr(local_config, "DATA_ROOT", "")
 if not DATA_ROOT:
     raise ValueError(
         "DATA_ROOT is not set in local_config.py.\n"
-        "Set it to the dataset folder containing filt_neurons.mat and hyb/."
+        "Set it to the dataset folder containing filt_neurons.mat and the hyb/ "
+        "(or hyb_raw_files/) per-FOV directory."
     )
 
 # OUTPUT_ROOT derives from DATA_ROOT when left blank: outputs co-locate under
@@ -56,7 +57,31 @@ if not os.path.isabs(OUTPUT_ROOT):
 # =============================================================================
 
 # Input data paths
-HYB_ROOT = os.path.join(DATA_ROOT, "hyb")
+#
+# HYB_ROOT: the per-FOV raw directory. Its name is not stable across datasets
+# (JH302 = "hyb", BY95 allen_transcriptomics = "hyb_raw_files"), so an explicit
+# HYB_ROOT in local_config.py wins; blank auto-detects the first name in
+# HYB_DIRNAME_CANDIDATES that exists under DATA_ROOT, falling back to the first
+# candidate so validate_paths() reports a concrete missing path.
+HYB_DIRNAME_CANDIDATES = ("hyb", "hyb_raw_files")
+
+
+def _resolve_hyb_root():
+    explicit = getattr(local_config, "HYB_ROOT", "")
+    if explicit:
+        if not os.path.isabs(explicit):
+            raise ValueError(
+                f"HYB_ROOT in local_config.py must be absolute: {explicit!r}"
+            )
+        return explicit
+    for name in HYB_DIRNAME_CANDIDATES:
+        candidate = os.path.join(DATA_ROOT, name)
+        if os.path.isdir(candidate):
+            return candidate
+    return os.path.join(DATA_ROOT, HYB_DIRNAME_CANDIDATES[0])
+
+
+HYB_ROOT = _resolve_hyb_root()
 FILT_NEURONS_PATH = os.path.join(DATA_ROOT, "filt_neurons.mat")
 
 # Output subdirectories
@@ -147,7 +172,11 @@ def validate_paths():
         errors.append(f"filt_neurons.mat not found: {FILT_NEURONS_PATH}")
 
     if not os.path.exists(HYB_ROOT):
-        errors.append(f"hyb directory not found: {HYB_ROOT}")
+        errors.append(
+            f"hyb directory not found: {HYB_ROOT}\n"
+            f"    (searched {list(HYB_DIRNAME_CANDIDATES)} under DATA_ROOT; "
+            f"set HYB_ROOT in local_config.py for a different name)"
+        )
 
     if errors:
         raise FileNotFoundError(
