@@ -531,13 +531,23 @@ def sparse_to_dense(mat):
 def resolve_marker_column(filt_neurons, gene_name, fallback_index=None):
     """Column index of a marker gene in ``expmat``.
 
-    Looks the name up in the gene list (case-insensitive) when the export ships
-    one; otherwise falls back to the dataset-specific hardcoded index. Raises if
-    neither is available, since a wrong marker column fails silently — every
-    downstream cell just gets the wrong expression values.
+    Blank ``gene_name`` means "use ``fallback_index``" — the case for panels
+    whose readout slots carry stale template labels (see MSCARLET_GENE_NAME in
+    preprocessing_config). With a name given, it is looked up in the gene list
+    (case-insensitive, exact before substring, both name columns) and a miss
+    raises, since a wrong marker column fails silently: every downstream cell
+    just gets another gene's counts.
     """
     get = filt_neurons.get if hasattr(filt_neurons, 'get') else lambda k, d=None: d
     genes = get('genes')
+
+    if not gene_name:
+        # Name lookup disabled: the panel's labels don't describe these slots.
+        label = genes[fallback_index] if genes and fallback_index < len(genes) else '?'
+        print(f"  marker column {fallback_index} taken from config "
+              f"(gene list labels it {label!r}; lookup by name disabled)")
+        return fallback_index
+
     if genes:
         target = gene_name.lower()
         # JH302's gene cell has two name columns; check both before giving up.

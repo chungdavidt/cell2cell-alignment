@@ -63,12 +63,25 @@ def probe_filt_neurons(path):
         print(f"  gene list ({len(genes)} entries, index: name | second column):")
         for i, name in enumerate(genes):
             print(f"    {i:3d}  {name:<24} | {alt[i] if i < len(alt) else ''}")
-        from utilities.mat_io import resolve_marker_column
-        for marker in ("mScarlet", "GCaMP"):
-            try:
-                print(f"  {marker} -> column {resolve_marker_column(fn, marker)}")
-            except ValueError as e:
-                print(f"  {marker}: {e}")
+        # The panel mislabels its readout slots, so report the configured
+        # columns and what the list calls them rather than searching by name.
+        # Lab scripts: Gen_mScarlet_plots.m -> expmat(:,114),
+        #              Gen_GCaMP_plots.m    -> expmat(:,112)  (MATLAB 1-indexed)
+        for marker, idx in (("mScarlet", 113), ("GCaMP", 111)):
+            label = genes[idx] if idx < len(genes) else "?"
+            print(f"  {marker}: python column {idx} (MATLAB {idx+1}), "
+                  f"gene list labels it {label!r}")
+
+        expmat = fn.get("expmat")
+        if expmat is not None and expmat.ndim == 2:
+            print("  counts in the tail columns (readout slots live here):")
+            import scipy.sparse as _sp
+            for idx in range(max(0, expmat.shape[1] - 12), expmat.shape[1]):
+                col = (expmat[:, idx].toarray().ravel()
+                       if _sp.issparse(expmat) else np.asarray(expmat[:, idx]).ravel())
+                nz = int((col > 0).sum())
+                print(f"    {idx:3d}  {genes[idx]:<12} cells>0: {nz:7d} "
+                      f"({100*nz/col.size:5.1f}%)  max: {col.max():.0f}")
     else:
         print("  no gene list — marker column falls back to MSCARLET_COLUMN_INDEX (113)")
     if "slice" in fn:

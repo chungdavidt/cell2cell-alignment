@@ -130,12 +130,22 @@ DOWNSAMPLE_Y = INVIVO_Z_UM_PER_PX / EXVIVO_UM_PER_PX   # 3.125
 FOV_SIZE = 3200
 
 # mScarlet column index (0-indexed in Python, was 114 in MATLAB which is 1-indexed)
-# Marker gene. The name is looked up in filt_neurons' gene list when the export
-# ships one (resolve_marker_column); MSCARLET_COLUMN_INDEX is the fallback for
-# exports without a gene list — JH302's 114-gene panel puts mScarlet last
-# (MATLAB column 114 -> Python 113).
-MSCARLET_GENE_NAME = "mScarlet"
-MSCARLET_COLUMN_INDEX = 113  # Python 0-indexed
+# Marker columns in expmat.
+#
+# The gene list MISLABELS these slots on this panel: the last entries are hyb
+# readout channels, not barcoded genes (their second column holds channel
+# numbers 1/2/4 instead of a 7-mer), and they still carry template gene names.
+# Index 113 is labelled "Slc30a3" but is mScarlet, index 111 is labelled
+# "Slc17a7" but is GCaMP — confirmed by the lab's own Gen_mScarlet_plots.m
+# (expmat(:,114)) and Gen_GCaMP_plots.m (expmat(:,112)), MATLAB 1-indexed.
+#
+# So look-up by name is OFF by default: blank MSCARLET_GENE_NAME means "trust
+# the index". Set it to a real name only for a panel that labels its marker
+# honestly, and resolve_marker_column will then raise rather than read the
+# wrong column if that name is missing.
+MSCARLET_GENE_NAME = ""
+MSCARLET_COLUMN_INDEX = 113  # Python 0-indexed (MATLAB 114)
+GCAMP_COLUMN_INDEX = 111     # Python 0-indexed (MATLAB 112)
 
 # QC thresholds
 QC_MIN_READS = 20
