@@ -11,9 +11,10 @@ Validates a castalign rigid alignment by:
 MVP scope. No size filter, no null shuffle, no pre-vs-post nonlinear comparison
 (see project_alignment_validation_mnn.md for the deferred publication-grade patches).
 
-Both volumes are assumed to be Huang lab 2P (same voxel pitch). Distances are
-reported in both voxel and um; per-axis um is also reported because Z pitch is
-~1.8x XY pitch.
+Both volumes are assumed to share a voxel pitch. Distances are reported in both
+voxel and um; per-axis um is also reported because Z and XY pitches differ. The
+pitch used for the um report defaults to the Huang lab 566.08 um-FOV setting and
+is overridden with --um-per-voxel (BY95: 1.0,0.3910,0.3910).
 
 CLI:
     python alignment/validate_mnn.py
@@ -32,6 +33,11 @@ from scipy import ndimage
 from scipy.spatial import cKDTree
 
 
+# (Z, Y, X) µm/voxel used only to report MNN distances in µm. Default is the
+# 566.08 µm-FOV Huang lab setting (by84/by94/by89); BY95 and anything else on
+# the 200.19 µm-FOV / 1 µm-Z setting needs --um-per-voxel 1.0,0.3910,0.3910.
+# Keep in sync with MICROSCOPE_PROFILES in subslice_graph_builder.py (not
+# imported here — this script runs in .cellpose-venv, which has no castalign).
 HUANG_UM_PER_VOXEL = (2.0, 1.1055, 1.1055)
 # Validation operates on the red (sparse) alignment channel by design — it's the
 # segmentation channel and the only side with a fitted rigid edge. Green is
@@ -145,7 +151,11 @@ def apply_transform_to_centroids(transform, centroids: np.ndarray) -> np.ndarray
 # MNN matching
 # ------------------------------------------------------------------
 
-def mnn_match(pts_movable: np.ndarray, pts_fixed: np.ndarray) -> dict:
+def mnn_match(
+    pts_movable: np.ndarray,
+    pts_fixed: np.ndarray,
+    um_per_voxel: tuple = HUANG_UM_PER_VOXEL,
+) -> dict:
     """
     Mutual-nearest-neighbor match between two point sets in voxel coordinates.
 
@@ -183,7 +193,7 @@ def mnn_match(pts_movable: np.ndarray, pts_fixed: np.ndarray) -> dict:
 
     delta = pts_movable[movable_idx] - pts_fixed[fixed_idx]
     distances_voxel = np.linalg.norm(delta, axis=1)
-    distances_um_per_axis = np.abs(delta) * np.asarray(HUANG_UM_PER_VOXEL)
+    distances_um_per_axis = np.abs(delta) * np.asarray(um_per_voxel, dtype=float)
 
     return {
         "movable_idx":           movable_idx,
@@ -296,9 +306,31 @@ def main(argv: Optional[list] = None) -> int:
         "--invivo-seg", default=None,
         help="Override in-vivo cellpose _seg.npy. Default: <INVIVO parent>/cellpose/<invivo stem>_seg.npy",
     )
+    parser.add_argument(
+        "--um-per-voxel", default=None, metavar="Z,Y,X",
+        help=(
+            "Voxel pitch in µm for the µm-distance report, as Z,Y,X. "
+            f"Default {','.join(str(v) for v in HUANG_UM_PER_VOXEL)} "
+            "(Huang lab 566.08 µm FOV). Use 1.0,0.3910,0.3910 for the "
+            "200.19 µm FOV / 1 µm Z setting (BY95)."
+        ),
+    )
     parser.add_argument("--node-movable", default=DEFAULT_NODE_MOVABLE)
     parser.add_argument("--node-fixed", default=DEFAULT_NODE_FIXED)
     args = parser.parse_args(argv)
+
+    if args.um_per_voxel:
+        parts = args.um_per_voxel.split(",")
+        if len(parts) != 3:
+            parser.error(f"--um-per-voxel needs three comma-separated values (Z,Y,X), got {args.um_per_voxel!r}")
+        try:
+            um_per_voxel = tuple(float(v) for v in parts)
+        except ValueError:
+            parser.error(f"--um-per-voxel values must be numbers, got {args.um_per_voxel!r}")
+        if any(v <= 0 for v in um_per_voxel):
+            parser.error(f"--um-per-voxel values must be positive, got {args.um_per_voxel!r}")
+    else:
+        um_per_voxel = HUANG_UM_PER_VOXEL
 
     project_root = Path(__file__).resolve().parent.parent
     if str(project_root) not in sys.path:
@@ -383,7 +415,7 @@ def main(argv: Optional[list] = None) -> int:
     # [3/4] MNN
     print()
     print("[3/4] Mutual nearest-neighbor matching")
-    mnn = mnn_match(in_in_ex_frame, d_ex["centroids"])
+    mnn = mnn_match(in_in_ex_frame, d_ex["centroids"], um_per_voxel=um_per_voxel)
     print(f"  matches: {mnn['movable_idx'].size}")
 
     # [4/4] Summary

@@ -6,7 +6,10 @@ Loops over a hardcoded list of TIFF paths and runs vanilla cellpose 4 (cpsam)
 
 Settings landed on after the 2026-04-16 2D parameter sweep on by94 (vanilla
 defaults beat cellprob/flow/diameter/CLAHE/sharpen variations on visual QC).
-Anisotropy is hardcoded to Huang-lab Z/XY = 1.81 for all four images.
+Anisotropy is hardcoded to Z/XY = 1.81 for all four images, which is the
+566.08 um-FOV Huang lab setting (2.0 / 1.1055) that by84 and by94 were
+acquired on. The 200.19 um-FOV / 1 um-Z setting (BY95) is 1.0 / 0.3910 =
+2.56 — change EVAL_PARAMS when adding images from it.
 
 Behavior:
   - Loads the cpsam model once before the loop.
@@ -47,7 +50,7 @@ IMAGES_TO_PROCESS: list[str] = [
 EVAL_PARAMS = {
     "do_3D":              True,
     "z_axis":             0,      # TIFFs load as (Z, Y, X); cellpose 4 requires this for ndim==3
-    "anisotropy":         1.81,
+    "anisotropy":         1.81,   # Z/XY: 2.0/1.1055 (huang_lab). BY95 = 1.0/0.3910 = 2.56.
     "stitch_threshold":   0.0,
     "cellprob_threshold": 0.0,
     "flow_threshold":     0.4,

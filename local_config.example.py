@@ -110,7 +110,10 @@ GRAPH_PATH = ""
 
 # ---------------------------------------------------------------------
 # Scope fallback for files lacking pixel calibration metadata.
-# Values: "li_lab" | "huang_lab" | "" (blank).
+# Values: "li_lab" | "huang_lab" | "huang_lab_200um" | "" (blank).
+# NOTE: huang_lab (566.08 µm FOV, 2 µm Z) and huang_lab_200um (200.19 µm
+# FOV, 1 µm Z) are the same scanner at different zoom — picking the wrong
+# one for an uncalibrated file scales the volume by 2.83x silently.
 # Behavior: if the TIFF has XResolution metadata, the autodetector uses it
 # (this fallback is ignored). If metadata is absent, the builder uses the
 # scope named here for that modality. Blank with absent metadata is a hard

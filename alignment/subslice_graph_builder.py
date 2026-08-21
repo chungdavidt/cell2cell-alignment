@@ -107,6 +107,14 @@ MICROSCOPE_PROFILES = {
         'z_um_per_px': 2.0,
         'description': 'Huang lab 2P (566.08 µm FOV)',
     },
+    # Same 512-px scanner as 'huang_lab', zoomed ~2.83x. Both settings are in
+    # use; the two XY values are far enough apart that autodetection separates
+    # them, but a blind SCOPE_FALLBACK_* pick between them is a 2.83x error.
+    'huang_lab_200um': {
+        'xy_um_per_px': 0.3910,     # 512 px / 200.19 µm FOV
+        'z_um_per_px': 1.0,
+        'description': 'Huang lab 2P (200.19 µm FOV, 1 µm Z)',
+    },
 }
 
 
@@ -202,7 +210,7 @@ def load_block_stack(path: Union[str, Path]) -> np.ndarray:
 
 
 # Largest XY pixel size (µm/px) we'll accept as a *real* microscope calibration.
-# Cellular 2P imaging is sub-~5 µm/px (li_lab 2.34, huang_lab 1.11). Anything
+# Cellular 2P imaging is sub-~5 µm/px (li_lab 2.34, huang_lab 1.11 / 0.39). Anything
 # coarser read from TIFF metadata is almost always an uncalibrated screen/print
 # DPI default rather than a true pixel size — e.g. the 72-DPI inch default reads
 # as 25400/72 = 352.78 µm/px (300-DPI → 84.7, 600-DPI → 42.3, all > 20). Treated
