@@ -80,6 +80,7 @@ import castalign as ca
 import numpy as np
 import imageio.v2 as imageio
 from utilities.image_io import get_tiff_resolution
+from analysis_paths import analysis_subdir, subject_name, ALIGNMENT_SUBDIR
 
 
 # ============================================
@@ -640,13 +641,18 @@ def _derive_graph_path(
     """
     Derive a default GRAPH_PATH when not set in local_config.py.
 
-    Rule: ``<parent_of_data_file>/alignment/<parent_folder_name>_graph.db``
+    Rule 1 (preferred): ``<ANALYSIS_ROOT>/alignment/<ANALYSIS_ROOT name>_graph.db``
+    Rule 2 (no ANALYSIS_ROOT): ``<parent_of_data_file>/alignment/<parent_folder_name>_graph.db``
 
     Anchored on the red-channel paths (red is canonical, green is sibling).
     Prefers BLOCK_STACK_PATH_RED, falls back to INVIVO_PATH_RED. Raises
     ValueError if neither is set, or if both are set but live in different
     parent folders.
     """
+    analysis_alignment = analysis_subdir(ALIGNMENT_SUBDIR)
+    if analysis_alignment is not None:
+        return analysis_alignment / f"{subject_name()}_graph.db"
+
     if block_red_path is None and invivo_red_path is None:
         raise ValueError(
             "Cannot auto-derive GRAPH_PATH: neither BLOCK_STACK_PATH_RED nor\n"

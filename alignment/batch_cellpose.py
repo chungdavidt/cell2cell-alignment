@@ -25,10 +25,16 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 import time
 import traceback
 from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+from analysis_paths import cellpose_dir
 
 
 IMAGES_TO_PROCESS: list[str] = [
@@ -77,11 +83,32 @@ class _Tee:
 
 
 def _seg_path_for(img_path: Path) -> Path:
+    """Where a new ``_seg.npy`` is written.
+
+    ``<ANALYSIS_ROOT>/cellpose/`` when that is configured, else next to the
+    input TIFF (the pre-analysis-tree location).
+    """
+    out_dir = cellpose_dir()
+    if out_dir is not None:
+        return out_dir / f"{img_path.stem}_seg.npy"
     return img_path.with_name(f"{img_path.stem}_seg.npy")
 
 
+def _existing_seg_path(img_path: Path) -> Path | None:
+    """First existing ``_seg.npy`` for this image, analysis tree or legacy.
+
+    Keeps skip-if-exists honest for subjects segmented before ANALYSIS_ROOT
+    was introduced — otherwise switching config would silently re-run them.
+    """
+    candidates = [_seg_path_for(img_path)]
+    legacy = img_path.with_name(f"{img_path.stem}_seg.npy")
+    if legacy not in candidates:
+        candidates.append(legacy)
+    return next((c for c in candidates if c.exists()), None)
+
+
 def _log_path_for(img_path: Path) -> Path:
-    return img_path.with_name(f"{img_path.stem}_cellpose.log")
+    return _seg_path_for(img_path).with_name(f"{img_path.stem}_cellpose.log")
 
 
 def run_one(model, img_path: Path, force: bool = False) -> dict:
@@ -93,8 +120,9 @@ def run_one(model, img_path: Path, force: bool = False) -> dict:
     seg_path = _seg_path_for(img_path)
     log_path = _log_path_for(img_path)
 
-    if seg_path.exists() and not force:
-        print(f"  SKIP (seg already exists): {seg_path.name}")
+    existing = _existing_seg_path(img_path)
+    if existing is not None and not force:
+        print(f"  SKIP (seg already exists): {existing}")
         return {"status": "skipped", "n_rois": None, "elapsed_s": 0.0, "error": None}
 
     if not img_path.exists():
@@ -109,6 +137,7 @@ def run_one(model, img_path: Path, force: bool = False) -> dict:
     t_start = time.time()
     real_stdout, real_stderr = sys.stdout, sys.stderr
     try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(log_path, "w", buffering=1) as log_f:
             sys.stdout = _Tee(real_stdout, log_f)
             sys.stderr = _Tee(real_stderr, log_f)
@@ -124,7 +153,22 @@ def run_one(model, img_path: Path, force: bool = False) -> dict:
                 print(f"  ROIs found: {n_rois}")
 
                 print(f"  saving seg: {seg_path}")
-                cp_io.masks_flows_to_seg(img, masks, flows, str(img_path))
+                # cellpose derives the output name from the file_names arg
+                # (<stem>_seg.npy beside it), so point it at the destination
+                # dir. Verify + relocate afterwards rather than trusting the
+                # naming convention across cellpose versions.
+                seg_path.parent.mkdir(parents=True, exist_ok=True)
+                cp_io.masks_flows_to_seg(
+                    img, masks, flows, str(seg_path.parent / img_path.name)
+                )
+                if not seg_path.exists():
+                    stray = img_path.with_name(f"{img_path.stem}_seg.npy")
+                    if stray.exists():
+                        shutil.move(str(stray), str(seg_path))
+                    else:
+                        raise FileNotFoundError(
+                            f"cellpose did not write the expected seg file: {seg_path}"
+                        )
             finally:
                 sys.stdout = real_stdout
                 sys.stderr = real_stderr
@@ -172,10 +216,12 @@ def main(argv: list | None = None) -> int:
 
     if args.dry_run:
         print("DRY RUN — image plan:")
+        dest = cellpose_dir()
+        print(f"  seg destination: {dest if dest is not None else 'next to each input TIFF'}")
         for p in img_paths:
-            seg = _seg_path_for(p)
             exists = "exists" if p.exists() else "MISSING"
-            seg_state = "seg exists" if seg.exists() else "needs seg"
+            existing = _existing_seg_path(p)
+            seg_state = "seg exists" if existing is not None else "needs seg"
             print(f"  [{exists:<7}] [{seg_state:<10}] {p}")
         return 0
 

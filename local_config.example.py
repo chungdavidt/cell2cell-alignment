@@ -7,6 +7,22 @@ local_config.py is gitignored and will not be committed.
 Each person sets their own paths once.
 """
 
+# ---------------------------------------------------------------------
+# ANALYSIS_ROOT — one folder holding every derived output for a subject:
+#
+#   <ANALYSIS_ROOT>/preprocessing/   BARseq preprocessing outputs
+#   <ANALYSIS_ROOT>/alignment/       <subject>_graph.db
+#   <ANALYSIS_ROOT>/cellpose/        *_seg.npy, sweep_in_vivo_*, combo_in_vivo_*
+#
+# Set it per subject and the rest follows; nothing derived lands in the data
+# tree. Absolute path required. Blank keeps every consumer on its older
+# data-tree-adjacent default, so existing subjects need no change.
+# Explicit OUTPUT_ROOT / GRAPH_PATH below still override it.
+# Example:
+#   "C:/Users/David/lab_local/projects/cell_type/analysis/BY95"
+# ---------------------------------------------------------------------
+ANALYSIS_ROOT = ""
+
 # Path to raw BARseq data (Batch3_JH302)
 # Examples:
 #   Windows:  "C:/Users/Li Lab/Documents/Data_ALM_cell_type_transcriptom/Batch3_JH302"
@@ -14,12 +30,10 @@ Each person sets their own paths once.
 #   Linux:    "/home/yourname/lab/raw_data/Data_ALM_cell_type_transcriptom/Batch3_JH302"
 DATA_ROOT = ""
 
-# Path to the preprocessing output directory.
-# Leave BLANK to auto-derive to <DATA_ROOT>/preprocessing/ (recommended — keeps
-# derived outputs co-located with the dataset, in their own subfolder separate
-# from the raw hyb/ + filt_neurons.mat). Set an absolute path only if you want
-# outputs somewhere other than under DATA_ROOT. Consumed only by preprocessing;
-# the alignment graph builder ignores it.
+# Path to the preprocessing output directory. Override only — leave BLANK and
+# it resolves to <ANALYSIS_ROOT>/preprocessing/, or, when ANALYSIS_ROOT is
+# blank too, to <DATA_ROOT>/preprocessing/ (the older co-located layout).
+# Consumed only by preprocessing; the alignment graph builder ignores it.
 OUTPUT_ROOT = ""
 
 # Path to the per-FOV raw directory (the one holding MAX_Pos*_*_* folders, each
@@ -85,7 +99,9 @@ INVIVO_PATH_GREEN = ""
 SUBSLICE_DIR = ""
 
 # Path to the alignment graph file (.db) — used by both the graph builder and
-# the notebook. Typically under OUTPUT_ROOT/linestuffup_output/.
+# the notebook. Leave BLANK to auto-derive: <ANALYSIS_ROOT>/alignment/
+# <subject>_graph.db when ANALYSIS_ROOT is set, else
+# <2P TIFF parent>/alignment/<folder name>_graph.db.
 # Examples:
 #   Windows:  "C:/Users/Li Lab/Documents/output/linestuffup_output/castalign_test.db"
 #   Mac:      "/Volumes/home/lab/output/linestuffup_output/castalign_test.db"

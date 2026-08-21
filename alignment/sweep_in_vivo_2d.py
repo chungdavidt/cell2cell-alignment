@@ -11,7 +11,8 @@ Each non-vanilla column = vanilla + exactly one swept parameter. Vanilla
 column is cellpose defaults (``normalize=True``, ``cellprob_threshold=0.0``,
 ``flow_threshold=0.4``).
 
-Outputs go to ``<tiff parent>/sweep_in_vivo_<YYYYMMDD_HHMMSS>/`` — never into
+Outputs go to ``<ANALYSIS_ROOT>/cellpose/sweep_in_vivo_<YYYYMMDD_HHMMSS>/``
+(or ``<tiff parent>/`` when ANALYSIS_ROOT is unset) — never into
 the repo.
 
 Usage:
@@ -376,7 +377,9 @@ def main(argv: list | None = None) -> int:
 
     # Resolve output dir.
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = tiff_path.parent / f"sweep_in_vivo_{stamp}"
+    # <ANALYSIS_ROOT>/cellpose/ when configured; else beside the TIFF.
+    from analysis_paths import cellpose_dir
+    out_dir = (cellpose_dir() or tiff_path.parent) / f"sweep_in_vivo_{stamp}"
 
     plan_rows = build_plan()
     n_non_vanilla = sum(len(r["values"]) for r in plan_rows)

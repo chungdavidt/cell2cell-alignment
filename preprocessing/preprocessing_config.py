@@ -35,12 +35,21 @@ if not DATA_ROOT:
         "(or hyb_raw_files/) per-FOV directory."
     )
 
-# OUTPUT_ROOT derives from DATA_ROOT when left blank: outputs co-locate under
-# <DATA_ROOT>/preprocessing/, in their own subfolder separate from the raw
-# hyb/ + filt_neurons.mat. An explicit non-blank OUTPUT_ROOT in local_config.py
-# overrides this (same "blank = auto-derive" idiom as GRAPH_PATH on the
-# alignment side). OUTPUT_ROOT is consumed only by preprocessing.
-OUTPUT_ROOT = getattr(local_config, "OUTPUT_ROOT", "") or os.path.join(DATA_ROOT, "preprocessing")
+# OUTPUT_ROOT precedence:
+#   1. explicit OUTPUT_ROOT in local_config.py
+#   2. <ANALYSIS_ROOT>/preprocessing/  — the per-subject analysis tree, which
+#      keeps derived outputs out of the data tree (preferred)
+#   3. <DATA_ROOT>/preprocessing/ — older co-located layout, for subjects with
+#      no ANALYSIS_ROOT set
+# OUTPUT_ROOT is consumed only by preprocessing.
+from analysis_paths import analysis_subdir, PREPROCESSING_SUBDIR
+
+_ANALYSIS_PREPROCESSING = analysis_subdir(PREPROCESSING_SUBDIR)
+OUTPUT_ROOT = (
+    getattr(local_config, "OUTPUT_ROOT", "")
+    or (str(_ANALYSIS_PREPROCESSING) if _ANALYSIS_PREPROCESSING is not None else "")
+    or os.path.join(DATA_ROOT, "preprocessing")
+)
 
 # Guard: a relative OUTPUT_ROOT would silently resolve against the run cwd
 # (run_pipeline.py runs each step with cwd=preprocessing/), dumping outputs into

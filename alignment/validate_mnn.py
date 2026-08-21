@@ -267,13 +267,17 @@ def print_summary(summary: dict) -> None:
 def _default_seg_path(data_path: Path, cellpose_dir: Path) -> Path:
     """Resolve the ``_seg.npy`` for a TIFF.
 
-    Checks next-to-TIFF first (where ``batch_cellpose.py`` writes), then falls
-    back to the ``cellpose/`` subfolder (legacy location).
+    Checks ``cellpose_dir`` (the analysis tree, where batch_cellpose.py writes
+    when ANALYSIS_ROOT is set) first, then next-to-TIFF, then returns the
+    cellpose_dir path so the error message names the expected location.
     """
+    in_analysis = cellpose_dir / f"{data_path.stem}_seg.npy"
+    if in_analysis.exists():
+        return in_analysis
     next_to_tiff = data_path.with_name(f"{data_path.stem}_seg.npy")
     if next_to_tiff.exists():
         return next_to_tiff
-    return cellpose_dir / f"{data_path.stem}_seg.npy"
+    return in_analysis
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -301,9 +305,12 @@ def main(argv: Optional[list] = None) -> int:
         sys.path.insert(0, str(project_root))
     import local_config
 
+    from analysis_paths import cellpose_dir
+
     invivo_path = Path(local_config.INVIVO_PATH_RED)
     exvivo_path = Path(local_config.BLOCK_STACK_PATH_RED)
-    out_dir = invivo_path.parent / "cellpose"
+    # Analysis tree when configured; else the legacy dir beside the in-vivo TIFF.
+    out_dir = cellpose_dir() or (invivo_path.parent / "cellpose")
 
     if args.graph_path:
         graph_path = Path(args.graph_path).expanduser()

@@ -14,7 +14,8 @@ Design is agnostic: knob identity, kinds, and authoritative values come from
 the source sweep's config.json, so any future sweep with a different knob set
 works without code changes.
 
-Outputs go to ``<tiff parent>/combo_in_vivo_<YYYYMMDD_HHMMSS>/`` — never into
+Outputs go to ``<ANALYSIS_ROOT>/cellpose/combo_in_vivo_<YYYYMMDD_HHMMSS>/``
+(or ``<tiff parent>/`` when ANALYSIS_ROOT is unset) — never into
 the repo.
 
 Usage:
@@ -315,6 +316,10 @@ def config_pick(v):
 # ---------------------------------------------------------------------------
 
 def main(argv: list | None = None) -> int:
+    project_root = Path(__file__).resolve().parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--from-sweep", default=None,
@@ -345,13 +350,18 @@ def main(argv: list | None = None) -> int:
         if not sweep_dir.is_dir():
             sys.exit(f"--from-sweep is not a directory: {sweep_dir}")
     else:
-        if args.tiff:
+        from analysis_paths import cellpose_dir
+
+        analysis_cellpose = cellpose_dir()
+        if analysis_cellpose is not None:
+            # Sweeps land in the analysis tree, so look there first regardless
+            # of --tiff; fall through to the TIFF-adjacent search if empty.
+            search_near = analysis_cellpose
+            search_label = f"ANALYSIS_ROOT cellpose dir ({search_near})"
+        elif args.tiff:
             search_near = Path(args.tiff).resolve().parent
             search_label = f"--tiff parent ({search_near})"
         else:
-            project_root = Path(__file__).resolve().parent.parent
-            if str(project_root) not in sys.path:
-                sys.path.insert(0, str(project_root))
             try:
                 import local_config
             except ImportError:
@@ -364,6 +374,11 @@ def main(argv: list | None = None) -> int:
             search_near = Path(invivo_path).parent
             search_label = f"local_config.INVIVO_PATH_RED parent ({search_near})"
         sweep_dir = find_latest_sweep(search_near)
+        if sweep_dir is None and analysis_cellpose is not None and args.tiff:
+            # Analysis tree had none — fall back to the pre-ANALYSIS_ROOT location.
+            search_near = Path(args.tiff).resolve().parent
+            search_label = f"--tiff parent ({search_near})"
+            sweep_dir = find_latest_sweep(search_near)
         if sweep_dir is None:
             sys.exit(f"No sweep_in_vivo_* dir with summary.csv + config.json found in "
                      f"{search_label}. Pass --from-sweep explicitly.")
@@ -416,7 +431,9 @@ def main(argv: list | None = None) -> int:
         z_indices = source_z
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = tiff_path.parent / f"combo_in_vivo_{stamp}"
+    # <ANALYSIS_ROOT>/cellpose/ when configured; else beside the TIFF.
+    from analysis_paths import cellpose_dir
+    out_dir = (cellpose_dir() or tiff_path.parent) / f"combo_in_vivo_{stamp}"
 
     n_combos      = len(combos)
     page_size     = MAX_COLS_PER_PAGE - 1
