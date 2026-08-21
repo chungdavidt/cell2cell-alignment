@@ -199,9 +199,64 @@ def probe_hyb(hyb_root):
               f"{[f.name for f in d.iterdir() if f.suffix in ('.mat', '.h5')]}")
 
 
+def scan_fov_integrity(hyb_root: Path, sample_bytes: int = 4096) -> None:
+    """Check every FOV's TIFF + cellmask for the zero-filled-copy signature.
+
+    Reads only the head of each file, plus a few probes further in, so a full
+    1316-FOV sweep costs seconds rather than reading 130 GB.
+    """
+    from utilities.graph_utils import parse_fov_grid_positions
+
+    all_dirs = sorted(p for p in hyb_root.iterdir() if p.is_dir())
+    names = [p.name for p in all_dirs]
+    _, valid = parse_fov_grid_positions(names)
+    fov_dirs = [d for d, v in zip(all_dirs, valid) if v]
+
+    print(f"\n=== integrity scan over {len(fov_dirs)} FOVs ===")
+    stats = {"ok": [], "zeroed": [], "missing": [], "odd": []}
+
+    for d in fov_dirs:
+        for fname, kind in (("alignedn2vhyb01.tif", "tif"), ("cellmask.mat", "mat")):
+            f = d / fname
+            key = f"{d.name}/{fname}"
+            if not f.exists():
+                stats["missing"].append(key)
+                continue
+            size = f.stat().st_size
+            with open(f, "rb") as fh:
+                head = fh.read(sample_bytes)
+                probes = b""
+                for frac in (0.25, 0.5, 0.75, 1.0):
+                    fh.seek(max(0, int(size * frac) - 512))
+                    probes += fh.read(512)
+            if not head.strip(b"\x00") and not probes.strip(b"\x00"):
+                stats["zeroed"].append(key)
+            elif kind == "tif" and head[:4] not in (b"II*\x00", b"MM\x00*",
+                                                   b"II+\x00", b"MM\x00+"):
+                stats["odd"].append(key)
+            elif kind == "mat" and not head[:4].strip(b"\x00") :
+                stats["odd"].append(key)
+            else:
+                stats["ok"].append(key)
+
+    total = sum(len(v) for v in stats.values())
+    for label in ("ok", "zeroed", "missing", "odd"):
+        items = stats[label]
+        print(f"  {label:8s} {len(items):5d} / {total}")
+        if items and label != "ok":
+            print(f"    first 5: {items[:5]}")
+            print(f"    last 5:  {items[-5:]}")
+    if stats["ok"] and stats["zeroed"]:
+        print("\n  Mixed result: some files carry data and some are zero-filled — "
+              "consistent with an interrupted copy rather than a bad source.")
+
+
 def main():
-    if len(sys.argv) > 1:
-        data_root = Path(sys.argv[1])
+    argv = [a for a in sys.argv[1:] if a != "--scan"]
+    do_scan = "--scan" in sys.argv
+
+    if argv:
+        data_root = Path(argv[0])
     else:
         import local_config
         data_root = Path(local_config.DATA_ROOT)
@@ -221,6 +276,11 @@ def main():
         data_root / HYB_DIRNAME_CANDIDATES[0],
     )
     probe_hyb(hyb_root)
+
+    if do_scan and hyb_root.exists():
+        scan_fov_integrity(hyb_root)
+    elif hyb_root.exists():
+        print("\n(pass --scan to check every FOV's files for the zero-filled signature)")
 
 
 if __name__ == "__main__":
