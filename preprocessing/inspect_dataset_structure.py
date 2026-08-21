@@ -59,9 +59,10 @@ def probe_filt_neurons(path):
 
     genes = fn.get("genes")
     if genes:
-        print(f"  gene list: {len(genes)} names, last 8: {genes[-8:]}")
-        if fn.get("genes_alt"):
-            print(f"  second name column present, last 8: {fn['genes_alt'][-8:]}")
+        alt = fn.get("genes_alt") or [""] * len(genes)
+        print(f"  gene list ({len(genes)} entries, index: name | second column):")
+        for i, name in enumerate(genes):
+            print(f"    {i:3d}  {name:<24} | {alt[i] if i < len(alt) else ''}")
         from utilities.mat_io import resolve_marker_column
         for marker in ("mScarlet", "GCaMP"):
             try:
@@ -71,12 +72,62 @@ def probe_filt_neurons(path):
     else:
         print("  no gene list — marker column falls back to MSCARLET_COLUMN_INDEX (113)")
     if "slice" in fn:
-        s = np.asarray(fn["slice"]).ravel()
-        print(f"  slice ids: n={s.size} unique={np.unique(s).size} range={s.min()}..{s.max()}")
+        sl = np.asarray(fn["slice"]).ravel().astype(float)
+        n_nan = int(np.isnan(sl).sum())
+        real = sl[~np.isnan(sl)]
+        uniq = np.unique(real)
+        print(f"  slice ids: n={sl.size}, NaN={n_nan} "
+              f"({100*n_nan/sl.size:.1f}% of cells unassigned)")
+        print(f"  slice values: {uniq.size} unique, "
+              f"range {real.min():.0f}..{real.max():.0f}")
+        print(f"    {uniq.astype(int).tolist()}")
+    for key in ("uniq_slice", "slice_boundaries", "orig_slice"):
+        if key in fn:
+            v = np.asarray(fn[key]).ravel()
+            preview = v[:20].tolist()
+            print(f"  {key}: {v.size} values{'' if v.size <= 20 else ' (first 20)'} {preview}")
     if "fov" in fn:
         fovs = list(fn["fov"])
         print(f"  fov entries: {len(fovs)} unique={len(set(map(str, fovs)))}")
         print(f"  fov sample: {[str(x) for x in fovs[:5]]}")
+
+
+def _probe_tiff(tif: Path) -> None:
+    """Report page layout, or diagnose the file when it won't open as a TIFF."""
+    import tifffile
+
+    try:
+        with tifffile.TiffFile(tif) as tf:
+            print(f"  {tif.name}: pages={len(tf.pages)} "
+                  f"shape={tf.pages[0].shape} dtype={tf.pages[0].dtype}")
+            print("  (JH302 layout: page 0=GCAMP, 3=mScarlet, 4=DAPI; needs >=5 pages)")
+            for i, pg in enumerate(tf.pages[:8]):
+                print(f"    page {i}: {pg.shape} {pg.dtype}")
+            if tf.imagej_metadata:
+                print(f"  imagej_metadata: {tf.imagej_metadata}")
+            xres = tf.pages[0].tags.get("XResolution")
+            print(f"  XResolution: {xres.value if xres else None}")
+        return
+    except Exception as exc:
+        print(f"  !! could not open as TIFF: {type(exc).__name__}: {exc}")
+
+    size = tif.stat().st_size
+    print(f"  file size: {size/1e6:.1f} MB")
+    with open(tif, "rb") as f:
+        head = f.read(4096)
+        f.seek(max(0, size - 64))
+        tail = f.read(64)
+    print(f"  first 64 bytes: {head[:64].hex(' ')}")
+    print(f"  last 64 bytes:  {tail.hex(' ')}")
+    print(f"  leading zero bytes: {len(head) - len(head.lstrip(bytes([0])))}")
+    for magic, label in ((b"II*\x00", "little-endian TIFF"),
+                         (b"MM\x00*", "big-endian TIFF"),
+                         (b"II+\x00", "BigTIFF LE"),
+                         (b"MM\x00+", "BigTIFF BE"),
+                         (b"\x89HDF", "HDF5")):
+        off = head.find(magic)
+        print(f"  {label} magic in first 4KB: "
+              f"{'no' if off < 0 else f'yes at offset {off}'}")
 
 
 def probe_hyb(hyb_root):
@@ -119,17 +170,7 @@ def probe_hyb(hyb_root):
         print(f"  other TIFFs: {[c.name for c in cands]}")
         tif = cands[0] if cands else None
     if tif is not None:
-        import tifffile
-        with tifffile.TiffFile(tif) as tf:
-            print(f"  {tif.name}: pages={len(tf.pages)} "
-                  f"shape={tf.pages[0].shape} dtype={tf.pages[0].dtype}")
-            print("  (JH302 layout: page 0=GCAMP, 3=mScarlet, 4=DAPI; needs >=5 pages)")
-            for i, pg in enumerate(tf.pages[:8]):
-                print(f"    page {i}: {pg.shape} {pg.dtype}")
-            if tf.imagej_metadata:
-                print(f"  imagej_metadata: {tf.imagej_metadata}")
-            xres = tf.pages[0].tags.get("XResolution")
-            print(f"  XResolution: {xres.value if xres else None}")
+        _probe_tiff(tif)
 
     cm = d / "cellmask.mat"
     print(f"\n  cellmask.mat present: {cm.exists()}")
