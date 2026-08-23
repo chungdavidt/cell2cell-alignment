@@ -236,8 +236,8 @@ def generate_mscarlet_cellmask_subslice_anisotropic(
             else:
                 print("  WARNING: Canvas offsets not found - position mapping may fail!")
                 min_x_offset = 0
-            min_y_offset = 0
-            print(f"    Cellmask: {stitched_cellmask.shape[0]} x {stitched_cellmask.shape[1]}")
+                min_y_offset = 0
+                print(f"    Cellmask: {stitched_cellmask.shape[0]} x {stitched_cellmask.shape[1]}")
 
         # Filter cells by slice and QC
         in_slice = slice_ids == slice_id
