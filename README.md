@@ -68,9 +68,10 @@ This is the only file you need to edit to get running. It holds all machine-spec
 | `INVIVO_PATH_GREEN` | Optional | Graph builder | In vivo 2P TIFF — green (signal) channel |
 | `BLOCK_STACK_PATH_RED` | Optional | Graph builder | Ex vivo block TIFF — red (alignment) channel |
 | `BLOCK_STACK_PATH_GREEN` | Optional | Graph builder | Ex vivo block TIFF — green (signal) channel |
-| `SUBSLICE_DIR` | Optional | Graph builder | Directory of BARseq anisotropic subslice overlays |
+| `SUBSLICE_DIR` | Optional | Graph builder | Directory of BARseq subslice overlays |
 | `DATA_ROOT` | BARseq only | Preprocessing pipeline | Raw BARseq data root |
 | `OUTPUT_ROOT` | BARseq only | Preprocessing pipeline | Where preprocessing writes its outputs |
+| `TARGET_XY_UM_PER_PX` | BARseq only | Preprocessing pipeline + graph builder | 2P in-plane pixel size the BARseq images are resampled to |
 
 ### Rules for the optional data inputs
 
@@ -113,26 +114,37 @@ Multi-page TIFFs of the ex vivo tissue block (2P volume imaged before slicing), 
 All three are used by the BARseq preprocessing stage (Section 4) and the subslice nodes it produces:
 - `DATA_ROOT` — where the raw BARseq data lives
 - `OUTPUT_ROOT` — where preprocessing writes its intermediate outputs
-- `SUBSLICE_DIR` — the specific subfolder under `OUTPUT_ROOT` containing the final anisotropic `slice*_subslice_mScarlet_cellmask.tif` overlays that the graph builder consumes
+- `SUBSLICE_DIR` — the specific subfolder under `OUTPUT_ROOT` containing the final `slice*_subslice_mScarlet_cellmask.tif` overlays that the graph builder consumes
 
 Leave all three blank if you aren't running BARseq preprocessing right now. You can fill them in and re-run the graph builder any time later — it will pick up the subslices then.
 
+**`TARGET_XY_UM_PER_PX`** — the in-plane pixel size (µm/px) of the 2P volume this BARseq dataset is being aligned to. BARseq is always 0.32 µm/px and is the side that gets resampled; the 2P is never touched. Sections are cut in the 2P imaging plane, so one factor covers both in-plane axes:
+
+```python
+DOWNSAMPLE_XY = TARGET_XY_UM_PER_PX / 0.32     # 0.3910 → 1.2219x, 1.1055 → 3.4547x
+```
+
+Set it to the XY value of the scope profile that acquired your 2P volume (table below). Preprocessing raises at import if it is blank, non-numeric, or above 20 µm/px — the last catches a TIFF DPI default (72 DPI reads as 352.78) pasted in by mistake. The graph builder needs it too, but only when it is actually adding subslices.
+
 ### Microscope resolution
 
-You don't set pixel size anywhere in the config — the graph builder reads it from each TIFF's metadata and matches against `MICROSCOPE_PROFILES` in `alignment/subslice_graph_builder.py`. Currently supports:
+For **2P volumes** you don't set pixel size anywhere — the graph builder reads it from each TIFF's metadata and matches against `MICROSCOPE_PROFILES` in `alignment/subslice_graph_builder.py`. Currently supports:
 
-| Scope | XY (µm/px) | Z (µm/px) | FOV |
-|---|---|---|---|
-| Li lab 2P | 2.34 | 1.0 | 1200 µm |
-| Huang lab 2P | 1.1055 | 2.0 | 566.08 µm |
+| Profile key | XY (µm/px) | Z (µm/px) | FOV | Used by |
+|---|---|---|---|---|
+| `li_lab` | 2.34 | 1.0 | 1200 µm | JH302 (retired) |
+| `huang_lab` | 0.3910 | 1.0 | 200.19 µm | BY95 |
+| `huang_lab_566um` | 1.1055 | 2.0 | 566.08 µm | by84, by94, by89 |
 
-If your microscope isn't in the list, the builder errors with a copy-pasteable template telling you exactly what to add to `MICROSCOPE_PROFILES`.
+If your microscope isn't in the list, the builder errors with a copy-pasteable template telling you exactly what to add to `MICROSCOPE_PROFILES`. For files with no metadata at all, `SCOPE_FALLBACK_INVIVO` / `SCOPE_FALLBACK_BLOCK` name the profile to assume.
+
+For **BARseq subslices** there is no usable metadata — the raw TIFFs carry a 72-DPI placeholder — so you set the target pitch yourself via `TARGET_XY_UM_PER_PX`, using the XY column above for whichever scope took the 2P volume.
 
 ---
 
 ## 4. BARseq preprocessing
 
-Generates the anisotropic subslice overlays that `SUBSLICE_DIR` points at. Requires raw BARseq data laid out under `DATA_ROOT`.
+Generates the subslice overlays that `SUBSLICE_DIR` points at. Requires raw BARseq data laid out under `DATA_ROOT`.
 
 ```bash
 cd preprocessing/
@@ -141,7 +153,7 @@ python run_pipeline.py --test         # slice 22 only, quick sanity check
 python run_pipeline.py --start-from 3 # resume from step N
 ```
 
-The outputs land under `OUTPUT_ROOT`. Point `SUBSLICE_DIR` in `local_config.py` at the resulting `mScarlet_cellmask_subslice/threshold_*_anisotropic/` folder.
+The outputs land under `OUTPUT_ROOT`. Point `SUBSLICE_DIR` in `local_config.py` at the resulting `mScarlet_cellmask_subslice/threshold_*_anisotropic/` folder. (The `anisotropic` in those names is historical — the resample became isotropic, the names have not been changed yet.)
 
 ---
 

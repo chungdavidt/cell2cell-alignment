@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """
-Generate mScarlet Cell Mask Overlays for Subslices (ANISOTROPIC).
+Generate mScarlet Cell Mask Overlays for Subslices.
 
-Creates mScarlet overlays on CELL MASK background using ANISOTROPIC downsampling.
+Creates mScarlet overlays on CELL MASK background, on the downsampled subslices.
 
 This is a Python port of generate_mscarlet_cellmask_subslice_anisotropic.m with exact fidelity.
 
-ANISOTROPIC SCALING (matches in vivo resolution correctly):
-    - X: 0.32 -> 2.34 um/px (7.31x downsample, matches in vivo X/Y)
-    - Y: 0.32 -> 1.0 um/px (3.125x downsample, matches in vivo Z after xrotate=90)
+Cell centroids from filt_neurons.mat are mapped into the downsampled image with
+DOWNSAMPLE_XY, the same factor downsample_subslices_cellmask_anisotropic.py used
+to resample it. The two MUST agree or every cell lands off its mask.
 
 This pipeline:
     - Shows cell masks in grayscale (adjustable brightness)
     - Highlights mScarlet+ cells in red
     - No DAPI background
-    - Uses ANISOTROPIC resolution matching
 
 Usage:
     python generate_mscarlet_cellmask_subslice_anisotropic.py
@@ -49,8 +48,8 @@ from preprocessing_config import (
     QC_MIN_READS,
     QC_MIN_GENES,
     EXVIVO_UM_PER_PX,
-    INVIVO_XY_UM_PER_PX,
-    INVIVO_Z_UM_PER_PX,
+    TARGET_XY_UM_PER_PX,
+    DOWNSAMPLE_XY,
     CELLMASK_BRIGHTNESS,
     RED_OPACITY,
     MSCARLET_BOOST,
@@ -80,7 +79,7 @@ def generate_mscarlet_cellmask_subslice_anisotropic(
 
     if not input_dir.exists():
         raise FileNotFoundError(
-            f"Anisotropic subslices not found!\n"
+            f"Downsampled subslices not found!\n"
             f"Run downsample_subslices_cellmask_anisotropic.py first.\n"
             f"Expected: {input_dir}"
         )
@@ -92,15 +91,14 @@ def generate_mscarlet_cellmask_subslice_anisotropic(
 
     print("=" * 40)
     print("GENERATE mSCARLET CELL MASK OVERLAYS")
-    print("(ANISOTROPIC RESOLUTION)")
     print("=" * 40)
     print(f"mScarlet threshold: {min_mscarlet_intensity:.2f}")
     print(f"Cell mask brightness: {cellmask_intensity:.2f} ({cellmask_intensity*100:.0f}% of base)")
     print()
     print("Resolution matching:")
-    print(f"  Ex vivo original: {EXVIVO_UM_PER_PX:.2f} um/px")
-    print(f"  Target X (-> in vivo X/Y): {INVIVO_XY_UM_PER_PX:.2f} um/px")
-    print(f"  Target Y (-> in vivo Z): {INVIVO_Z_UM_PER_PX:.2f} um/px")
+    print(f"  Ex vivo original: {EXVIVO_UM_PER_PX:.4f} um/px")
+    print(f"  2P target:        {TARGET_XY_UM_PER_PX:.4f} um/px")
+    print(f"  Downsample factor: {DOWNSAMPLE_XY:.4f}x (both dimensions)")
     print()
 
     if test_mode:
@@ -149,13 +147,8 @@ def generate_mscarlet_cellmask_subslice_anisotropic(
     mscarlet_qc_pass = pass_qc & mscarlet_positive
     print(f"  mScarlet+ QC-passing: {np.sum(mscarlet_qc_pass)}\n")
 
-    # Position scale factors for ANISOTROPIC downsampling
-    downsample_x = INVIVO_XY_UM_PER_PX / EXVIVO_UM_PER_PX  # 7.31
-    downsample_y = INVIVO_Z_UM_PER_PX / EXVIVO_UM_PER_PX   # 3.125
-
-    print("Position scale factors (from full-res):")
-    print(f"  X: {1/downsample_x:.6f} (x2 for canvas, then anisotropic scale)")
-    print(f"  Y: {1/downsample_y:.6f} (x2 for canvas, then anisotropic scale)\n")
+    print("Position scale factor (from full-res):")
+    print(f"  {1/DOWNSAMPLE_XY:.6f} on both axes (x2 for canvas, then scale)\n")
 
     # Find subslices to process (check for .h5 first, fall back to .mat)
     cellmask_files = list(input_dir.glob("slice*_subslice_CELLMASK.h5"))
@@ -166,7 +159,7 @@ def generate_mscarlet_cellmask_subslice_anisotropic(
         use_h5_format = False
 
     if not cellmask_files:
-        raise FileNotFoundError(f"No anisotropic subslices found in: {input_dir}")
+        raise FileNotFoundError(f"No downsampled subslices found in: {input_dir}")
 
     print(f"Found {len(cellmask_files)} subslices ({'H5' if use_h5_format else 'MAT'} format)\n")
 
@@ -275,18 +268,15 @@ def generate_mscarlet_cellmask_subslice_anisotropic(
 
         if cells_above_thresh > 0:
             for cell_idx in slice_cell_indices:
-                # ANISOTROPIC position mapping
-                # Full-res position * 2 (canvas space) * scale_factor - offset correction
+                # Full-res position -> canvas space (x2) -> downsampled image
                 pos_x_fullres = pos[cell_idx, 0]
                 pos_y_fullres = pos[cell_idx, 1]
 
-                # Apply SEPARATE scale factors for X and Y
-                # Canvas space: pos * 2
-                # Then downsample with anisotropic factors
-                # MATLAB: x_stitched = round((pos_x_fullres * 2 - (min_x_offset - 1)) / downsample_x)
+                # Same factor on both axes, matching how the image was resampled.
+                # MATLAB: x_stitched = round((pos_x_fullres * 2 - (min_x_offset - 1)) / downsample)
                 # Python: same formula but 0-indexed result
-                x_stitched = round((pos_x_fullres * 2 - (min_x_offset - 1)) / downsample_x)
-                y_stitched = round((pos_y_fullres * 2 - (min_y_offset - 1)) / downsample_y)
+                x_stitched = round((pos_x_fullres * 2 - (min_x_offset - 1)) / DOWNSAMPLE_XY)
+                y_stitched = round((pos_y_fullres * 2 - (min_y_offset - 1)) / DOWNSAMPLE_XY)
 
                 # Convert to 0-indexed for Python
                 x_stitched = int(x_stitched) - 1
@@ -348,11 +338,11 @@ def generate_mscarlet_cellmask_subslice_anisotropic(
 
     # Summary
     print("=" * 40)
-    print("ANISOTROPIC CELL MASK OVERLAY COMPLETE")
+    print("CELL MASK OVERLAY COMPLETE")
     print("=" * 40)
     print(f"Output directory: {output_dir}")
     print(f"Subslices processed: {len(cellmask_files)}")
-    print(f"\nResolution: Anisotropic (X={INVIVO_XY_UM_PER_PX:.2f}, Y={INVIVO_Z_UM_PER_PX:.2f} um/px)")
+    print(f"\nResolution: {TARGET_XY_UM_PER_PX:.4f} um/px, square pixels")
     print("\nNext steps:")
     print("  1. Review overlays in output directory")
     print("  2. Add overlays to LineStuffUp graph for alignment")
@@ -362,7 +352,7 @@ def generate_mscarlet_cellmask_subslice_anisotropic(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate mScarlet cell mask overlays (anisotropic)",
+        description="Generate mScarlet cell mask overlays",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )

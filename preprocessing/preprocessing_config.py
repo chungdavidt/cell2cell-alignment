@@ -109,18 +109,61 @@ SUBSLICE_DEFINITIONS_FILE = os.path.join(SUBSLICE_DEFINITIONS_DIR, "subslice_def
 # RESOLUTION CONSTANTS
 # =============================================================================
 
-# Ex vivo resolution
+# Ex vivo BARseq resolution. Invariant across datasets.
 EXVIVO_UM_PER_PX = 0.32  # micrometers per pixel
 
-# In vivo resolution (after xrotate=90 transformation)
-INVIVO_XY_UM_PER_PX = 2.34  # lateral-medial (X in vivo = X/Y in ex vivo)
-INVIVO_Z_UM_PER_PX = 1.0    # dorsal-ventral (Z in vivo = Z in ex vivo, after rotation)
+# 2P in-plane pixel size the BARseq images are resampled to, set per dataset in
+# local_config.py. Sections are cut in the 2P imaging plane, so both BARseq
+# in-plane axes map to 2P XY and ONE factor covers both. (Sections used to be
+# cut coronal against an axial 2P, which is why this was two factors -- 7.3125
+# for X, 3.125 for Y -- off Li lab optics that belong to the retired JH302.)
+#
+# Read here rather than from the TIFF: the BARseq TIFFs carry a placeholder
+# XResolution (72 DPI -> 352.78 um/px), so the header cannot be trusted.
+#
+# Largest value accepted as a real microscope calibration. Mirrors
+# MAX_PLAUSIBLE_XY_UM_PER_PX in alignment/subslice_graph_builder.py: cellular 2P
+# is sub-~5 um/px, so anything coarser is an uncalibrated DPI default pasted in
+# by mistake.
+MAX_PLAUSIBLE_XY_UM_PER_PX = 20.0
 
-# Anisotropic downsample factors
-# X: ex vivo -> in vivo X/Y resolution
-DOWNSAMPLE_X = INVIVO_XY_UM_PER_PX / EXVIVO_UM_PER_PX  # 7.3125
-# Y: ex vivo -> in vivo Z resolution
-DOWNSAMPLE_Y = INVIVO_Z_UM_PER_PX / EXVIVO_UM_PER_PX   # 3.125
+_KNOWN_TARGETS = (
+    "    huang_lab        0.3910   (BY95)\n"
+    "    huang_lab_566um  1.1055   (by84, by94, by89)\n"
+    "    li_lab           2.34     (JH302, retired)"
+)
+
+_target_xy = getattr(local_config, "TARGET_XY_UM_PER_PX", "")
+if _target_xy == "" or _target_xy is None:
+    raise ValueError(
+        "TARGET_XY_UM_PER_PX is not set in local_config.py.\n"
+        "Set it to the in-plane pixel size (um/px) of the 2P volume this BARseq "
+        "dataset is being aligned to.\n"
+        "Known values:\n" + _KNOWN_TARGETS
+    )
+try:
+    TARGET_XY_UM_PER_PX = float(_target_xy)
+except (TypeError, ValueError):
+    raise ValueError(
+        f"TARGET_XY_UM_PER_PX in local_config.py is not a number: {_target_xy!r}\n"
+        "Known values:\n" + _KNOWN_TARGETS
+    ) from None
+if not 0 < TARGET_XY_UM_PER_PX <= MAX_PLAUSIBLE_XY_UM_PER_PX:
+    _hint = (
+        "Values that large are TIFF DPI defaults, not pixel sizes (72 DPI reads "
+        "as 352.78 um/px).\n"
+        if TARGET_XY_UM_PER_PX > MAX_PLAUSIBLE_XY_UM_PER_PX else ""
+    )
+    raise ValueError(
+        f"TARGET_XY_UM_PER_PX in local_config.py is out of range: "
+        f"{TARGET_XY_UM_PER_PX} um/px\n"
+        f"Expected 0 < value <= {MAX_PLAUSIBLE_XY_UM_PER_PX}. " + _hint +
+        "Known values:\n" + _KNOWN_TARGETS
+    )
+
+# Isotropic downsample factor: new_size = original_size / DOWNSAMPLE_XY.
+# huang_lab (0.3910) -> 1.2219x, huang_lab_566um (1.1055) -> 3.4547x.
+DOWNSAMPLE_XY = TARGET_XY_UM_PER_PX / EXVIVO_UM_PER_PX
 
 # =============================================================================
 # DATA CONSTANTS

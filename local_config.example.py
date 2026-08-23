@@ -124,3 +124,16 @@ GRAPH_PATH = ""
 # ---------------------------------------------------------------------
 SCOPE_FALLBACK_INVIVO = ""
 SCOPE_FALLBACK_BLOCK = ""
+
+# ---------------------------------------------------------------------
+# 2P in-plane pixel size in µm/px, for the volume BARseq is being aligned to.
+# BARseq is always 0.32 µm/px and gets resampled to this; the 2P is never
+# touched. Sections are cut in the 2P imaging plane, so one factor covers
+# both in-plane axes: DOWNSAMPLE_XY = TARGET_XY_UM_PER_PX / 0.32.
+# Required by the preprocessing pipeline — blank is a hard error at import.
+# Known values, matching MICROSCOPE_PROFILES in subslice_graph_builder.py:
+#   huang_lab        0.3910   (BY95)
+#   huang_lab_566um  1.1055   (by84, by94, by89)
+#   li_lab           2.34     (JH302, retired)
+# ---------------------------------------------------------------------
+TARGET_XY_UM_PER_PX = ""

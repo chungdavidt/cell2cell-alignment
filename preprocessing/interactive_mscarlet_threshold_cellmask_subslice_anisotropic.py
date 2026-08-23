@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """
-Interactive mScarlet Threshold Viewer (CELL MASK - ANISOTROPIC).
+Interactive mScarlet Threshold Viewer (CELL MASK).
 
 Displays multiple subslices with mScarlet+ cells on CELL MASK background.
-Uses ANISOTROPIC downsampling for correct resolution matching.
 
 This is a Python port of interactive_mscarlet_threshold_cellmask_subslice_anisotropic.m
 with exact fidelity.
 
-ANISOTROPIC SCALING:
-    - X: 0.32 -> 2.34 um/px (matches in vivo X/Y)
-    - Y: 0.32 -> 1.0 um/px (matches in vivo Z after xrotate=90)
+Cell centroids are mapped into the downsampled image with DOWNSAMPLE_XY, the
+same factor downsample_subslices_cellmask_anisotropic.py used to resample it.
 
 PERFORMANCE: Data is cached after first run - subsequent threshold changes are FAST!
 
@@ -44,9 +42,8 @@ from preprocessing_config import (
     MSCARLET_GENE_NAME,
     QC_MIN_READS,
     QC_MIN_GENES,
-    EXVIVO_UM_PER_PX,
-    INVIVO_XY_UM_PER_PX,
-    INVIVO_Z_UM_PER_PX,
+    TARGET_XY_UM_PER_PX,
+    DOWNSAMPLE_XY,
 )
 from utilities.mat_io import load_filt_neurons, load_mat, load_cellmask_h5, get_expression_column, resolve_marker_column
 from utilities.visualization import create_histogram
@@ -93,7 +90,7 @@ def interactive_mscarlet_threshold_cellmask_subslice_anisotropic(
         selection_desc = f'Specific subslices: {slice_selection}'
 
     print("=" * 40)
-    print("MSCARLET CELL MASK VIEWER (ANISOTROPIC)")
+    print("MSCARLET CELL MASK VIEWER")
     print("=" * 40)
     print(f"mScarlet threshold: {min_mscarlet_intensity:.2f} ({selection_desc})")
     print(f"Cell mask brightness: {cellmask_intensity:.2f} ({cellmask_intensity*100:.0f}% of base)\n")
@@ -117,7 +114,7 @@ def interactive_mscarlet_threshold_cellmask_subslice_anisotropic(
 
         if not input_dir.exists():
             raise FileNotFoundError(
-                f"Anisotropic subslice directory not found!\n"
+                f"Downsampled subslice directory not found!\n"
                 f"Run stitch_subslices.py and downsample_subslices_cellmask_anisotropic.py first.\n"
                 f"Expected: {input_dir}"
             )
@@ -146,7 +143,8 @@ def interactive_mscarlet_threshold_cellmask_subslice_anisotropic(
 
         print(f"mScarlet+ QC-passed cells: {np.sum(mscarlet_positive)}")
         print(f"Expression range: {np.min(mscarlet_expression[mscarlet_positive]):.0f} - {max_expr:.0f} transcripts")
-        print(f"\nResolution: Anisotropic (X={INVIVO_XY_UM_PER_PX:.2f}, Y={INVIVO_Z_UM_PER_PX:.2f} um/px)\n")
+        print(f"\nResolution: {TARGET_XY_UM_PER_PX:.4f} um/px, square pixels "
+              f"({DOWNSAMPLE_XY:.4f}x downsample)\n")
 
         # Find available subslices (check for .h5 first, fall back to .mat)
         cellmask_files = list(input_dir.glob("slice*_subslice_CELLMASK.h5"))
@@ -157,7 +155,7 @@ def interactive_mscarlet_threshold_cellmask_subslice_anisotropic(
             use_h5_format = False
 
         if not cellmask_files:
-            raise FileNotFoundError(f"No anisotropic subslices found in: {input_dir}")
+            raise FileNotFoundError(f"No downsampled subslices found in: {input_dir}")
 
         # Sort by slice ID
         def get_slice_id(f):
@@ -170,10 +168,6 @@ def interactive_mscarlet_threshold_cellmask_subslice_anisotropic(
         # Load all subslices into memory
         print("Loading subslices and pre-computing cell masks...")
         print("(This happens once - changing thresholds will then be fast!)")
-
-        # Anisotropic scale factors
-        downsample_x = INVIVO_XY_UM_PER_PX / EXVIVO_UM_PER_PX
-        downsample_y = INVIVO_Z_UM_PER_PX / EXVIVO_UM_PER_PX
 
         slice_ids_array = np.asarray(filt_neurons['slice']).flatten()
         pos = np.asarray(filt_neurons['pos'])
@@ -215,13 +209,13 @@ def interactive_mscarlet_threshold_cellmask_subslice_anisotropic(
                 print(f"  WARNING: No cellmask found in {cellmask_file.name}, skipping")
                 continue
 
-            # Calculate ANISOTROPIC positions
+            # Map centroids into the downsampled image
             cell_indices = np.where(slice_mscarlet_cells)[0]
             cell_positions = pos[cell_indices]
 
-            # Apply anisotropic position transformation
-            adjusted_x = (cell_positions[:, 0] * 2 - (min_x_offset - 1)) / downsample_x
-            adjusted_y = (cell_positions[:, 1] * 2 - (min_y_offset - 1)) / downsample_y
+            # Same factor on both axes, matching how the image was resampled
+            adjusted_x = (cell_positions[:, 0] * 2 - (min_x_offset - 1)) / DOWNSAMPLE_XY
+            adjusted_y = (cell_positions[:, 1] * 2 - (min_y_offset - 1)) / DOWNSAMPLE_XY
             adjusted_positions = np.column_stack([adjusted_x, adjusted_y])
 
             # PRE-COMPUTE cell pixel lists for fast threshold changes
@@ -320,7 +314,7 @@ def interactive_mscarlet_threshold_cellmask_subslice_anisotropic(
             fig_num = plot_idx // SLICES_PER_FIGURE + 1
             current_fig = plt.figure(figsize=(16, 10))
             current_fig.suptitle(
-                f"mScarlet Cell Mask (Aniso, thresh={min_mscarlet_intensity:.2f}) - Fig {fig_num}/{n_figures}",
+                f"mScarlet Cell Mask (thresh={min_mscarlet_intensity:.2f}) - Fig {fig_num}/{n_figures}",
                 fontsize=14
             )
 
@@ -427,7 +421,7 @@ def interactive_mscarlet_threshold_cellmask_subslice_anisotropic(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Interactive mScarlet threshold viewer (anisotropic)",
+        description="Interactive mScarlet threshold viewer",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )

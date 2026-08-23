@@ -1,21 +1,16 @@
 """
-Subslice Graph Builder - LineStuffUp Alignment Graph for Anisotropic Subslices
+Subslice Graph Builder - LineStuffUp Alignment Graph for BARseq Subslices
 
-Builds alignment graph using anisotropically-downsampled ex vivo coronal subslices
-to match in vivo 2-photon stack resolution.
+Builds the alignment graph from the 2P volumes named in local_config.py plus the
+downsampled BARseq subslices produced by preprocessing/.
 
-Key Resolution Matching:
-- Ex vivo subslices: Anisotropic scaling to match in vivo physically
-  - X dimension: 2.34 µm/px (matches in vivo X/Y)
-  - Y dimension: 1.0 µm/px (matches in vivo Z)
+2P spacing is autodetected per TIFF from its XResolution metadata, matched
+against MICROSCOPE_PROFILES; SCOPE_FALLBACK_* covers files with no metadata.
 
-- In vivo stack:
-  - X/Y: 2.34 µm/px (512 px / 1200 µm)
-  - Z: 1.0 µm/px (399 px / 399 µm)
-
-After xrotate=90:
-- Ex vivo Y (Dorsal-Ventral) → In vivo Z
-- Ex vivo X (Lateral-Medial) → In vivo X
+BARseq subslices carry no usable metadata, so their spacing comes from
+TARGET_XY_UM_PER_PX in local_config.py — the same knob preprocessing resampled
+them with. Sections are cut in the 2P imaging plane, so that pitch applies to
+both in-plane axes; Z is the 20 µm physical section thickness.
 
 Author: DTC
 Date: 2024-12-15
@@ -87,11 +82,20 @@ from analysis_paths import analysis_subdir, subject_name, ALIGNMENT_SUBDIR
 # Configuration
 # ============================================
 
-# Resolution parameters
+# Last-resort spacing for a 2P node whose TIFF gave resolve_spacing() nothing.
+# TODO: Li lab values on a Huang lab dataset are wrong; this path should raise
+# rather than guess, but it is separately guarded and out of scope here.
 INVIVO_XY_UM_PER_PX = 2.34   # In vivo X/Y resolution
 INVIVO_Z_UM_PER_PX = 1.0     # In vivo Z resolution
-EXVIVO_X_UM_PER_PX = 2.34    # Anisotropic ex vivo X (matches in vivo X/Y)
-EXVIVO_Y_UM_PER_PX = 1.0     # Anisotropic ex vivo Y (matches in vivo Z)
+
+# In-plane pixel size the BARseq subslices were resampled to by
+# preprocessing/downsample_subslices_cellmask_anisotropic.py. Blank unless
+# BARseq subslices are being added, so it is validated at the point of use in
+# add_subslices_to_graph() rather than at import.
+TARGET_XY_UM_PER_PX = getattr(local_config, "TARGET_XY_UM_PER_PX", "")
+
+# Physical thickness of a BARseq section, µm. Invariant across datasets.
+SECTION_THICKNESS_UM = 20.0
 
 # Known microscope profiles for resolution autodetection.
 # XY resolution identifies the microscope; Z comes from metadata or falls back to default.
@@ -162,7 +166,7 @@ def discover_aniso_subslices(
     directory: Union[str, Path]
 ) -> List[Path]:
     """
-    Discover available anisotropic subslice files.
+    Discover available BARseq subslice files.
 
     Returns
     -------
@@ -171,17 +175,17 @@ def discover_aniso_subslices(
     """
     directory = Path(directory)
     if not directory.exists():
-        raise FileNotFoundError(f"Anisotropic subslice directory not found: {directory}")
+        raise FileNotFoundError(f"Subslice directory not found: {directory}")
 
     files = sorted(directory.glob("slice*_subslice_mScarlet_cellmask.tif"))
-    print(f"Found {len(files)} anisotropic subslice files")
+    print(f"Found {len(files)} BARseq subslice files")
 
     return files
 
 
 def load_single_subslice(path: Union[str, Path]) -> np.ndarray:
     """
-    Load a single anisotropic subslice.
+    Load a single BARseq subslice.
 
     Returns
     -------
@@ -536,6 +540,33 @@ def _assert_spacing_match(
         )
 
 
+def _require_target_xy() -> float:
+    """Return TARGET_XY_UM_PER_PX as a float, or raise if unusable."""
+    if TARGET_XY_UM_PER_PX == "" or TARGET_XY_UM_PER_PX is None:
+        raise ValueError(
+            "TARGET_XY_UM_PER_PX is not set in local_config.py.\n"
+            "It is required to add BARseq subslices: it is the 2P in-plane pixel "
+            "size preprocessing resampled them to, and becomes their node "
+            "spacing.\n"
+            "Known values:\n"
+            "    huang_lab        0.3910   (BY95)\n"
+            "    huang_lab_566um  1.1055   (by84, by94, by89)"
+        )
+    try:
+        value = float(TARGET_XY_UM_PER_PX)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"TARGET_XY_UM_PER_PX in local_config.py is not a number: "
+            f"{TARGET_XY_UM_PER_PX!r}"
+        ) from None
+    if not 0 < value <= MAX_PLAUSIBLE_XY_UM_PER_PX:
+        raise ValueError(
+            f"TARGET_XY_UM_PER_PX in local_config.py is out of range: {value} "
+            f"µm/px (expected 0 < value <= {MAX_PLAUSIBLE_XY_UM_PER_PX})."
+        )
+    return value
+
+
 def add_subslices_to_graph(
     graph: ca.Graph,
     subslice_dir: Union[str, Path],
@@ -544,17 +575,19 @@ def add_subslices_to_graph(
     verbose: bool = True
 ) -> ca.Graph:
     """
-    Add all anisotropic subslices to graph.
+    Add all downsampled BARseq subslices to graph.
 
-    Subslice spacing: (Z, Y, X) = (20.0, 1.0, 2.34) µm/px
-    - Z: 20 µm physical slice thickness
-    - Y: 1.0 µm/px (matches in vivo Z)
-    - X: 2.34 µm/px (matches in vivo X/Y)
+    Subslice spacing: (Z, Y, X) = (20.0, target, target) µm/px
+    - Z: 20 µm physical section thickness
+    - Y, X: TARGET_XY_UM_PER_PX, the 2P in-plane pitch preprocessing resampled
+      the subslices to. Sections are cut in the 2P imaging plane, so one pitch
+      covers both in-plane axes.
 
-    NOTE: The subslices are CORONAL (ex vivo), so after xrotate=90:
-    - Ex vivo Y → In vivo Z
-    - Ex vivo X → In vivo X
+    Raises ValueError if TARGET_XY_UM_PER_PX is unset — a subslice whose spacing
+    disagrees with the pixels it was written at is silently wrong.
     """
+    target_xy = _require_target_xy()
+
     files = discover_aniso_subslices(subslice_dir)
 
     # Check which are already in graph
@@ -576,15 +609,9 @@ def add_subslices_to_graph(
         print("All subslices already in graph!")
         return graph
 
-    # Subslice spacing: anisotropic to match in vivo after rotation
-    # (Z, Y, X) where Z is slice thickness, Y/X are the pixel spacings
-    # TODO: when BARseq subslices land for non-Li-lab datasets, replace this
-    # hardcoded tuple with a SCOPE_FALLBACK_SUBSLICE knob mirroring the invivo/
-    # block fallbacks. See plans/tender-floating-horizon.md.
     metadata = {
-        'spacing': (20.0, EXVIVO_Y_UM_PER_PX, EXVIVO_X_UM_PER_PX),  # (Z, Y, X) µm/px
-        'anisotropic': True,
-        'note': 'Y matches in_vivo Z, X matches in_vivo XY'
+        # (Z, Y, X) µm/px — Z is section thickness, Y/X the resampled pitch
+        'spacing': (SECTION_THICKNESS_UM, target_xy, target_xy),
     }
 
     added = 0
@@ -948,7 +975,7 @@ def build_subslice_graph(
             save_graph(g, output_path, verbose=False)
 
     if subslice_dir:
-        print("\n3. Adding anisotropic subslices")
+        print("\n3. Adding BARseq subslices")
         print("-" * 60)
         add_subslices_to_graph(
             g,

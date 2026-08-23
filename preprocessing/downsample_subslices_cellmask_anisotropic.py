@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """
-Downsample Stitched Subslices with Anisotropic Scaling.
+Downsample Stitched Subslices to the 2P Pixel Size.
 
 Downsamples ALL channels (DAPI, GCAMP, MSCARLET, CELLMASK) from stitched subslices
-using ANISOTROPIC scaling to match in-vivo resolution correctly in both dimensions.
+to the in-plane pixel size of the 2P volume they are being aligned to.
 
-This is a Python port of downsample_subslices_refined.m with exact fidelity,
-updated to use anisotropic scaling.
+This is a Python port of downsample_subslices_refined.m, with the two
+anisotropic factors it used replaced by one.
 
-ANISOTROPIC SCALING (matches in vivo resolution):
-    - X: 0.32 -> 2.34 um/px (7.31x downsample, matches in vivo X/Y)
-    - Y: 0.32 -> 1.0 um/px (3.125x downsample, matches in vivo Z after xrotate=90)
+Sections are cut in the 2P imaging plane, so both BARseq in-plane axes map to 2P
+XY and ONE isotropic factor covers both:
+
+    DOWNSAMPLE_XY = TARGET_XY_UM_PER_PX / 0.32
+
+TARGET_XY_UM_PER_PX is set per dataset in local_config.py. For huang_lab (0.3910
+um/px) the factor is 1.2219x, so this step barely reduces size; for
+huang_lab_566um (1.1055) it is 3.4547x.
 
 Usage:
     python downsample_subslices_cellmask_anisotropic.py
@@ -30,11 +35,10 @@ Output:
         * slice{N}_subslice_GCAMP.tif (bilinear downsampled)
         * slice{N}_subslice_MSCARLET.tif (bilinear downsampled)
         * slice{N}_subslice_CELLMASK.h5 (nearest-neighbor, preserves cell IDs)
-        * downsample_metadata.mat (scale factors, timestamps)
+        * downsample_metadata.mat (scale factor, timestamps)
 
 Downsampling:
-    - X dimension: 7.31x (0.32 -> 2.34 um/px)
-    - Y dimension: 3.125x (0.32 -> 1.0 um/px)
+    - Both dimensions: DOWNSAMPLE_XY (0.32 -> TARGET_XY_UM_PER_PX um/px)
     - Method: Bilinear for images, Nearest-neighbor for cellmask
 """
 
@@ -55,10 +59,8 @@ from preprocessing_config import (
     HYB_STITCHED_DIR,
     HYB_DOWNSAMPLED_DIR,
     EXVIVO_UM_PER_PX,
-    INVIVO_XY_UM_PER_PX,
-    INVIVO_Z_UM_PER_PX,
-    DOWNSAMPLE_X,
-    DOWNSAMPLE_Y,
+    TARGET_XY_UM_PER_PX,
+    DOWNSAMPLE_XY,
 )
 from utilities.mat_io import load_mat, save_mat, load_cellmask_h5, save_cellmask_h5
 from utilities.image_io import imread_tiff, imwrite_tiff
@@ -135,7 +137,7 @@ def imresize_bilinear(image: np.ndarray, output_shape: tuple) -> np.ndarray:
 
 def downsample_subslices_cellmask_anisotropic(target_slice: int = None, cellmask_only: bool = False):
     """
-    Main function to downsample all channels with anisotropic scaling.
+    Main function to downsample all channels to the 2P pixel size.
 
     Args:
         target_slice: If specified, process only this slice
@@ -155,20 +157,14 @@ def downsample_subslices_cellmask_anisotropic(target_slice: int = None, cellmask
 
     print("=" * 40)
     if cellmask_only:
-        print("DOWNSAMPLE CELLMASKS ONLY (ANISOTROPIC)")
+        print("DOWNSAMPLE CELLMASKS ONLY")
     else:
-        print("DOWNSAMPLE ALL CHANNELS (ANISOTROPIC)")
+        print("DOWNSAMPLE ALL CHANNELS")
     print("=" * 40)
     print("Resolution mapping:")
-    print(f"  Ex vivo original: {EXVIVO_UM_PER_PX:.2f} um/px (both X and Y)")
-    print()
-    print("  In vivo targets:")
-    print(f"    X (Lateral-Medial): {INVIVO_XY_UM_PER_PX:.2f} um/px")
-    print(f"    Y (Dorsal-Ventral): {INVIVO_Z_UM_PER_PX:.2f} um/px")
-    print()
-    print("  Downsample factors:")
-    print(f"    X dimension: {DOWNSAMPLE_X:.4f}x (ex vivo X -> in vivo X)")
-    print(f"    Y dimension: {DOWNSAMPLE_Y:.4f}x (ex vivo Y -> in vivo Z)")
+    print(f"  Ex vivo original: {EXVIVO_UM_PER_PX:.4f} um/px")
+    print(f"  2P target:        {TARGET_XY_UM_PER_PX:.4f} um/px")
+    print(f"  Downsample factor: {DOWNSAMPLE_XY:.4f}x (both dimensions)")
     print()
     if not cellmask_only:
         print("  Channels to process: DAPI, GCAMP, MSCARLET, CELLMASK")
@@ -204,11 +200,9 @@ def downsample_subslices_cellmask_anisotropic(target_slice: int = None, cellmask
 
     # Metadata for tracking
     metadata = {
-        'downsample_x': DOWNSAMPLE_X,
-        'downsample_y': DOWNSAMPLE_Y,
+        'downsample_xy': DOWNSAMPLE_XY,
         'exvivo_resolution_um_per_pixel': EXVIVO_UM_PER_PX,
-        'invivo_x_resolution_um_per_pixel': INVIVO_XY_UM_PER_PX,
-        'invivo_y_resolution_um_per_pixel': INVIVO_Z_UM_PER_PX,
+        'target_xy_um_per_pixel': TARGET_XY_UM_PER_PX,
         'processing_date': str(datetime.now()),
         'slices_processed': [],
     }
@@ -266,14 +260,13 @@ def downsample_subslices_cellmask_anisotropic(target_slice: int = None, cellmask
         print(f"    Original size: {orig_h} x {orig_w} (H x W)")
         print(f"    Canvas offset: x={min_x_offset}, y={min_y_offset}")
 
-        # Calculate new dimensions with ANISOTROPIC scaling
-        new_h = round(orig_h / DOWNSAMPLE_Y)  # Y dimension
-        new_w = round(orig_w / DOWNSAMPLE_X)  # X dimension
+        # Calculate new dimensions - same factor on both axes
+        new_h = round(orig_h / DOWNSAMPLE_XY)
+        new_w = round(orig_w / DOWNSAMPLE_XY)
 
-        print("  Downsampling anisotropically...")
+        print(f"  Downsampling {DOWNSAMPLE_XY:.4f}x...")
         print(f"    Target size: {new_h} x {new_w} (H x W)")
-        print(f"    X: {DOWNSAMPLE_X:.4f}x downsample (W: {orig_w} -> {new_w})")
-        print(f"    Y: {DOWNSAMPLE_Y:.4f}x downsample (H: {orig_h} -> {new_h})")
+        print(f"    H: {orig_h} -> {new_h}   W: {orig_w} -> {new_w}")
 
         # Downsample using nearest-neighbor (preserve cell IDs)
         cellmask_downsampled = imresize_nearest(cellmask_fullres, (new_h, new_w))
@@ -286,13 +279,11 @@ def downsample_subslices_cellmask_anisotropic(target_slice: int = None, cellmask
 
         # Save downsampled cellmask with metadata (HDF5 format)
         save_cellmask_h5(cellmask_output_path, cellmask_downsampled, metadata={
-            'DOWNSAMPLE_X': DOWNSAMPLE_X,
-            'DOWNSAMPLE_Y': DOWNSAMPLE_Y,
+            'DOWNSAMPLE_XY': DOWNSAMPLE_XY,
             'min_x_offset': min_x_offset,
             'min_y_offset': min_y_offset,
             'EXVIVO_UM_PER_PX': EXVIVO_UM_PER_PX,
-            'INVIVO_XY_UM_PER_PX': INVIVO_XY_UM_PER_PX,
-            'INVIVO_Z_UM_PER_PX': INVIVO_Z_UM_PER_PX,
+            'TARGET_XY_UM_PER_PX': TARGET_XY_UM_PER_PX,
         })
 
         file_size = cellmask_output_path.stat().st_size / 1e6
@@ -347,10 +338,9 @@ def downsample_subslices_cellmask_anisotropic(target_slice: int = None, cellmask
     print(f"Output directory: {output_dir}")
     print(f"Metadata saved: {metadata_file}")
     print("\nDownsampling summary:")
-    print(f"  X factor: {DOWNSAMPLE_X:.4f}x (0.32 -> 2.34 um/px)")
-    print(f"  Y factor: {DOWNSAMPLE_Y:.4f}x (0.32 -> 1.0 um/px)")
+    print(f"  Factor: {DOWNSAMPLE_XY:.4f}x on both axes "
+          f"({EXVIVO_UM_PER_PX:.4f} -> {TARGET_XY_UM_PER_PX:.4f} um/px)")
     print("  Method: Nearest-neighbor (preserves cell IDs)")
-    print("  Result: NON-SQUARE pixels but PHYSICALLY CORRECT!")
     print("\nNext step:")
     print("  Run generate_mscarlet_cellmask_subslice_anisotropic.py to create overlays")
     print("  Or run interactive_mscarlet_threshold_cellmask_subslice_anisotropic.py for interactive viewer")
@@ -359,7 +349,7 @@ def downsample_subslices_cellmask_anisotropic(target_slice: int = None, cellmask
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Downsample all channels with anisotropic scaling",
+        description="Downsample all channels to the 2P pixel size",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
