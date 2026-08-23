@@ -34,15 +34,19 @@ from scipy import ndimage
 from scipy.spatial import cKDTree
 
 
-# (Z, Y, X) µm/voxel used only to report MNN distances in µm. Default is the
-# current Huang lab setting ('huang_lab': 200.19 µm FOV, 1 µm Z). The older
-# 566.08 µm zoom that by84/by94/by89 were acquired on needs
-# --um-per-voxel 2.0,1.1055,1.1055. The pitch in use is echoed in the header,
-# so a run is never scored in µm against an unstated pitch.
-# Keep in sync with MICROSCOPE_PROFILES in subslice_graph_builder.py (not
-# imported here — this script runs in .cellpose-venv, which has no castalign).
-HUANG_UM_PER_VOXEL = (1.0, 0.3910, 0.3910)
-HUANG_566UM_PER_VOXEL = (2.0, 1.1055, 1.1055)
+# (Z, Y, X) µm/voxel used only to report MNN distances in µm. Taken from SCOPE
+# in local_config.py via scope_profiles.py, which is stdlib-only and so imports
+# cleanly in .cellpose-venv (no castalign). --um-per-voxel overrides it; the
+# pitch in use is echoed in the header, so a run is never scored in µm against
+# an unstated pitch.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scope_profiles import spacing_zyx, describe_profiles  # noqa: E402
+
+
+def _scope_um_per_voxel() -> tuple:
+    """(Z, Y, X) µm/voxel for the scope declared in local_config.py."""
+    import local_config
+    return spacing_zyx(getattr(local_config, "SCOPE", ""))
 # Validation operates on the red (sparse) alignment channel by design — it's the
 # segmentation channel and the only side with a fitted rigid edge. Green is
 # joined via Identity in the graph but is not segmented here.
@@ -158,10 +162,12 @@ def apply_transform_to_centroids(transform, centroids: np.ndarray) -> np.ndarray
 def mnn_match(
     pts_movable: np.ndarray,
     pts_fixed: np.ndarray,
-    um_per_voxel: tuple = HUANG_UM_PER_VOXEL,
+    um_per_voxel: tuple = None,
 ) -> dict:
     """
     Mutual-nearest-neighbor match between two point sets in voxel coordinates.
+
+    `um_per_voxel` defaults to the scope declared in local_config.py.
 
     Uses Euclidean distance in voxel units (as specified in the validation
     design). Per-axis um distances are returned alongside so the caller can
@@ -182,6 +188,9 @@ def mnn_match(
             "distances_voxel":       np.zeros(0),
             "distances_um_per_axis": np.zeros((0, 3)),
         }
+
+    if um_per_voxel is None:
+        um_per_voxel = _scope_um_per_voxel()
 
     tree_fixed = cKDTree(pts_fixed)
     tree_movable = cKDTree(pts_movable)
@@ -313,11 +322,9 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument(
         "--um-per-voxel", default=None, metavar="Z,Y,X",
         help=(
-            "Voxel pitch in µm for the µm-distance report, as Z,Y,X. "
-            f"Default {','.join(str(v) for v in HUANG_UM_PER_VOXEL)} "
-            "(huang_lab, 200.19 µm FOV / 1 µm Z). Use "
-            f"{','.join(str(v) for v in HUANG_566UM_PER_VOXEL)} for the older "
-            "566.08 µm zoom (by84, by94, by89)."
+            "Voxel pitch in µm for the µm-distance report, as Z,Y,X. Defaults "
+            "to the SCOPE declared in local_config.py:\n"
+            + describe_profiles()
         ),
     )
     parser.add_argument("--node-movable", default=DEFAULT_NODE_MOVABLE)
@@ -335,7 +342,7 @@ def main(argv: Optional[list] = None) -> int:
         if any(v <= 0 for v in um_per_voxel):
             parser.error(f"--um-per-voxel values must be positive, got {args.um_per_voxel!r}")
     else:
-        um_per_voxel = HUANG_UM_PER_VOXEL
+        um_per_voxel = _scope_um_per_voxel()
 
     project_root = Path(__file__).resolve().parent.parent
     if str(project_root) not in sys.path:
@@ -377,7 +384,7 @@ def main(argv: Optional[list] = None) -> int:
     print(f"Output dir: {out_dir}")
     print(f"Direction:  {args.node_movable} -> {args.node_fixed}")
     print(f"µm/voxel:   {um_per_voxel} (Z, Y, X)"
-          f"{'' if args.um_per_voxel else ' — default; override with --um-per-voxel'}")
+          f"{'' if args.um_per_voxel else ' — from SCOPE; override with --um-per-voxel'}")
     print()
 
     out_dir.mkdir(parents=True, exist_ok=True)

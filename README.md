@@ -71,7 +71,7 @@ This is the only file you need to edit to get running. It holds all machine-spec
 | `SUBSLICE_DIR` | Optional | Graph builder | Directory of BARseq subslice overlays |
 | `DATA_ROOT` | BARseq only | Preprocessing pipeline | Raw BARseq data root |
 | `OUTPUT_ROOT` | BARseq only | Preprocessing pipeline | Where preprocessing writes its outputs |
-| `TARGET_XY_UM_PER_PX` | BARseq only | Preprocessing pipeline + graph builder | 2P in-plane pixel size the BARseq images are resampled to |
+| `SCOPE` | **Yes** | Everything | The microscope that acquired this subject's data — the source of truth for every pixel size |
 
 ### Rules for the optional data inputs
 
@@ -118,17 +118,17 @@ All three are used by the BARseq preprocessing stage (Section 4) and the subslic
 
 Leave all three blank if you aren't running BARseq preprocessing right now. You can fill them in and re-run the graph builder any time later — it will pick up the subslices then.
 
-**`TARGET_XY_UM_PER_PX`** — the in-plane pixel size (µm/px) of the 2P volume this BARseq dataset is being aligned to. BARseq is always 0.32 µm/px and is the side that gets resampled; the 2P is never touched. Sections are cut in the 2P imaging plane, so one factor covers both in-plane axes:
+**`SCOPE`** — see the next section.
+
+### Microscope resolution — `SCOPE`
+
+You name the microscope once:
 
 ```python
-DOWNSAMPLE_XY = TARGET_XY_UM_PER_PX / 0.32     # 0.3910 → 1.2219x, 1.1055 → 3.4547x
+SCOPE = "huang_lab"
 ```
 
-Set it to the XY value of the scope profile that acquired your 2P volume (table below). Preprocessing raises at import if it is blank, non-numeric, or above 20 µm/px — the last catches a TIFF DPI default (72 DPI reads as 352.78) pasted in by mistake. The graph builder needs it too, but only when it is actually adding subslices.
-
-### Microscope resolution
-
-For **2P volumes** you don't set pixel size anywhere — the graph builder reads it from each TIFF's metadata and matches against `MICROSCOPE_PROFILES` in `alignment/subslice_graph_builder.py`. Currently supports:
+and every pixel size in the project follows from it. The profiles live in `scope_profiles.py` at the project root — stdlib-only, so preprocessing, the graph builder and the cellpose venv all read the same table:
 
 | Profile key | XY (µm/px) | Z (µm/px) | FOV | Used by |
 |---|---|---|---|---|
@@ -136,9 +136,19 @@ For **2P volumes** you don't set pixel size anywhere — the graph builder reads
 | `huang_lab` | 0.3910 | 1.0 | 200.19 µm | BY95 |
 | `huang_lab_566um` | 1.1055 | 2.0 | 566.08 µm | by84, by94, by89 |
 
-If your microscope isn't in the list, the builder errors with a copy-pasteable template telling you exactly what to add to `MICROSCOPE_PROFILES`. For files with no metadata at all, `SCOPE_FALLBACK_INVIVO` / `SCOPE_FALLBACK_BLOCK` name the profile to assume.
+The Huang lab runs one scanner at two zooms, ~2.83× apart; `huang_lab` is the current 200 µm setting, and `huang_lab_200um` is accepted as an alias for it.
 
-For **BARseq subslices** there is no usable metadata — the raw TIFFs carry a 72-DPI placeholder — so you set the target pitch yourself via `TARGET_XY_UM_PER_PX`, using the XY column above for whichever scope took the 2P volume.
+What reads it:
+
+| Consumer | Uses |
+|---|---|
+| Preprocessing | `DOWNSAMPLE_XY = xy / 0.32` — the BARseq resample factor (0.3910 → 1.2219×, 1.1055 → 3.4547×) |
+| Graph builder | `(z, xy, xy)` on every 2P node, `(20.0, xy, xy)` on every BARseq subslice node |
+| `validate_mnn.py` | µm scale for MNN centroid distances |
+
+`SCOPE` is authoritative, not a fallback. Where a TIFF carries `XResolution` metadata it is still read, but only to **check** the declaration: a file whose pixel size disagrees stops the run rather than silently overriding `SCOPE`. Files with no metadata, or with the 72-DPI placeholder the raw BARseq TIFFs carry, are covered by `SCOPE` with no complaint.
+
+To add a microscope, add an entry to `MICROSCOPE_PROFILES` in `scope_profiles.py` — nothing else needs editing. An unrecognized pixel size errors with a copy-pasteable template.
 
 ---
 
@@ -223,7 +233,7 @@ Green-without-red would dangle the Identity edge in the graph. Either set the ma
 The graph predates the multi-channel refactor. Rebuild with `force_rebuild=True` to migrate to the new `_red` / `_green` naming. Rigid fits will need to be redone (typically minutes via Mode D).
 
 **`ValueError: Could not identify microscope from image resolution`**
-Your TIFF's XY resolution doesn't match any profile in `MICROSCOPE_PROFILES`. The error message prints a copy-pasteable block — paste it into `alignment/subslice_graph_builder.py` and re-run.
+Your TIFF's XY resolution doesn't match any profile in `MICROSCOPE_PROFILES`. The error message prints a copy-pasteable block — paste it into `scope_profiles.py` and re-run.
 
 **Graph exists but I want to rebuild from scratch**
 Either delete the `.db` file at `GRAPH_PATH`, or edit `__main__` in `subslice_graph_builder.py` to pass `force_rebuild=True`.

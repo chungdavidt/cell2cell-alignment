@@ -109,31 +109,23 @@ SUBSLICE_DIR = ""
 GRAPH_PATH = ""
 
 # ---------------------------------------------------------------------
-# Scope fallback for files lacking pixel calibration metadata.
-# Values: "li_lab" | "huang_lab" | "huang_lab_566um" | "" (blank).
-# The Huang lab runs one scanner at two zooms, and "huang_lab" is the
-# CURRENT one: 200.19 µm FOV (0.3910 µm/px), 1 µm Z, 401 z levels.
-# "huang_lab_566um" is the older 566.08 µm FOV / 2 µm Z zoom that by84,
-# by94 and by89 were acquired on. Picking the wrong one for an
-# uncalibrated file scales the volume by 2.83x in XY, 2x in Z, silently.
-# ("huang_lab_200um" is still accepted as an alias for "huang_lab".)
-# Behavior: if the TIFF has XResolution metadata, the autodetector uses it
-# (this fallback is ignored). If metadata is absent, the builder uses the
-# scope named here for that modality. Blank with absent metadata is a hard
-# error.
+# SCOPE — the microscope that acquired this subject's data.
+#
+# One declaration, and it is the source of truth for pixel size everywhere:
+#   preprocessing   BARseq resample factor (xy_um_per_px / 0.32)
+#   graph builder   spacing on every 2P node and every BARseq subslice node
+#   validate_mnn    µm scale for centroid distances
+#
+# Values (defined in scope_profiles.py at the project root):
+#   "li_lab"           2.34   µm/px XY, 1.0 µm Z, 1200 µm FOV    JH302 (retired)
+#   "huang_lab"        0.3910 µm/px XY, 1.0 µm Z, 200.19 µm FOV  BY95
+#   "huang_lab_566um"  1.1055 µm/px XY, 2.0 µm Z, 566.08 µm FOV  by84, by94, by89
+#
+# The Huang lab runs one scanner at two zooms, ~2.83x apart — "huang_lab" is the
+# current 200 µm setting. ("huang_lab_200um" is accepted as an alias for it.)
+#
+# Required. Blank is a hard error. TIFF resolution metadata, where present, is
+# read only to CHECK this line: a file whose pixel size disagrees with SCOPE
+# stops the run rather than silently overriding it.
 # ---------------------------------------------------------------------
-SCOPE_FALLBACK_INVIVO = ""
-SCOPE_FALLBACK_BLOCK = ""
-
-# ---------------------------------------------------------------------
-# 2P in-plane pixel size in µm/px, for the volume BARseq is being aligned to.
-# BARseq is always 0.32 µm/px and gets resampled to this; the 2P is never
-# touched. Sections are cut in the 2P imaging plane, so one factor covers
-# both in-plane axes: DOWNSAMPLE_XY = TARGET_XY_UM_PER_PX / 0.32.
-# Required by the preprocessing pipeline — blank is a hard error at import.
-# Known values, matching MICROSCOPE_PROFILES in subslice_graph_builder.py:
-#   huang_lab        0.3910   (BY95)
-#   huang_lab_566um  1.1055   (by84, by94, by89)
-#   li_lab           2.34     (JH302, retired)
-# ---------------------------------------------------------------------
-TARGET_XY_UM_PER_PX = ""
+SCOPE = ""

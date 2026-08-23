@@ -13,9 +13,10 @@ XY and ONE isotropic factor covers both:
 
     DOWNSAMPLE_XY = TARGET_XY_UM_PER_PX / 0.32
 
-TARGET_XY_UM_PER_PX is set per dataset in local_config.py. For huang_lab (0.3910
-um/px) the factor is 1.2219x, so this step barely reduces size; for
-huang_lab_566um (1.1055) it is 3.4547x.
+TARGET_XY_UM_PER_PX is the XY pitch of the scope named as SCOPE in
+local_config.py, looked up in scope_profiles.py. For huang_lab (0.3910 um/px) the
+factor is 1.2219x, so this step barely reduces size; for huang_lab_566um (1.1055)
+it is 3.4547x.
 
 Usage:
     python downsample_subslices_cellmask_anisotropic.py

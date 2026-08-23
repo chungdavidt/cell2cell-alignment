@@ -4,13 +4,13 @@ Subslice Graph Builder - LineStuffUp Alignment Graph for BARseq Subslices
 Builds the alignment graph from the 2P volumes named in local_config.py plus the
 downsampled BARseq subslices produced by preprocessing/.
 
-2P spacing is autodetected per TIFF from its XResolution metadata, matched
-against MICROSCOPE_PROFILES; SCOPE_FALLBACK_* covers files with no metadata.
+Pixel sizes come from the scope declared as SCOPE in local_config.py, via the
+shared profile table in scope_profiles.py. 2P nodes get (z, xy, xy); BARseq
+subslice nodes get (20.0, xy, xy) — Z is the physical section thickness, and
+sections are cut in the 2P imaging plane so one pitch covers both in-plane axes.
 
-BARseq subslices carry no usable metadata, so their spacing comes from
-TARGET_XY_UM_PER_PX in local_config.py — the same knob preprocessing resampled
-them with. Sections are cut in the 2P imaging plane, so that pitch applies to
-both in-plane axes; Z is the 20 µm physical section thickness.
+A TIFF's own XResolution metadata, where present, is read only to CHECK the
+declaration: a file whose pixel size disagrees with SCOPE stops the run.
 
 Author: DTC
 Date: 2024-12-15
@@ -53,19 +53,10 @@ BLOCK_STACK_PATH_RED = getattr(local_config, "BLOCK_STACK_PATH_RED", "")
 BLOCK_STACK_PATH_GREEN = getattr(local_config, "BLOCK_STACK_PATH_GREEN", "")
 SUBSLICE_DIR = getattr(local_config, "SUBSLICE_DIR", "")
 
-# Scope fallback knobs — used when a TIFF lacks XResolution metadata so the
-# user can declare which scope produced it. Direct attribute access (no
-# default): old local_config.py without these vars must be updated.
-try:
-    SCOPE_FALLBACK_INVIVO = local_config.SCOPE_FALLBACK_INVIVO
-    SCOPE_FALLBACK_BLOCK = local_config.SCOPE_FALLBACK_BLOCK
-except AttributeError as e:
-    raise ImportError(
-        f"local_config.py is missing a required variable: {e}\n"
-        "SCOPE_FALLBACK_INVIVO and SCOPE_FALLBACK_BLOCK are required\n"
-        '(set to "" if your TIFFs have XResolution metadata).\n'
-        "See local_config.example.py."
-    )
+# The microscope that acquired this subject's data — the source of truth for
+# every pixel size below. Validated at first use, not at import, so a module
+# import (or --help) does not require a complete config.
+SCOPE = getattr(local_config, "SCOPE", "")
 
 # Legacy node names from the pre-multi-channel schema. Presence of either in a
 # loaded graph triggers the migration guard in build_subslice_graph().
@@ -76,64 +67,17 @@ import numpy as np
 import imageio.v2 as imageio
 from utilities.image_io import get_tiff_resolution
 from analysis_paths import analysis_subdir, subject_name, ALIGNMENT_SUBDIR
-
-
-# ============================================
-# Configuration
-# ============================================
-
-# Last-resort spacing for a 2P node whose TIFF gave resolve_spacing() nothing.
-# TODO: Li lab values on a Huang lab dataset are wrong; this path should raise
-# rather than guess, but it is separately guarded and out of scope here.
-INVIVO_XY_UM_PER_PX = 2.34   # In vivo X/Y resolution
-INVIVO_Z_UM_PER_PX = 1.0     # In vivo Z resolution
-
-# In-plane pixel size the BARseq subslices were resampled to by
-# preprocessing/downsample_subslices_cellmask_anisotropic.py. Blank unless
-# BARseq subslices are being added, so it is validated at the point of use in
-# add_subslices_to_graph() rather than at import.
-TARGET_XY_UM_PER_PX = getattr(local_config, "TARGET_XY_UM_PER_PX", "")
-
-# Physical thickness of a BARseq section, µm. Invariant across datasets.
-SECTION_THICKNESS_UM = 20.0
-
-# Known microscope profiles for resolution autodetection.
-# XY resolution identifies the microscope; Z comes from metadata or falls back to default.
-# To add a new microscope, add an entry here.
-MICROSCOPE_PROFILES = {
-    'li_lab': {
-        'xy_um_per_px': 2.34,       # 512 px / 1200 µm FOV
-        'z_um_per_px': 1.0,
-        'description': 'Li lab 2P (1200 µm FOV)',
-    },
-    # The Huang lab 2P runs one 512-px scanner at two zoom settings, ~2.83x
-    # apart. 'huang_lab' is the CURRENT one (200.19 µm FOV, 1 µm Z, 401 z
-    # levels) — that is what a bare SCOPE_FALLBACK_* = "huang_lab" means.
-    # The older 566.08 µm setting keeps its own key and is still needed here:
-    # by84/by94 carry 1.1055 in their TIFF tags, and an XY matching no profile
-    # is a hard error, so removing it would break autodetection on those files.
-    'huang_lab': {
-        'xy_um_per_px': 0.3910,     # 512 px / 200.19 µm FOV
-        'z_um_per_px': 1.0,         # 401 z levels
-        'description': 'Huang lab 2P (200.19 µm FOV, 1 µm Z)',
-    },
-    'huang_lab_566um': {
-        'xy_um_per_px': 1.1055,     # 512 px / 566.08 µm FOV
-        'z_um_per_px': 2.0,
-        'description': 'Huang lab 2P, older zoom (566.08 µm FOV, 2 µm Z)',
-    },
-}
-
-# Accepted SCOPE_FALLBACK_* spellings that are not profile keys. Kept so a
-# config written against the 2026-08-21 naming keeps working.
-SCOPE_ALIASES = {
-    'huang_lab_200um': 'huang_lab',
-}
-
-
-def resolve_scope_name(name: str) -> str:
-    """Map a SCOPE_FALLBACK_* value through SCOPE_ALIASES to a profile key."""
-    return SCOPE_ALIASES.get(name, name)
+from scope_profiles import (
+    MICROSCOPE_PROFILES,
+    MAX_PLAUSIBLE_XY_UM_PER_PX,
+    assert_matches_metadata,
+    get_profile,
+    identify_scope,
+    is_plausible_xy,
+    spacing_zyx,
+    subslice_spacing_zyx,
+    unknown_scope_message,
+)
 
 
 # ============================================
@@ -227,31 +171,14 @@ def load_block_stack(path: Union[str, Path]) -> np.ndarray:
     return stack
 
 
-# Largest XY pixel size (µm/px) we'll accept as a *real* microscope calibration.
-# Cellular 2P imaging is sub-~5 µm/px (li_lab 2.34, huang_lab 0.39 / 1.11). Anything
-# coarser read from TIFF metadata is almost always an uncalibrated screen/print
-# DPI default rather than a true pixel size — e.g. the 72-DPI inch default reads
-# as 25400/72 = 352.78 µm/px (300-DPI → 84.7, 600-DPI → 42.3, all > 20). Treated
-# as "uncalibrated" so the SCOPE_FALLBACK_* mechanism takes over (loud warning,
-# no hard break). Tune here if a genuinely coarse scope is ever added.
-MAX_PLAUSIBLE_XY_UM_PER_PX = 20.0
-
-
-def detect_spacing(
-    tiff_path: Union[str, Path],
-    tolerance: float = 0.05
-) -> tuple:
+def detect_spacing(tiff_path: Union[str, Path], tolerance: float = 0.05) -> tuple:
     """
-    Autodetect microscope from TIFF metadata and return spacing.
+    Read (Z, Y, X) spacing from a TIFF's own resolution metadata.
 
-    Reads XY resolution from TIFF tags, matches against MICROSCOPE_PROFILES.
-
-    Parameters
-    ----------
-    tiff_path : Path
-        Path to TIFF stack
-    tolerance : float
-        Relative tolerance for XY matching (default 5%)
+    Kept for inspecting what a file claims. It is NOT how node spacing is
+    decided — that is `spacing_for_tiff`, which uses SCOPE and only compares
+    against this. Retained because `validate_mnn.py` and the notebook use it to
+    report a file's declared pitch.
 
     Returns
     -------
@@ -261,13 +188,11 @@ def detect_spacing(
     Raises
     ------
     ValueError
-        - "No XY resolution metadata ..." if the TIFF has no XY calibration
-        - "Uncalibrated XY resolution ..." if the detected XY exceeds
+        - "No XY resolution metadata ..." when the TIFF has no XY calibration
+        - "Uncalibrated XY resolution ..." when XY exceeds
           MAX_PLAUSIBLE_XY_UM_PER_PX (a DPI default, not a real scope)
-        - "Could not identify microscope ..." if XY is plausible but matches
-          no MICROSCOPE_PROFILES entry (a genuine new scope to add)
-        `resolve_spacing` treats the first two as fall-back-able and lets the
-        third propagate.
+        - "Could not identify microscope ..." when XY is plausible but matches
+          no profile (a genuine new scope to add)
     """
     res = get_tiff_resolution(tiff_path)
 
@@ -280,11 +205,7 @@ def detect_spacing(
     xy = res['xy_um_per_px']
     z = res['z_um_per_px']
 
-    # Metadata present but implausibly coarse → an uncalibrated DPI default, not
-    # a real scope. Raise a DISTINCT error so resolve_spacing can warn + fall
-    # back (rather than the hard "unknown scope" error, which is reserved for a
-    # plausible-but-unrecognized resolution that warrants a new profile).
-    if xy > MAX_PLAUSIBLE_XY_UM_PER_PX:
+    if not is_plausible_xy(xy):
         raise ValueError(
             f"Uncalibrated XY resolution in {Path(tiff_path).name}: detected "
             f"{xy:.4f} µm/px (> {MAX_PLAUSIBLE_XY_UM_PER_PX} µm/px plausibility "
@@ -292,138 +213,50 @@ def detect_spacing(
             f"(e.g. 72 DPI → 352.78 µm/px), not a real microscope calibration."
         )
 
-    for name, profile in MICROSCOPE_PROFILES.items():
-        expected_xy = profile['xy_um_per_px']
-        if abs(xy - expected_xy) / expected_xy < tolerance:
-            if z is None:
-                z = profile['z_um_per_px']
-                print(f"  Z spacing not in metadata, using {name} default: {z} µm/px")
-            print(f"  Detected microscope: {name} ({profile['description']})")
-            print(f"  Spacing (Z, Y, X): ({z}, {xy:.4f}, {xy:.4f}) µm/px")
-            return (z, xy, xy), name
+    name = identify_scope(xy, tolerance)
+    if name is None:
+        raise ValueError(unknown_scope_message(xy, Path(tiff_path).name))
 
-    profile_lines = "\n".join(
-        f"    '{name}': XY = {p['xy_um_per_px']} µm/px ({p['description']})"
-        for name, p in MICROSCOPE_PROFILES.items()
-    )
-    raise ValueError(
-        f"\n{'='*60}\n"
-        f"Could not identify microscope from image resolution.\n\n"
-        f"  Your image:  {Path(tiff_path).name}\n"
-        f"  XY detected: {xy:.4f} µm/px\n\n"
-        f"This doesn't match any known microscope:\n"
-        f"{profile_lines}\n\n"
-        f"To fix, add your microscope to MICROSCOPE_PROFILES\n"
-        f"in {Path(__file__).name}:\n\n"
-        f"    'your_scope_name': {{\n"
-        f"        'xy_um_per_px': {xy:.4f},\n"
-        f"        'z_um_per_px': <your Z spacing in µm>,\n"
-        f"        'description': '<scope name> (<FOV size> FOV)',\n"
-        f"    }},\n"
-        f"{'='*60}"
-    )
+    if z is None:
+        z = MICROSCOPE_PROFILES[name]['z_um_per_px']
+    return (z, xy, xy), name
 
 
-def resolve_spacing(
-    tiff_path: Union[str, Path],
-    fallback_scope: str,
-    fallback_var_name: str,
-) -> tuple:
+def spacing_for_tiff(tiff_path: Union[str, Path], scope: str = None) -> tuple:
     """
-    Resolve (Z, Y, X) spacing for a TIFF.
+    (Z, Y, X) spacing for a 2P TIFF, from the declared SCOPE.
 
-    Tries metadata first via `detect_spacing`. Falls back to
-    MICROSCOPE_PROFILES[fallback_scope] (when set) in TWO cases:
-      - the TIFF lacks XY resolution metadata ("absent"), or
-      - the metadata is present but bogus — an uncalibrated DPI default above
-        MAX_PLAUSIBLE_XY_UM_PER_PX ("bogus"). This prints a LOUD warning that
-        the file's pixel size is wrong and the chosen fallback scope is being
-        trusted instead.
-    A plausible-but-unrecognized resolution (genuine new scope) still
-    propagates unchanged, so the user adds a MICROSCOPE_PROFILES entry rather
-    than silently inheriting a fallback. With fallback_scope set, neither
-    uncalibrated case is a hard break; only a blank fallback raises.
-
-    Parameters
-    ----------
-    tiff_path : Path
-        Path to TIFF stack.
-    fallback_scope : str
-        Scope name from local_config (e.g. "huang_lab"), or "" to disable.
-        Passed through `resolve_scope_name`, so SCOPE_ALIASES spellings work.
-        Note "huang_lab" is the 200.19 µm-FOV / 1 µm-Z setting; the older
-        566.08 µm one is "huang_lab_566um" (by84, by94, by89).
-    fallback_var_name : str
-        Name of the local_config variable to surface in error messages.
+    SCOPE is authoritative. The file's own XResolution metadata is read, but
+    only to check the declaration: a plausible pixel size that disagrees with
+    SCOPE raises (`assert_matches_metadata`), because one of the two is wrong
+    and guessing which would scale the volume silently. Absent metadata, or the
+    72-DPI placeholder BARseq TIFFs carry, is fine — SCOPE covers it.
 
     Returns
     -------
     tuple
-        ((z, y, x) spacing in µm/px, microscope_name)
+        ((z, y, x) spacing in µm/px, scope_name)
     """
-    uncalibrated_reason = None
-    try:
-        spacing, name = detect_spacing(tiff_path)
-        print(f"  Source: TIFF metadata")
-        return spacing, name
-    except ValueError as e:
-        msg = str(e)
-        if "No XY resolution metadata" in msg:
-            # Metadata absent — fall back quietly with a notice.
-            uncalibrated_reason = "absent"
-        elif "Uncalibrated XY resolution" in msg:
-            # Metadata present but bogus (DPI default) — fall back, but LOUDLY.
-            uncalibrated_reason = "bogus"
-        else:
-            # Plausible-but-unrecognized resolution = a genuine new scope.
-            # Keep propagating so the user adds a MICROSCOPE_PROFILES entry.
-            raise
+    scope = SCOPE if scope is None else scope
+    profile = get_profile(scope)
 
-        if uncalibrated_reason == "bogus":
-            print("=" * 60)
-            print("⚠️  WARNING: WRONG / UNCALIBRATED pixel resolution detected")
-            print(f"  {msg.strip()}")
-            print(f"  Ignoring the file's metadata and falling back by scope.")
-            print(f"  >>> If {fallback_var_name} is not the scope that actually")
-            print(f"  >>> produced this file, the spacing WILL BE WRONG. <<<")
-            print("=" * 60)
+    res = get_tiff_resolution(tiff_path)
+    xy_meta = res.get('xy_um_per_px')
+    assert_matches_metadata(
+        scope, xy_meta, source_name=Path(tiff_path).name,
+    )
 
-    # Metadata absent or bogus — try fallback.
-    fallback_scope = resolve_scope_name(fallback_scope)
-    valid_scopes = sorted(MICROSCOPE_PROFILES.keys())
-    problem = ("Uncalibrated (bogus DPI-default) XY resolution"
-               if uncalibrated_reason == "bogus"
-               else "No XY resolution metadata")
-    if fallback_scope == "":
-        raise ValueError(
-            f"\n{'='*60}\n"
-            f"{problem} in: {Path(tiff_path).name}\n\n"
-            f"Set {fallback_var_name} in local_config.py to declare which\n"
-            f"microscope produced this file. Valid values:\n"
-            f"  {valid_scopes}\n\n"
-            f"Example:\n"
-            f"    {fallback_var_name} = \"huang_lab\"\n"
-            f"{'='*60}"
-        )
-
-    if fallback_scope not in MICROSCOPE_PROFILES:
-        raise ValueError(
-            f"\n{'='*60}\n"
-            f"{fallback_var_name} = '{fallback_scope}' is not a known scope.\n"
-            f"Valid values: {valid_scopes}\n"
-            f"Edit local_config.py.\n"
-            f"{'='*60}"
-        )
-
-    profile = MICROSCOPE_PROFILES[fallback_scope]
-    z = profile['z_um_per_px']
-    xy = profile['xy_um_per_px']
-    print(f"  {problem} in {Path(tiff_path).name}")
-    print(f"  Falling back to {fallback_var_name} = '{fallback_scope}'")
-    print(f"    Microscope: {fallback_scope} ({profile['description']})")
-    print(f"    Spacing (Z, Y, X): ({z}, {xy:.4f}, {xy:.4f}) µm/px")
-    print(f"    Source: local_config fallback")
-    return (z, xy, xy), fallback_scope
+    z, y, x = spacing_zyx(scope)
+    print(f"  Scope: {scope} ({profile['description']})")
+    print(f"  Spacing (Z, Y, X): ({z}, {y:.4f}, {x:.4f}) µm/px")
+    if xy_meta is None:
+        print("    (no resolution metadata in file — nothing to cross-check)")
+    elif not is_plausible_xy(xy_meta):
+        print(f"    (file metadata reads {xy_meta:.2f} µm/px, an uncalibrated "
+              f"DPI default — ignored)")
+    else:
+        print(f"    (file metadata agrees: {xy_meta:.4f} µm/px)")
+    return (z, y, x), scope
 
 
 # ============================================
@@ -455,7 +288,7 @@ def _add_volume_channels(
     """
     red_node = f"{base_name}_red"
     green_node = f"{base_name}_green"
-    default_spacing = (INVIVO_Z_UM_PER_PX, INVIVO_XY_UM_PER_PX, INVIVO_XY_UM_PER_PX)
+    default_spacing = spacing_zyx(SCOPE)
 
     if red_stack is not None and red_node not in graph.nodes:
         spacing = red_spacing if red_spacing is not None else default_spacing
@@ -517,56 +350,6 @@ def add_block_to_graph(
     )
 
 
-def _assert_spacing_match(
-    spacing_a: tuple,
-    spacing_b: tuple,
-    label_a: str,
-    label_b: str,
-    tolerance: float = 0.02,
-) -> None:
-    """Raise if two (Z, Y, X) spacings differ by more than `tolerance` (relative)."""
-    a = np.asarray(spacing_a, dtype=float)
-    b = np.asarray(spacing_b, dtype=float)
-    if a.shape != (3,) or b.shape != (3,):
-        raise ValueError(f"Expected (Z, Y, X) spacing tuples, got {spacing_a!r} / {spacing_b!r}")
-    rel_diff = np.abs(a - b) / np.maximum(np.abs(b), 1e-12)
-    if np.any(rel_diff > tolerance):
-        raise ValueError(
-            f"Spacing mismatch between {label_a} and {label_b} (>{tolerance:.0%} relative):\n"
-            f"  {label_a}: {tuple(a)} µm/px\n"
-            f"  {label_b}: {tuple(b)} µm/px\n"
-            "Red and green channels of one volume must share a voxel grid. "
-            "Check that the two TIFFs come from the same acquisition."
-        )
-
-
-def _require_target_xy() -> float:
-    """Return TARGET_XY_UM_PER_PX as a float, or raise if unusable."""
-    if TARGET_XY_UM_PER_PX == "" or TARGET_XY_UM_PER_PX is None:
-        raise ValueError(
-            "TARGET_XY_UM_PER_PX is not set in local_config.py.\n"
-            "It is required to add BARseq subslices: it is the 2P in-plane pixel "
-            "size preprocessing resampled them to, and becomes their node "
-            "spacing.\n"
-            "Known values:\n"
-            "    huang_lab        0.3910   (BY95)\n"
-            "    huang_lab_566um  1.1055   (by84, by94, by89)"
-        )
-    try:
-        value = float(TARGET_XY_UM_PER_PX)
-    except (TypeError, ValueError):
-        raise ValueError(
-            f"TARGET_XY_UM_PER_PX in local_config.py is not a number: "
-            f"{TARGET_XY_UM_PER_PX!r}"
-        ) from None
-    if not 0 < value <= MAX_PLAUSIBLE_XY_UM_PER_PX:
-        raise ValueError(
-            f"TARGET_XY_UM_PER_PX in local_config.py is out of range: {value} "
-            f"µm/px (expected 0 < value <= {MAX_PLAUSIBLE_XY_UM_PER_PX})."
-        )
-    return value
-
-
 def add_subslices_to_graph(
     graph: ca.Graph,
     subslice_dir: Union[str, Path],
@@ -577,16 +360,11 @@ def add_subslices_to_graph(
     """
     Add all downsampled BARseq subslices to graph.
 
-    Subslice spacing: (Z, Y, X) = (20.0, target, target) µm/px
-    - Z: 20 µm physical section thickness
-    - Y, X: TARGET_XY_UM_PER_PX, the 2P in-plane pitch preprocessing resampled
-      the subslices to. Sections are cut in the 2P imaging plane, so one pitch
-      covers both in-plane axes.
-
-    Raises ValueError if TARGET_XY_UM_PER_PX is unset — a subslice whose spacing
-    disagrees with the pixels it was written at is silently wrong.
+    Subslice spacing: (Z, Y, X) = (20.0, xy, xy) µm/px, where xy is SCOPE's
+    in-plane pitch — the same pitch preprocessing resampled the images to.
+    Z is the physical section thickness, not a pixel size.
     """
-    target_xy = _require_target_xy()
+    spacing = subslice_spacing_zyx(SCOPE)
 
     files = discover_aniso_subslices(subslice_dir)
 
@@ -609,10 +387,7 @@ def add_subslices_to_graph(
         print("All subslices already in graph!")
         return graph
 
-    metadata = {
-        # (Z, Y, X) µm/px — Z is section thickness, Y/X the resampled pitch
-        'spacing': (SECTION_THICKNESS_UM, target_xy, target_xy),
-    }
+    metadata = {'spacing': spacing}  # (Z, Y, X) µm/px
 
     added = 0
     for i, (fpath, node_name) in enumerate(files_to_add, 1):
@@ -759,8 +534,11 @@ def build_subslice_graph(
         Path to saved graph (GRAPH_PATH from config)
     """
     # -------------------------------------------------------------
-    # Resolve + validate data paths
+    # Resolve + validate config
     # -------------------------------------------------------------
+    # Fail on a blank/unknown SCOPE now, not after loading a multi-GB stack.
+    get_profile(SCOPE)
+
     invivo_red_path = Path(INVIVO_PATH_RED) if INVIVO_PATH_RED else None
     invivo_green_path = Path(INVIVO_PATH_GREEN) if INVIVO_PATH_GREEN else None
     block_red_path = Path(BLOCK_STACK_PATH_RED) if BLOCK_STACK_PATH_RED else None
@@ -895,30 +673,14 @@ def build_subslice_graph(
                 print(f"  invivo_ref_red already in graph — skipping")
             else:
                 red_stack = load_invivo_stack(invivo_red_path)
-                red_spacing, _ = resolve_spacing(
-                    invivo_red_path, SCOPE_FALLBACK_INVIVO, "SCOPE_FALLBACK_INVIVO"
-                )
+                red_spacing, _ = spacing_for_tiff(invivo_red_path)
 
         if invivo_green_path:
             if "invivo_ref_green" in existing_nodes:
                 print(f"  invivo_ref_green already in graph — skipping")
             else:
                 green_stack = load_invivo_stack(invivo_green_path)
-                green_spacing, _ = resolve_spacing(
-                    invivo_green_path, SCOPE_FALLBACK_INVIVO, "SCOPE_FALLBACK_INVIVO"
-                )
-                # Sanity check: green must share the red channel's voxel grid.
-                # When red was just loaded, compare to red_spacing; when red is
-                # already a graph node, re-detect from the red TIFF (cheap —
-                # metadata only).
-                ref_spacing = red_spacing
-                if ref_spacing is None and invivo_red_path:
-                    ref_spacing, _ = resolve_spacing(
-                        invivo_red_path, SCOPE_FALLBACK_INVIVO, "SCOPE_FALLBACK_INVIVO"
-                    )
-                if ref_spacing is not None:
-                    _assert_spacing_match(ref_spacing, green_spacing,
-                                          "INVIVO_PATH_RED", "INVIVO_PATH_GREEN")
+                green_spacing, _ = spacing_for_tiff(invivo_green_path)
 
         if red_stack is not None or green_stack is not None:
             add_invivo_to_graph(
@@ -944,26 +706,14 @@ def build_subslice_graph(
                 print(f"  ex_vivo_block_red already in graph — skipping")
             else:
                 red_stack = load_block_stack(block_red_path)
-                red_spacing, _ = resolve_spacing(
-                    block_red_path, SCOPE_FALLBACK_BLOCK, "SCOPE_FALLBACK_BLOCK"
-                )
+                red_spacing, _ = spacing_for_tiff(block_red_path)
 
         if block_green_path:
             if "ex_vivo_block_green" in existing_nodes:
                 print(f"  ex_vivo_block_green already in graph — skipping")
             else:
                 green_stack = load_block_stack(block_green_path)
-                green_spacing, _ = resolve_spacing(
-                    block_green_path, SCOPE_FALLBACK_BLOCK, "SCOPE_FALLBACK_BLOCK"
-                )
-                ref_spacing = red_spacing
-                if ref_spacing is None and block_red_path:
-                    ref_spacing, _ = resolve_spacing(
-                        block_red_path, SCOPE_FALLBACK_BLOCK, "SCOPE_FALLBACK_BLOCK"
-                    )
-                if ref_spacing is not None:
-                    _assert_spacing_match(ref_spacing, green_spacing,
-                                          "BLOCK_STACK_PATH_RED", "BLOCK_STACK_PATH_GREEN")
+                green_spacing, _ = spacing_for_tiff(block_green_path)
 
         if red_stack is not None or green_stack is not None:
             add_block_to_graph(
