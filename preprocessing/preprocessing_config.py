@@ -147,9 +147,15 @@ MSCARLET_GENE_NAME = ""
 MSCARLET_COLUMN_INDEX = 113  # Python 0-indexed (MATLAB 114)
 GCAMP_COLUMN_INDEX = 111     # Python 0-indexed (MATLAB 112)
 
-# QC thresholds
-QC_MIN_READS = 20
-QC_MIN_GENES = 5
+# QC thresholds.
+#
+# The lab's own Gen_mScarlet_plots.m for this dataset sets reads_thresh = 0 and
+# genes_thresh = 0, which makes pass_qc all-true (sum >= 0 holds for every row).
+# Subslice selection is therefore marker expression alone: expmat(:,114) > 0.
+# The earlier 20/5 came from a Using filt_neurons.pptx example, not from the
+# script they ship; on BY95 it drops ~74% of cells before the marker is read.
+QC_MIN_READS = 0
+QC_MIN_GENES = 0
 
 # =============================================================================
 # VISUALIZATION CONSTANTS
