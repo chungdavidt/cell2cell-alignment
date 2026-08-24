@@ -10,9 +10,9 @@ Critical: Preserve cell position tracking throughout (for barseq gene expression
 Pipeline execution order:
     1. identify_mscarlet_subslices.py -> subslice_definitions.mat
     2. stitch_subslices.py -> HYB_subslice_stitched_tif/
-    3. downsample_subslices_cellmask_anisotropic.py -> downsampled cellmasks
-    4. generate_mscarlet_cellmask_subslice_anisotropic.py -> mScarlet overlays
-    5. interactive_mscarlet_threshold_cellmask_subslice_anisotropic.py -> interactive viewer
+    3. downsample_subslices_cellmask.py -> downsampled cellmasks
+    4. generate_mscarlet_cellmask_subslice.py -> mScarlet overlays
+    5. interactive_mscarlet_threshold_cellmask_subslice.py -> interactive viewer
     6. generate_mscarlet_overlay_labelled.py -> labelled FOV overlays
 
 Utility script (anytime use):

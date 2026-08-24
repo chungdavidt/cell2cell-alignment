@@ -5,9 +5,9 @@ Preprocessing Pipeline Runner
 Runs the complete mScarlet preprocessing pipeline:
 1. identify_mscarlet_subslices.py - Find FOV clusters with mScarlet+ cells
 2. stitch_subslices.py - Stitch FOVs into composite images
-3. downsample_subslices_cellmask_anisotropic.py - Downsample to match in-vivo resolution
-4. generate_mscarlet_cellmask_subslice_anisotropic.py - Create mScarlet overlays
-5. interactive_mscarlet_threshold_cellmask_subslice_anisotropic.py - Generate figures
+3. downsample_subslices_cellmask.py - Downsample to match in-vivo resolution
+4. generate_mscarlet_cellmask_subslice.py - Create mScarlet overlays
+5. interactive_mscarlet_threshold_cellmask_subslice.py - Generate figures
 
 Usage:
     python run_pipeline.py                    # Run full pipeline (all slices)
@@ -40,17 +40,17 @@ STEPS = [
     },
     {
         'name': 'Downsample All Channels',
-        'script': 'downsample_subslices_cellmask_anisotropic.py',
-        'description': 'Downsample all channels to match in-vivo resolution (anisotropic)',
+        'script': 'downsample_subslices_cellmask.py',
+        'description': 'Downsample all channels to the 2P in-plane pixel size',
     },
     {
         'name': 'Generate Overlays',
-        'script': 'generate_mscarlet_cellmask_subslice_anisotropic.py',
+        'script': 'generate_mscarlet_cellmask_subslice.py',
         'description': 'Create mScarlet cell overlays on cellmask',
     },
     {
         'name': 'Generate Figures',
-        'script': 'interactive_mscarlet_threshold_cellmask_subslice_anisotropic.py',
+        'script': 'interactive_mscarlet_threshold_cellmask_subslice.py',
         'description': 'Generate visualization figures',
     },
 ]

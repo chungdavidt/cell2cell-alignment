@@ -92,10 +92,10 @@ INVIVO_PATH_RED = ""
 # Leave blank if you don't have a green volume yet.
 INVIVO_PATH_GREEN = ""
 
-# Path to directory of BARseq anisotropic subslice overlays.
+# Path to directory of BARseq subslice overlays.
 # Leave blank ("") for 2P-only alignment (no BARseq data).
 # Typical location when you do have BARseq:
-#   OUTPUT_ROOT + "/mScarlet_cellmask_subslice/threshold_0.30_cellmask_0.50_anisotropic"
+#   OUTPUT_ROOT + "/mScarlet_cellmask_subslice/threshold_0.30_cellmask_0.50"
 SUBSLICE_DIR = ""
 
 # Path to the alignment graph file (.db) — used by both the graph builder and

@@ -97,9 +97,9 @@ FILT_NEURONS_PATH = os.path.join(DATA_ROOT, "filt_neurons.mat")
 SUBSLICE_DEFINITIONS_DIR = os.path.join(OUTPUT_ROOT, "subslice_definitions")
 HYB_CHANNELS_DIR = os.path.join(OUTPUT_ROOT, "hyb_channels")
 HYB_STITCHED_DIR = os.path.join(OUTPUT_ROOT, "HYB_subslice_stitched_tif")
-HYB_DOWNSAMPLED_DIR = os.path.join(OUTPUT_ROOT, "HYB_subslice_stitched_tif_downsampled_micronwise")
+HYB_DOWNSAMPLED_DIR = os.path.join(OUTPUT_ROOT, "HYB_subslice_stitched_tif_downsampled_micronwise_anisotropic")
 MSCARLET_CELLMASK_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_cellmask_subslice")
-MSCARLET_INTERACTIVE_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_cellmask_interactive_subslice")
+MSCARLET_INTERACTIVE_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_cellmask_interactive_subslice_anisotropic")
 MSCARLET_LABELLED_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_overlay_dapi_labelled")
 
 # Specific output files
@@ -109,29 +109,18 @@ SUBSLICE_DEFINITIONS_FILE = os.path.join(SUBSLICE_DEFINITIONS_DIR, "subslice_def
 # RESOLUTION CONSTANTS
 # =============================================================================
 
-# Pixel sizes come from the scope declared as SCOPE in local_config.py. The
-# profile table lives in scope_profiles.py at the project root — stdlib-only, so
-# preprocessing, alignment and the cellpose venv all read the same numbers.
-#
-# Sections are cut in the 2P imaging plane, so both BARseq in-plane axes map to
-# 2P XY and ONE factor covers both. (Sections used to be cut coronal against an
-# axial 2P, which is why this was two factors -- 7.3125 for X, 3.125 for Y --
-# off Li lab optics that belong to the retired JH302.)
-from scope_profiles import (
-    EXVIVO_UM_PER_PX,
-    get_profile,
-    resolve_scope_name,
-)
+# Ex vivo resolution
+EXVIVO_UM_PER_PX = 0.32  # micrometers per pixel
 
-SCOPE = resolve_scope_name(getattr(local_config, "SCOPE", ""))
-SCOPE_PROFILE = get_profile(SCOPE)          # raises if blank or unknown
+# In vivo resolution (after xrotate=90 transformation)
+INVIVO_XY_UM_PER_PX = 2.34  # lateral-medial (X in vivo = X/Y in ex vivo)
+INVIVO_Z_UM_PER_PX = 1.0    # dorsal-ventral (Z in vivo = Z in ex vivo, after rotation)
 
-# In-plane pixel size the BARseq images are resampled to, µm/px.
-TARGET_XY_UM_PER_PX = SCOPE_PROFILE['xy_um_per_px']
-
-# Isotropic downsample factor: new_size = original_size / DOWNSAMPLE_XY.
-# huang_lab (0.3910) -> 1.2219x, huang_lab_566um (1.1055) -> 3.4547x.
-DOWNSAMPLE_XY = TARGET_XY_UM_PER_PX / EXVIVO_UM_PER_PX
+# Anisotropic downsample factors
+# X: ex vivo -> in vivo X/Y resolution
+DOWNSAMPLE_X = INVIVO_XY_UM_PER_PX / EXVIVO_UM_PER_PX  # 7.3125
+# Y: ex vivo -> in vivo Z resolution
+DOWNSAMPLE_Y = INVIVO_Z_UM_PER_PX / EXVIVO_UM_PER_PX   # 3.125
 
 # =============================================================================
 # DATA CONSTANTS
@@ -240,6 +229,6 @@ def get_threshold_folder(threshold, cellmask_intensity=None):
         Folder name string
     """
     if cellmask_intensity is not None:
-        return f"threshold_{threshold:.2f}_cellmask_{cellmask_intensity:.2f}"
+        return f"threshold_{threshold:.2f}_cellmask_{cellmask_intensity:.2f}_anisotropic"
     else:
         return f"threshold_{threshold:.2f}_downsampled"

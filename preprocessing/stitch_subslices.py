@@ -398,8 +398,8 @@ def stitch_subslices(target_slice: int = None, test_mode: bool = False):
     print(f"Output directory: {output_dir}")
     print(f"Subslices stitched: {len(subslice_info_list)}")
     print("\nNext steps:")
-    print("  1. Run downsample_subslices_cellmask_anisotropic.py to match in-vivo resolution")
-    print("  2. Run generate_mscarlet_cellmask_subslice_anisotropic.py to create overlays")
+    print("  1. Run downsample_subslices_cellmask.py to match in-vivo resolution")
+    print("  2. Run generate_mscarlet_cellmask_subslice.py to create overlays")
     print()
 
 

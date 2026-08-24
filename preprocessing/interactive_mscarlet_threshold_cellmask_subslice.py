@@ -8,20 +8,20 @@ This is a Python port of interactive_mscarlet_threshold_cellmask_subslice_anisot
 with exact fidelity.
 
 Cell centroids are mapped into the downsampled image with DOWNSAMPLE_XY, the
-same factor downsample_subslices_cellmask_anisotropic.py used to resample it.
+same factor downsample_subslices_cellmask.py used to resample it.
 
 PERFORMANCE: Data is cached after first run - subsequent threshold changes are FAST!
 
 Prerequisites:
     1. Run stitch_subslices.py for desired slices
-    2. Run downsample_subslices_cellmask_anisotropic.py for desired slices
+    2. Run downsample_subslices_cellmask.py for desired slices
 
 Usage:
-    python interactive_mscarlet_threshold_cellmask_subslice_anisotropic.py
-    python interactive_mscarlet_threshold_cellmask_subslice_anisotropic.py --threshold 0.3
-    python interactive_mscarlet_threshold_cellmask_subslice_anisotropic.py --threshold 0.3 --cellmask 0.5
-    python interactive_mscarlet_threshold_cellmask_subslice_anisotropic.py --slices 22 44
-    python interactive_mscarlet_threshold_cellmask_subslice_anisotropic.py --first 5
+    python interactive_mscarlet_threshold_cellmask_subslice.py
+    python interactive_mscarlet_threshold_cellmask_subslice.py --threshold 0.3
+    python interactive_mscarlet_threshold_cellmask_subslice.py --threshold 0.3 --cellmask 0.5
+    python interactive_mscarlet_threshold_cellmask_subslice.py --slices 22 44
+    python interactive_mscarlet_threshold_cellmask_subslice.py --first 5
 """
 
 import argparse
@@ -55,7 +55,7 @@ _CACHE = {
 }
 
 
-def interactive_mscarlet_threshold_cellmask_subslice_anisotropic(
+def interactive_mscarlet_threshold_cellmask_subslice(
     min_mscarlet_intensity: float = 0.0,
     cellmask_intensity: float = 0.5,
     force_reload: bool = False,
@@ -115,7 +115,7 @@ def interactive_mscarlet_threshold_cellmask_subslice_anisotropic(
         if not input_dir.exists():
             raise FileNotFoundError(
                 f"Downsampled subslice directory not found!\n"
-                f"Run stitch_subslices.py and downsample_subslices_cellmask_anisotropic.py first.\n"
+                f"Run stitch_subslices.py and downsample_subslices_cellmask.py first.\n"
                 f"Expected: {input_dir}"
             )
 
@@ -414,8 +414,8 @@ def interactive_mscarlet_threshold_cellmask_subslice_anisotropic(
 
     print("\nTIPS:")
     print("Try different thresholds:")
-    print("  python interactive_mscarlet_threshold_cellmask_subslice_anisotropic.py --threshold 0.3")
-    print("  python interactive_mscarlet_threshold_cellmask_subslice_anisotropic.py --threshold 0.7")
+    print("  python interactive_mscarlet_threshold_cellmask_subslice.py --threshold 0.3")
+    print("  python interactive_mscarlet_threshold_cellmask_subslice.py --threshold 0.7")
     print("\nNext run with different threshold will be FAST (data cached!)")
 
 
@@ -466,7 +466,7 @@ def main():
     else:
         slice_selection = None  # All
 
-    interactive_mscarlet_threshold_cellmask_subslice_anisotropic(
+    interactive_mscarlet_threshold_cellmask_subslice(
         min_mscarlet_intensity=args.threshold,
         cellmask_intensity=args.cellmask,
         force_reload=args.reload,

@@ -6,7 +6,7 @@ Downsamples ALL channels (DAPI, GCAMP, MSCARLET, CELLMASK) from stitched subslic
 to the in-plane pixel size of the 2P volume they are being aligned to.
 
 This is a Python port of downsample_subslices_refined.m, with the two
-anisotropic factors it used replaced by one.
+separate X and Y factors it used replaced by one.
 
 Sections are cut in the 2P imaging plane, so both BARseq in-plane axes map to 2P
 XY and ONE isotropic factor covers both:
@@ -19,9 +19,9 @@ factor is 1.2219x, so this step barely reduces size; for huang_lab_566um (1.1055
 it is 3.4547x.
 
 Usage:
-    python downsample_subslices_cellmask_anisotropic.py
-    python downsample_subslices_cellmask_anisotropic.py --slice 22  # Process slice 22 only
-    python downsample_subslices_cellmask_anisotropic.py --cellmask-only  # Only cellmasks (legacy)
+    python downsample_subslices_cellmask.py
+    python downsample_subslices_cellmask.py --slice 22  # Process slice 22 only
+    python downsample_subslices_cellmask.py --cellmask-only  # Only cellmasks (legacy)
 
 Input:
     - HYB_subslice_stitched_tif/ (from stitch_subslices.py)
@@ -31,7 +31,7 @@ Input:
         * slice{N}_subslice_CELLMASK.h5 (HDF5 format)
 
 Output:
-    - HYB_subslice_stitched_tif_downsampled_micronwise_anisotropic/
+    - HYB_subslice_stitched_tif_downsampled_micronwise/
         * slice{N}_subslice_DAPI.tif (bilinear downsampled)
         * slice{N}_subslice_GCAMP.tif (bilinear downsampled)
         * slice{N}_subslice_MSCARLET.tif (bilinear downsampled)
@@ -136,7 +136,7 @@ def imresize_bilinear(image: np.ndarray, output_shape: tuple) -> np.ndarray:
     return result.astype(original_dtype)
 
 
-def downsample_subslices_cellmask_anisotropic(target_slice: int = None, cellmask_only: bool = False):
+def downsample_subslices_cellmask(target_slice: int = None, cellmask_only: bool = False):
     """
     Main function to downsample all channels to the 2P pixel size.
 
@@ -343,8 +343,8 @@ def downsample_subslices_cellmask_anisotropic(target_slice: int = None, cellmask
           f"({EXVIVO_UM_PER_PX:.4f} -> {TARGET_XY_UM_PER_PX:.4f} um/px)")
     print("  Method: Nearest-neighbor (preserves cell IDs)")
     print("\nNext step:")
-    print("  Run generate_mscarlet_cellmask_subslice_anisotropic.py to create overlays")
-    print("  Or run interactive_mscarlet_threshold_cellmask_subslice_anisotropic.py for interactive viewer")
+    print("  Run generate_mscarlet_cellmask_subslice.py to create overlays")
+    print("  Or run interactive_mscarlet_threshold_cellmask_subslice.py for interactive viewer")
     print()
 
 
@@ -368,7 +368,7 @@ def main():
 
     args = parser.parse_args()
 
-    downsample_subslices_cellmask_anisotropic(
+    downsample_subslices_cellmask(
         target_slice=args.slice,
         cellmask_only=args.cellmask_only
     )
