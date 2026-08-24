@@ -101,18 +101,24 @@ def default_image(modality: str):
     return Path(path) if path else None
 
 
-def load_display(path: Path) -> np.ndarray:
+def load_display(path: Path):
     """Read `path` and reduce it to one contrast-stretched 2D image.
 
-    3D stacks are max-projected along z. The array returned is a display copy;
-    the file on disk is never touched.
+    Returns ``(display, n_planes)``. 3D stacks are max-projected along z, and
+    `n_planes` is their z count — it decides only how the dorsal/ventral
+    question is worded, since "the first section" of a 2P volume is its first
+    imaged plane. The array returned is a display copy; the file on disk is
+    never touched.
     """
     img = imread_tiff(path)
+    n_planes = 1
 
     if img.ndim == 3 and img.shape[-1] in (3, 4):
         img = img[..., :3].astype(np.float32).mean(axis=-1)
     elif img.ndim == 3:
-        print(f"  3D input {img.shape} — max projection along z for display")
+        n_planes = img.shape[0]
+        print(f"  3D input {img.shape} — max projection along {n_planes} z planes "
+              f"for display")
         img = img.max(axis=0)
     elif img.ndim != 2:
         raise ValueError(f"Cannot display a {img.ndim}D array: shape {img.shape}")
@@ -122,8 +128,8 @@ def load_display(path: Path) -> np.ndarray:
     if hi <= lo:
         lo, hi = float(img.min()), float(img.max())
     if hi <= lo:
-        return np.zeros_like(img)
-    return np.clip((img - lo) / (hi - lo), 0.0, 1.0)
+        return np.zeros_like(img), n_planes
+    return np.clip((img - lo) / (hi - lo), 0.0, 1.0), n_planes
 
 
 # ---------------------------------------------------------------------------
@@ -144,11 +150,14 @@ def nearest_edge(x, y, width, height, allowed):
 class OrientationPicker:
     """Sequential prompts over one displayed image. Returns the raw answers."""
 
-    def __init__(self, display, modality, image_path, single_plane=False):
+    def __init__(self, display, modality, image_path, single_plane=False,
+                 n_planes=1):
         self.display = display
         self.modality = modality
         self.image_path = image_path
         self.single_plane = single_plane
+        # A volume's "first section" is its first imaged plane; say so.
+        self.n_planes = n_planes
         self.height, self.width = display.shape
         self.answers = {}
         self.labels = []
@@ -190,8 +199,12 @@ class OrientationPicker:
             'anterior_edge': "Click the ANTERIOR side  (nearest edge wins)",
             'medial_edge': "Click the MEDIAL side  (only the perpendicular edges)",
             'hemisphere': "Which hemisphere?   press  L  or  R",
-            'first_section': "Is the FIRST section dorsal-most or ventral-most?   "
-                             "press  D  or  V",
+            'first_section': (
+                f"Is z = 0 (the first of {self.n_planes} planes) dorsal-most or "
+                f"ventral-most?   press  D  or  V"
+                if self.n_planes > 1 else
+                "Is the FIRST section dorsal-most or ventral-most?   press  D  or  V"
+            ),
         }.get(stage)
         if stage == 'confirm':
             self.show_result()
@@ -280,7 +293,8 @@ class OrientationPicker:
                        f"+z (into the stack) = {orientation.LETTER_NAME[code[0]]}"
                        " — derived, not answered")
         else:
-            through = (f"DORSAL / VENTRAL: first section is {a['first_section']}-most\n"
+            first = ("z = 0" if self.n_planes > 1 else "first section")
+            through = (f"DORSAL / VENTRAL: {first} is {a['first_section']}-most\n"
                        f"+z (into the stack) = {orientation.LETTER_NAME[code[0]]}")
         self.labels.append(self.ax.text(
             0.5, 0.5, through, transform=self.ax.transAxes,
@@ -398,14 +412,15 @@ def main():
 
     print(f"modality: {args.modality}")
     print(f"image:    {image_path}")
-    display = load_display(image_path)
+    display, n_planes = load_display(image_path)
     print(f"  display: {display.shape[1]} x {display.shape[0]} (x, y), "
           f"contrast stretched to the {DISPLAY_PERCENTILES[0]}-"
           f"{DISPLAY_PERCENTILES[1]} percentile range")
     print()
 
     answers = OrientationPicker(display, args.modality, image_path,
-                                single_plane=args.single_plane).run()
+                                single_plane=args.single_plane,
+                                n_planes=n_planes).run()
     if answers is None:
         print("Closed without confirming — nothing written.")
         return
