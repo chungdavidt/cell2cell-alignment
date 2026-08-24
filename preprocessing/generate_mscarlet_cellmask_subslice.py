@@ -43,6 +43,7 @@ from preprocessing_config import (
     FILT_NEURONS_PATH,
     HYB_DOWNSAMPLED_DIR,
     MSCARLET_CELLMASK_DIR,
+    mscarlet_subslice_dir,
     MSCARLET_COLUMN_INDEX,
     MSCARLET_GENE_NAME,
     QC_MIN_READS,
@@ -86,7 +87,7 @@ def generate_mscarlet_cellmask_subslice(
 
     # Create output directory with threshold info
     threshold_folder = get_threshold_folder(min_mscarlet_intensity, cellmask_intensity)
-    output_dir = Path(MSCARLET_CELLMASK_DIR) / threshold_folder
+    output_dir = Path(mscarlet_subslice_dir(min_mscarlet_intensity, cellmask_intensity))
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 40)

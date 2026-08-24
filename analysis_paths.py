@@ -71,3 +71,82 @@ def subject_name() -> Optional[str]:
     """Subject label implied by ANALYSIS_ROOT's folder name (e.g. 'BY95')."""
     root = get_analysis_root()
     return None if root is None else root.name
+
+
+def _mscarlet_cellmask_root() -> Path:
+    """``MSCARLET_CELLMASK_DIR`` from preprocessing_config, imported lazily.
+
+    Imported here rather than at module scope because preprocessing_config
+    validates the whole preprocessing config at import — it raises when
+    DATA_ROOT or SCOPE is unset — and a 2P-only run has no reason to satisfy
+    that. Only a relative SUBSLICE_DIR needs it.
+    """
+    preprocessing = _PROJECT_ROOT / "preprocessing"
+    if str(preprocessing) not in sys.path:
+        sys.path.insert(0, str(preprocessing))
+    try:
+        import preprocessing_config
+    except Exception as e:
+        raise ValueError(
+            f"SUBSLICE_DIR is relative, so it is resolved against "
+            f"preprocessing's output tree — but preprocessing_config could not "
+            f"be loaded:\n"
+            f"  {type(e).__name__}: {e}\n\n"
+            f"Either fix that (it needs DATA_ROOT and SCOPE), or set "
+            f"SUBSLICE_DIR to an absolute path."
+        )
+    return Path(preprocessing_config.MSCARLET_CELLMASK_DIR)
+
+
+def resolve_subslice_dir(value: Optional[str] = None) -> Optional[Path]:
+    """Resolve ``SUBSLICE_DIR`` to an absolute directory.
+
+    The BARseq subslices the graph builder reads are step 4's output, so their
+    parent directory is already known to preprocessing_config. A relative
+    SUBSLICE_DIR inherits it and only names the threshold folder::
+
+        SUBSLICE_DIR = "threshold_0.00_cellmask_0.50"
+
+    which survives any later rename of the directories above it. Blank means
+    skip subslices, and an absolute path is used verbatim — pointing at a tree
+    preprocessing did not write stays possible.
+
+    `value` defaults to local_config's. Raises ValueError when a relative value
+    does not name an existing folder, listing what is there instead.
+    """
+    if value is None:
+        if str(_PROJECT_ROOT) not in sys.path:
+            sys.path.insert(0, str(_PROJECT_ROOT))
+        try:
+            import local_config
+        except ImportError:
+            return None
+        value = getattr(local_config, "SUBSLICE_DIR", "")
+
+    if not value:
+        return None
+
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+
+    root = _mscarlet_cellmask_root()
+    resolved = root / path
+    if resolved.is_dir():
+        return resolved
+
+    available = sorted(p.name for p in root.glob("threshold_*") if p.is_dir()) \
+        if root.is_dir() else []
+    listing = ("\n".join(f"    {name}" for name in available) if available
+               else "    (none — run preprocessing steps 3-5 first)")
+    raise ValueError(
+        f"\n{'='*60}\n"
+        f"SUBSLICE_DIR = {value!r} is relative, so it resolves under\n"
+        f"preprocessing's overlay output:\n"
+        f"  {root}\n"
+        f"but that folder does not exist there.\n\n"
+        f"Available:\n{listing}\n\n"
+        f"Set SUBSLICE_DIR to one of those names, to an absolute path, or\n"
+        f"blank to skip subslices.\n"
+        f"{'='*60}"
+    )

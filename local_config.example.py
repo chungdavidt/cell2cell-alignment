@@ -92,10 +92,16 @@ INVIVO_PATH_RED = ""
 # Leave blank if you don't have a green volume yet.
 INVIVO_PATH_GREEN = ""
 
-# Path to directory of BARseq subslice overlays.
+# Directory of BARseq subslice overlays — preprocessing step 4's output.
 # Leave blank ("") for 2P-only alignment (no BARseq data).
-# Typical location when you do have BARseq:
-#   OUTPUT_ROOT + "/mScarlet_cellmask_subslice/threshold_0.30_cellmask_0.50"
+#
+# PREFERRED: a RELATIVE path, which names only the threshold folder and inherits
+# everything above it from preprocessing_config, so a rename of the output dirs
+# does not reach this file:
+#   SUBSLICE_DIR = "threshold_0.00_cellmask_0.50"
+#   -> <OUTPUT_ROOT>/mScarlet_cellmask_subslice/threshold_0.00_cellmask_0.50
+# A wrong folder name lists the ones that do exist. An absolute path is still
+# used verbatim, for subslices preprocessing did not write.
 SUBSLICE_DIR = ""
 
 # Path to the alignment graph file (.db) — used by both the graph builder and

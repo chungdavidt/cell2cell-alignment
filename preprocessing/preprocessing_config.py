@@ -243,3 +243,17 @@ def get_threshold_folder(threshold, cellmask_intensity=None):
         return f"threshold_{threshold:.2f}_cellmask_{cellmask_intensity:.2f}"
     else:
         return f"threshold_{threshold:.2f}_downsampled"
+
+
+def mscarlet_subslice_dir(threshold, cellmask_intensity=None):
+    """
+    Full path to the overlay output for one threshold pair.
+
+    The one place this composition lives. Step 4 writes here, and a relative
+    SUBSLICE_DIR in local_config.py resolves against MSCARLET_CELLMASK_DIR
+    (analysis_paths.resolve_subslice_dir), so the graph builder inherits the
+    layout instead of repeating it as a hand-typed absolute path.
+    """
+    return os.path.join(
+        MSCARLET_CELLMASK_DIR, get_threshold_folder(threshold, cellmask_intensity)
+    )

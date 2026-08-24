@@ -83,10 +83,11 @@ def default_image(modality: str):
     elif modality == 'ex_vivo_block':
         path = getattr(local_config, 'BLOCK_STACK_PATH_RED', '')
     elif modality == 'barseq_subslice':
-        subslice_dir = getattr(local_config, 'SUBSLICE_DIR', '')
-        if not subslice_dir:
+        from analysis_paths import resolve_subslice_dir
+        subslice_dir = resolve_subslice_dir()
+        if subslice_dir is None:
             return None
-        files = sorted(Path(subslice_dir).glob("slice*_subslice_mScarlet_cellmask.tif"))
+        files = sorted(subslice_dir.glob("slice*_subslice_mScarlet_cellmask.tif"))
         if not files:
             raise FileNotFoundError(
                 f"No slice*_subslice_mScarlet_cellmask.tif in SUBSLICE_DIR:\n"

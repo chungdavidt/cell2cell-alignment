@@ -72,7 +72,12 @@ import numpy as np
 import imageio.v2 as imageio
 from utilities.image_io import get_tiff_resolution
 import orientation
-from analysis_paths import analysis_subdir, subject_name, ALIGNMENT_SUBDIR
+from analysis_paths import (
+    analysis_subdir,
+    resolve_subslice_dir,
+    subject_name,
+    ALIGNMENT_SUBDIR,
+)
 from scope_profiles import (
     MICROSCOPE_PROFILES,
     MAX_PLAUSIBLE_XY_UM_PER_PX,
@@ -622,7 +627,9 @@ def build_subslice_graph(
     invivo_green_path = Path(INVIVO_PATH_GREEN) if INVIVO_PATH_GREEN else None
     block_red_path = Path(BLOCK_STACK_PATH_RED) if BLOCK_STACK_PATH_RED else None
     block_green_path = Path(BLOCK_STACK_PATH_GREEN) if BLOCK_STACK_PATH_GREEN else None
-    subslice_dir = Path(SUBSLICE_DIR) if SUBSLICE_DIR else None
+    # Relative SUBSLICE_DIR inherits preprocessing's overlay output dir and
+    # names only the threshold folder; absolute is used verbatim; blank skips.
+    subslice_dir = resolve_subslice_dir(SUBSLICE_DIR)
 
     # Green-without-red on the same modality would dangle the Identity edge.
     if invivo_green_path and not invivo_red_path:
@@ -653,7 +660,7 @@ def build_subslice_graph(
             )
     if subslice_dir and not subslice_dir.is_dir():
         raise FileNotFoundError(
-            f"SUBSLICE_DIR is set in local_config.py but is not a directory:\n"
+            f"SUBSLICE_DIR resolved to something that is not a directory:\n"
             f"  {subslice_dir}\n"
             f"Fix the path or leave SUBSLICE_DIR blank to skip subslices."
         )
