@@ -12,6 +12,11 @@ sections are cut in the 2P imaging plane so one pitch covers both in-plane axes.
 A TIFF's own XResolution metadata, where present, is read only to CHECK the
 declaration: a file whose pixel size disagrees with SCOPE stops the run.
 
+Each node also carries the anatomical orientation code recorded for its modality
+by preprocessing/assign_orientation.py, so the node is self-describing. Missing
+or unlabelled is fine (the key is None); two labelled modalities that disagree on
+handedness are not, and stop the run — see `check_orientation_handedness`.
+
 Author: DTC
 Date: 2024-12-15
 """
@@ -66,6 +71,7 @@ import castalign as ca
 import numpy as np
 import imageio.v2 as imageio
 from utilities.image_io import get_tiff_resolution
+import orientation
 from analysis_paths import analysis_subdir, subject_name, ALIGNMENT_SUBDIR
 from scope_profiles import (
     MICROSCOPE_PROFILES,
@@ -260,6 +266,72 @@ def spacing_for_tiff(tiff_path: Union[str, Path], scope: str = None) -> tuple:
 
 
 # ============================================
+# Orientation
+# ============================================
+
+# Modality key in orientation.json for each set of graph nodes. The 2P keys are
+# the node base names; every BARseq subslice in a dataset shares one code.
+SUBSLICE_MODALITY = "barseq_subslice"
+
+
+def load_orientation_codes() -> dict:
+    """
+    ``{modality: code}`` from ``<ANALYSIS_ROOT>/orientation.json``.
+
+    Labelling is optional: no ANALYSIS_ROOT, no file, or a modality that was
+    never assigned all yield no code and a one-line notice. Nodes then carry
+    ``orientation=None``, which nothing existing reads.
+    """
+    try:
+        path = orientation.orientation_path()
+    except ValueError:
+        print("  Orientation: ANALYSIS_ROOT not set — nodes get orientation=None")
+        return {}
+
+    if not path.exists():
+        print(f"  Orientation: no {path.name} yet — nodes get orientation=None")
+        print(f"               (assign with preprocessing/assign_orientation.py)")
+        return {}
+
+    codes = orientation.codes(path)
+    print(f"  Orientation: {path}")
+    for name, code in sorted(codes.items()):
+        print(f"    {name}: {code}  ({orientation.describe(code)})")
+    return codes
+
+
+def check_orientation_handedness(codes: dict, modalities) -> None:
+    """
+    Refuse to build when two labelled modalities disagree on handedness.
+
+    A mirror is not an alignment problem — no rotation or translation undoes
+    it, and a flip that fixed the image would map the left hemisphere onto the
+    right. This is the failure that otherwise passes alignment QC silently.
+    """
+    relevant = {m: codes[m] for m in modalities if m in codes}
+    disagreement = orientation.disagreeing_pair(relevant)
+    if disagreement is None:
+        return
+
+    name_a, name_b = disagreement
+    raise ValueError(
+        f"\n{'='*60}\n"
+        f"Orientation handedness disagreement between two modalities of this\n"
+        f"subject:\n\n"
+        f"  {name_a:<18} {relevant[name_a]}  ({orientation.describe(relevant[name_a])})\n"
+        f"  {name_b:<18} {relevant[name_b]}  ({orientation.describe(relevant[name_b])})\n\n"
+        f"One acquisition mirrored the tissue, or one label is wrong. Alignment\n"
+        f"cannot succeed through a mirror: no rotation or translation maps one\n"
+        f"onto the other, and a flip would map the left hemisphere onto the\n"
+        f"right.\n\n"
+        f"Re-check both with:\n"
+        f"    python preprocessing/assign_orientation.py --show\n"
+        f"and re-assign the wrong one.\n"
+        f"{'='*60}"
+    )
+
+
+# ============================================
 # Graph Operations
 # ============================================
 
@@ -277,6 +349,7 @@ def _add_volume_channels(
     green_stack: Optional[np.ndarray] = None,
     red_spacing: Optional[tuple] = None,
     green_spacing: Optional[tuple] = None,
+    orientation_code: Optional[str] = None,
 ) -> ca.Graph:
     """
     Add red and/or green channel nodes for a 2P volume, joined by a
@@ -294,7 +367,7 @@ def _add_volume_channels(
         spacing = red_spacing if red_spacing is not None else default_spacing
         graph.add_node(
             red_node, image=red_stack, compression="high",
-            metadata={'spacing': spacing},
+            metadata={'spacing': spacing, 'orientation': orientation_code},
         )
         print(f"  Added node: {red_node}  shape {red_stack.shape}  spacing {spacing} µm/px (Z, Y, X)")
 
@@ -302,7 +375,7 @@ def _add_volume_channels(
         spacing = green_spacing if green_spacing is not None else default_spacing
         graph.add_node(
             green_node, image=green_stack, compression="high",
-            metadata={'spacing': spacing},
+            metadata={'spacing': spacing, 'orientation': orientation_code},
         )
         print(f"  Added node: {green_node}  shape {green_stack.shape}  spacing {spacing} µm/px (Z, Y, X)")
 
@@ -321,6 +394,7 @@ def add_invivo_to_graph(
     green_stack: Optional[np.ndarray] = None,
     red_spacing: Optional[tuple] = None,
     green_spacing: Optional[tuple] = None,
+    orientation_code: Optional[str] = None,
     base_name: str = "invivo_ref",
 ) -> ca.Graph:
     """Add in-vivo red/green nodes joined by Identity. See `_add_volume_channels`."""
@@ -329,6 +403,7 @@ def add_invivo_to_graph(
         graph, base_name,
         red_stack=red_stack, green_stack=green_stack,
         red_spacing=red_spacing, green_spacing=green_spacing,
+        orientation_code=orientation_code,
     )
 
 
@@ -339,6 +414,7 @@ def add_block_to_graph(
     green_stack: Optional[np.ndarray] = None,
     red_spacing: Optional[tuple] = None,
     green_spacing: Optional[tuple] = None,
+    orientation_code: Optional[str] = None,
     base_name: str = "ex_vivo_block",
 ) -> ca.Graph:
     """Add ex-vivo block red/green nodes joined by Identity. See `_add_volume_channels`."""
@@ -347,6 +423,7 @@ def add_block_to_graph(
         graph, base_name,
         red_stack=red_stack, green_stack=green_stack,
         red_spacing=red_spacing, green_spacing=green_spacing,
+        orientation_code=orientation_code,
     )
 
 
@@ -355,6 +432,7 @@ def add_subslices_to_graph(
     subslice_dir: Union[str, Path],
     save_every: int = 10,
     output_path: Optional[Union[str, Path]] = None,
+    orientation_code: Optional[str] = None,
     verbose: bool = True
 ) -> ca.Graph:
     """
@@ -387,7 +465,8 @@ def add_subslices_to_graph(
         print("All subslices already in graph!")
         return graph
 
-    metadata = {'spacing': spacing}  # (Z, Y, X) µm/px
+    # (Z, Y, X) µm/px, plus the one orientation every subslice shares.
+    metadata = {'spacing': spacing, 'orientation': orientation_code}
 
     added = 0
     for i, (fpath, node_name) in enumerate(files_to_add, 1):
@@ -626,6 +705,19 @@ def build_subslice_graph(
     print()
 
     # -------------------------------------------------------------
+    # Orientation codes (optional) — read before anything large is
+    # loaded, so a mirror between two modalities stops the run early.
+    # -------------------------------------------------------------
+    orientation_codes = load_orientation_codes()
+    configured_modalities = (
+        (["invivo_ref"] if any_invivo else [])
+        + (["ex_vivo_block"] if any_block else [])
+        + ([SUBSLICE_MODALITY] if subslice_dir else [])
+    )
+    check_orientation_handedness(orientation_codes, configured_modalities)
+    print()
+
+    # -------------------------------------------------------------
     # Load or create graph
     # -------------------------------------------------------------
     if force_rebuild and output_path.exists():
@@ -687,6 +779,7 @@ def build_subslice_graph(
                 g,
                 red_stack=red_stack, green_stack=green_stack,
                 red_spacing=red_spacing, green_spacing=green_spacing,
+                orientation_code=orientation_codes.get("invivo_ref"),
             )
             del red_stack, green_stack
             save_graph(g, output_path, verbose=False)
@@ -720,6 +813,7 @@ def build_subslice_graph(
                 g,
                 red_stack=red_stack, green_stack=green_stack,
                 red_spacing=red_spacing, green_spacing=green_spacing,
+                orientation_code=orientation_codes.get("ex_vivo_block"),
             )
             del red_stack, green_stack
             save_graph(g, output_path, verbose=False)
@@ -732,6 +826,7 @@ def build_subslice_graph(
             subslice_dir=subslice_dir,
             save_every=save_every,
             output_path=output_path,
+            orientation_code=orientation_codes.get(SUBSLICE_MODALITY),
         )
 
     # -------------------------------------------------------------
