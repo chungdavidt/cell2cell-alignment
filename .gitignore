@@ -3,7 +3,6 @@ CLAUDE.md
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
-local_config.py
 .castalign-venv/
 .cellpose-venv/
 .venv/
