@@ -104,9 +104,10 @@ def count_image(cellmask, x_img, y_img, counts):
     comparison per cell. Instead: map each centroid to its label, build a LUT
     over labels, then index the whole mask once.
 
-    Returns (count_img, lut, n_off_mask, n_out_of_bounds). The LUT is indexed by
-    label, so `(lut >= n).sum()` is the exact number of cells drawn at cutoff n —
-    centroids that missed a mask are not in it.
+    Returns (count_img, lut, ids, n_off_mask, n_out_of_bounds). `ids` is the
+    label each centroid landed in, 0 where it missed a mask or fell outside the
+    image — so `ids > 0` is per-cell "this cell can be filled at all", and the
+    cutoff then splits those into filled and below-cutoff.
     """
     labels = as_label_array(cellmask)
     h, w = labels.shape
@@ -122,7 +123,8 @@ def count_image(cellmask, x_img, y_img, counts):
         np.maximum.at(lut, ids[on_mask], counts[on_mask].astype(np.int32))
     lut[0] = 0
 
-    return lut[labels], lut, int((~on_mask & in_bounds).sum()), int((~in_bounds).sum())
+    return (lut[labels], lut, ids,
+            int((~on_mask & in_bounds).sum()), int((~in_bounds).sum()))
 
 
 def block_max(a, k):
@@ -362,12 +364,18 @@ def main():
         )
 
         for row, data in enumerate(batch):
-            counts_img, lut, off_mask, oob = count_image(
+            counts_img, lut, ids, off_mask, oob = count_image(
                 data["cellmask"], data["x_img"], data["y_img"], data["counts"])
             k = display_factor(data["cellmask"].shape, args.max_display_px)
             rgb, _ = paint(data["cellmask"], counts_img, args.min_rolonies,
                            args.saturate_at, cmap, args.cellmask, k)
-            n_drawn = int((lut >= args.min_rolonies).sum())
+
+            mapped = ids > 0
+            n_marker = int(data["counts"].size)
+            n_unmapped = int((~mapped).sum())
+            n_below = int((mapped & (data["counts"] < args.min_rolonies)).sum())
+            n_filled = int((mapped & (data["counts"] >= args.min_rolonies)).sum())
+            n_regions = int((lut >= args.min_rolonies).sum())
 
             ax_raw = fig.add_subplot(gs[row, 0])
             if data["raw_path"] is not None:
@@ -384,13 +392,18 @@ def main():
 
             ax_paint = fig.add_subplot(gs[row, 1])
             ax_paint.imshow(np.clip(rgb, 0, 1), interpolation="antialiased")
-            ax_paint.set_title(f"slice {data['slice_id']} - {n_drawn} cells drawn", fontsize=10)
+            ax_paint.set_title(
+                f"slice {data['slice_id']} - {n_filled} of {n_marker} marker+ filled "
+                f"({100 * n_filled / max(n_marker, 1):.0f}%)", fontsize=10)
             ax_paint.axis("off")
 
-            summary.append((data["slice_id"], data["counts"].size, n_drawn, off_mask, oob))
-            print(f"  slice {data['slice_id']}: {n_drawn} drawn, "
-                  f"{off_mask} off-mask, {oob} out of bounds"
-                  f"{f', display /{k}' if k > 1 else ''}")
+            summary.append((data["slice_id"], n_marker, n_filled, n_below,
+                            n_unmapped, off_mask, oob))
+            extra = f", display /{k}" if k > 1 else ""
+            if n_regions != n_filled:
+                extra += f", {n_filled - n_regions} share a mask with another cell"
+            print(f"  slice {data['slice_id']}: {n_filled}/{n_marker} filled, "
+                  f"{n_below} below cutoff, {n_unmapped} unmapped{extra}")
 
         draw_legend(fig.add_subplot(gs[rows, :]), args.saturate_at, cmap)
         fig.tight_layout(rect=[0, 0, 1, 0.97])
@@ -399,21 +412,33 @@ def main():
         plt.close(fig)
         print(f"  saved {path.name}\n")
 
-    print("=" * 60)
-    print(f"{'slice':>7}{'marker+':>10}{'drawn':>8}{'off-mask':>10}{'out-of-bounds':>15}")
-    for slice_id, n_marker, n_drawn, off_mask, oob in summary:
-        print(f"{slice_id:>7}{n_marker:>10}{n_drawn:>8}{off_mask:>10}{oob:>15}")
-    tot_off = sum(r[3] for r in summary)
-    tot_oob = sum(r[4] for r in summary)
+    print("=" * 72)
+    print(f"{'slice':>7}{'marker+':>10}{'filled':>9}{'%':>7}"
+          f"{'below cut':>11}{'unmapped':>10}")
+    for slice_id, n_marker, n_filled, n_below, n_unmapped, _, _ in summary:
+        print(f"{slice_id:>7}{n_marker:>10}{n_filled:>9}"
+              f"{100 * n_filled / max(n_marker, 1):>7.1f}{n_below:>11}{n_unmapped:>10}")
     tot_marker = sum(r[1] for r in summary)
-    print(f"\nunmapped centroids: {tot_off} on background + {tot_oob} out of bounds "
-          f"= {tot_off + tot_oob} of {tot_marker} marker+ "
-          f"({100 * (tot_off + tot_oob) / max(tot_marker, 1):.1f}%)")
-    print("  Counted over every QC-passing mScarlet+ cell, NOT just cells above the")
-    print("  cutoff - so it is identical at every --min-rolonies. It checks the")
-    print("  centroid mapping and the cellmask, not the cutoff.")
-    print("  On background: cellmask holes, see check_cellmasks.py.")
-    print("  Out of bounds: a wrong DOWNSAMPLE_XY or canvas offset would spike this.")
+    tot_filled = sum(r[2] for r in summary)
+    tot_below = sum(r[3] for r in summary)
+    tot_unmapped = sum(r[4] for r in summary)
+    tot_off = sum(r[5] for r in summary)
+    tot_oob = sum(r[6] for r in summary)
+    pct = lambda v: 100 * v / max(tot_marker, 1)
+
+    print(f"\nAt cutoff >= {args.min_rolonies} rolonies, of {tot_marker} QC-passing "
+          f"mScarlet+ cells in these subslices:")
+    print(f"  filled       {tot_filled:>8}  {pct(tot_filled):5.1f}%")
+    print(f"  NOT filled   {tot_below + tot_unmapped:>8}  "
+          f"{pct(tot_below + tot_unmapped):5.1f}%")
+    print(f"    below cutoff  {tot_below:>8}  {pct(tot_below):5.1f}%   "
+          f"moves with --min-rolonies")
+    print(f"    unmapped      {tot_unmapped:>8}  {pct(tot_unmapped):5.1f}%   "
+          f"fixed; {tot_off} on background, {tot_oob} out of bounds")
+    print("\n  Unmapped is a cellmask/centroid-mapping check, not a cutoff result -")
+    print("  it is identical at every --min-rolonies. On background: cellmask holes,")
+    print("  see check_cellmasks.py. Out of bounds: a wrong DOWNSAMPLE_XY or canvas")
+    print("  offset would spike it.")
     print(f"\nFigures: {out_dir}")
 
 
