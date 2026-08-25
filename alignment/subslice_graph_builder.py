@@ -117,7 +117,7 @@ def load_invivo_stack(path: Union[str, Path]) -> np.ndarray:
     return stack
 
 
-def discover_aniso_subslices(
+def discover_subslices(
     directory: Union[str, Path]
 ) -> List[Path]:
     """
@@ -449,7 +449,7 @@ def add_subslices_to_graph(
     """
     spacing = subslice_spacing_zyx(SCOPE)
 
-    files = discover_aniso_subslices(subslice_dir)
+    files = discover_subslices(subslice_dir)
 
     # Check which are already in graph
     existing_nodes = set(graph.nodes)
