@@ -404,10 +404,16 @@ def main():
     for slice_id, n_marker, n_drawn, off_mask, oob in summary:
         print(f"{slice_id:>7}{n_marker:>10}{n_drawn:>8}{off_mask:>10}{oob:>15}")
     tot_off = sum(r[3] for r in summary)
+    tot_oob = sum(r[4] for r in summary)
     tot_marker = sum(r[1] for r in summary)
-    print(f"\n{tot_off} of {tot_marker} marker+ centroids fell on background "
-          f"({100 * tot_off / max(tot_marker, 1):.1f}%)")
-    print("  a high rate means the cellmask has holes - see check_cellmasks.py")
+    print(f"\nunmapped centroids: {tot_off} on background + {tot_oob} out of bounds "
+          f"= {tot_off + tot_oob} of {tot_marker} marker+ "
+          f"({100 * (tot_off + tot_oob) / max(tot_marker, 1):.1f}%)")
+    print("  Counted over every QC-passing mScarlet+ cell, NOT just cells above the")
+    print("  cutoff - so it is identical at every --min-rolonies. It checks the")
+    print("  centroid mapping and the cellmask, not the cutoff.")
+    print("  On background: cellmask holes, see check_cellmasks.py.")
+    print("  Out of bounds: a wrong DOWNSAMPLE_XY or canvas offset would spike this.")
     print(f"\nFigures: {out_dir}")
 
 
