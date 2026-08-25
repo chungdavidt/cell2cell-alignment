@@ -4,7 +4,9 @@ Interactive mScarlet Threshold Viewer (CELL MASK).
 
 Displays multiple subslices with mScarlet+ cells on CELL MASK background.
 
-This is a Python port of interactive_mscarlet_threshold_cellmask_subslice_anisotropic.m
+Ported from the lab's interactive_mscarlet_threshold_cellmask_subslice_anisotropic.m -- their filename, from the era of the
+two-factor resample. This port is ISOTROPIC: one DOWNSAMPLE_XY covers both
+in-plane axes. Pre-isotropic code is frozen in archive/anisotropic_preprocessing/.
 with exact fidelity.
 
 Cell centroids are mapped into the downsampled image with DOWNSAMPLE_XY, the

@@ -4,7 +4,9 @@ Generate mScarlet Cell Mask Overlays for Subslices.
 
 Creates mScarlet overlays on CELL MASK background, on the downsampled subslices.
 
-This is a Python port of generate_mscarlet_cellmask_subslice_anisotropic.m with exact fidelity.
+Ported from the lab's generate_mscarlet_cellmask_subslice_anisotropic.m -- their filename, from the era of the
+two-factor resample. This port is ISOTROPIC: one DOWNSAMPLE_XY covers both
+in-plane axes. Pre-isotropic code is frozen in archive/anisotropic_preprocessing/.
 
 Cell centroids from filt_neurons.mat are mapped into the downsampled image with
 DOWNSAMPLE_XY, the same factor downsample_subslices_cellmask.py used

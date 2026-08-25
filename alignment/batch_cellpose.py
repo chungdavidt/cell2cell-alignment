@@ -6,7 +6,9 @@ Loops over a hardcoded list of TIFF paths and runs vanilla cellpose 4 (cpsam)
 
 Settings landed on after the 2026-04-16 2D parameter sweep on by94 (vanilla
 defaults beat cellprob/flow/diameter/CLAHE/sharpen variations on visual QC).
-Anisotropy is hardcoded to Z/XY = 1.81 for all four images, which is the
+Anisotropy here is CELLPOSE's parameter -- a 2P volume's Z:XY voxel aspect --
+not the retired BARseq two-factor resample. Hardcoded to Z/XY = 1.81 for all
+four images, which is the
 huang_lab_566um setting (2.0 / 1.1055) that by84 and by94 were acquired on.
 The current huang_lab setting (200.19 um FOV, 1 um Z — BY95) is
 1.0 / 0.3910 = 2.56; change EVAL_PARAMS when adding images from it.
