@@ -71,6 +71,7 @@ from utilities.mat_io import (
     resolve_marker_column,
 )
 from utilities.image_io import imread_tiff
+from utilities.visualization import create_histogram
 
 CELLMASK_BRIGHTNESS = 0.3          # grey background, before --cellmask scales it
 SUBSLICES_PER_FIGURE = 3           # one row each: raw | painted
@@ -246,6 +247,52 @@ def load_subslices(input_dir, filt_neurons, mscarlet, pass_qc, slice_selection):
     if not out:
         raise ValueError("No subslices to draw.")
     return out
+
+
+def rolony_distribution(counts, min_rolonies, saturate_at, cmap, out_dir):
+    """Cells per rolony count across the subslices drawn, with the cutoff marked.
+
+    check_qc_metrics.py prints this over the whole brain; here it is restricted
+    to the subslices actually being looked at, and carries the cutoff line, so
+    the picture and the number come from the same population.
+    """
+    counts = np.asarray(counts, dtype=np.int64)
+    vmax = int(counts.max())
+    values = np.arange(1, vmax + 1)
+    per_value = np.array([(counts == v).sum() for v in values])
+    at_or_above = np.array([(counts >= v).sum() for v in values])
+
+    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    ax.bar(values, per_value, color=ramp_rgb(values, saturate_at, cmap),
+           edgecolor="black", linewidth=0.4)
+    ax.set_ylabel("cells with exactly n rolonies", fontsize=11)
+    ax.set_yscale("log")
+    ax.set_title("mScarlet rolonies per cell, subslices drawn "
+                 f"({counts.size} QC-passing mScarlet+ cells)",
+                 fontsize=13, fontweight="bold")
+
+    ax2.plot(values, 100 * at_or_above / counts.size, color="#333333", marker="o",
+             markersize=3)
+    ax2.set_ylabel("% of marker+ cells kept\nat cutoff >= n", fontsize=11)
+    ax2.set_xlabel("mScarlet rolonies per cell", fontsize=12, fontweight="bold")
+    ax2.set_ylim(0, 105)
+
+    kept = 100 * float((counts >= min_rolonies).sum()) / counts.size
+    for a in (ax, ax2):
+        a.axvline(min_rolonies - 0.5, color="#1f77b4", linestyle="--", linewidth=2)
+        a.grid(True, alpha=0.3)
+    ax2.annotate(f"cutoff >= {min_rolonies}\nkeeps {kept:.1f}%",
+                 xy=(min_rolonies - 0.5, kept), xytext=(8, 8),
+                 textcoords="offset points", fontsize=10, color="#1f77b4",
+                 fontweight="bold")
+    ax.axvspan(0, min_rolonies - 0.5, color="#999999", alpha=0.18)
+    ax2.axvspan(0, min_rolonies - 0.5, color="#999999", alpha=0.18)
+
+    fig.tight_layout()
+    path = Path(out_dir) / f"rolony_distribution_ge{min_rolonies}.png"
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
 
 
 def draw_legend(ax, saturate_at, cmap):
@@ -435,10 +482,22 @@ def main():
           f"moves with --min-rolonies")
     print(f"    unmapped      {tot_unmapped:>8}  {pct(tot_unmapped):5.1f}%   "
           f"fixed; {tot_off} on background, {tot_oob} out of bounds")
+    hist = create_histogram(
+        [r[0] for r in summary], [r[2] for r in summary], [r[1] for r in summary],
+        float(args.min_rolonies), out_dir,
+        criterion_label=f">= {args.min_rolonies} rolonies",
+        filename=f"cell_count_histogram_ge{args.min_rolonies}_rolonies.png",
+    )
+    dist = rolony_distribution(
+        np.concatenate([d["counts"] for d in subslices]),
+        args.min_rolonies, args.saturate_at, cmap, out_dir)
+
     print("\n  Unmapped is a cellmask/centroid-mapping check, not a cutoff result -")
     print("  it is identical at every --min-rolonies. On background: cellmask holes,")
     print("  see check_cellmasks.py. Out of bounds: a wrong DOWNSAMPLE_XY or canvas")
     print("  offset would spike it.")
+    print(f"\n  {Path(hist).name}   filled vs total marker+ per subslice")
+    print(f"  {Path(dist).name}   cells per rolony count + % kept vs cutoff")
     print(f"\nFigures: {out_dir}")
 
 

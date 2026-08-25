@@ -187,6 +187,8 @@ def create_histogram(
     total_cells: List[int],
     threshold: float,
     output_dir: Union[str, Path],
+    criterion_label: str = None,
+    filename: str = None,
 ) -> str:
     """
     Create cell count histogram per subslice.
@@ -197,10 +199,16 @@ def create_histogram(
         total_cells: Total mScarlet+ cells per slice
         threshold: mScarlet threshold used
         output_dir: Output directory
+        criterion_label: Overrides "Threshold: 0.30" in the title and the bar
+            legend. check_rolony_cutoff.py passes a rolony-count criterion, where
+            a 0-1 threshold label would misread as a normalized value.
+        filename: Overrides the default output filename, for the same reason.
 
     Returns:
         Path to saved figure
     """
+    criterion_label = criterion_label or f'Threshold: {threshold:.2f}'
+    filename = filename or f'cell_count_histogram_threshold_{threshold:.2f}.png'
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -221,7 +229,7 @@ def create_histogram(
 
     ax.set_xlabel('Slice ID', fontsize=14, fontweight='bold')
     ax.set_ylabel('Number of Cells Displayed', fontsize=14, fontweight='bold')
-    ax.set_title(f'mScarlet+ Cell Counts per Subslice (Threshold: {threshold:.2f})',
+    ax.set_title(f'mScarlet+ Cell Counts per Subslice ({criterion_label})',
                  fontsize=16, fontweight='bold')
 
     ax.set_xticks(x)
@@ -231,7 +239,7 @@ def create_histogram(
     from matplotlib.lines import Line2D
     legend_elements = [
         Rectangle((0, 0), 1, 1, facecolor='#CC3333', edgecolor='black',
-                  label='Cells above threshold'),
+                  label=f'Cells kept ({criterion_label})'),
         Line2D([0], [0], linestyle='--', color='black',
                label='Total mScarlet+ cells'),
     ]
@@ -252,7 +260,7 @@ def create_histogram(
 
     plt.tight_layout()
 
-    output_file = output_dir / f'cell_count_histogram_threshold_{threshold:.2f}.png'
+    output_file = output_dir / filename
     fig.savefig(output_file, dpi=150)
     plt.close(fig)
 
