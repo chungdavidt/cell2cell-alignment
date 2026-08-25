@@ -11,10 +11,17 @@ full-res positions collapsing onto one downsampled pixel at DOWNSAMPLE_XY), and
 it is never needed, because the original FOV, the 40x position and the stitched
 position are all stored fields on the same row.
 
-`y_img` / `x_img` are in the subslice node's own frame — the coordinates the
-castalign graph transforms operate on — so a row can be pushed straight through
-the graph to the 2P volumes. Z within a subslice node is 0: the node is one
-plane thick, and the edge supplies its position in the stack.
+`y_node` / `x_node` are the cell's position in the subslice node's own frame —
+the coordinates a castalign transform consumes — so a row pushes straight through
+the graph to the 2P volumes. Z within a subslice node is 0: the node is one plane
+thick, and the edge supplies its position in the stack.
+
+`y_img` / `x_img` are the same point ROUNDED to an array index, and exist only to
+read a label out of the cellmask. Never transform them: rounding costs +-0.5
+downsampled px (~0.196 µm at BY95's 0.3910 µm/px) for no reason. The cell's
+position was never measured from the downsampled image — it is projected onto it
+from `pos`, which is stored at full resolution and never resampled. The downsample
+is lossy for PIXELS, not for CELLS.
 
 **mScarlet+ only for now**, deliberately. The eventual cell-linking chain
 (project_cell_by_cell_comparison_future.md) wants every QC-passing cell, not
@@ -81,8 +88,9 @@ COLUMNS = [
     "row_index",     # row of expmat / filt_neurons -> all 114 genes. THE join key.
     "cell_id",       # cellmask label in the downsampled subslice; 0 = unmapped
     "status",        # mapped | off_mask | out_of_bounds
-    "y_img", "x_img",    # subslice node frame, 0-indexed pixels
-    "y_um", "x_um",      # same point in µm (pixel * TARGET_XY_UM_PER_PX)
+    "y_img", "x_img",    # ROUNDED node-frame pixel; the index used to read a label
+    "y_node", "x_node",  # UNROUNDED node-frame coordinate -- transform THIS
+    "y_um", "x_um",      # y_node/x_node in µm (* TARGET_XY_UM_PER_PX)
     "n_pixels",      # area of this label in the downsampled mask
     "mscarlet",      # rolony count, expmat[:, MSCARLET_COLUMN_INDEX]
     "total_reads",   # summed over all 114 columns
@@ -203,9 +211,21 @@ def main():
         # Full-res position -> canvas (x2) -> downsampled image, 0-indexed.
         # Same formula as generate_mscarlet_cellmask_subslice.py:277-284 and
         # check_rolony_cutoff.py; all three must agree or cells land off their masks.
+        #
+        # Kept twice on purpose. The rounded form is an ARRAY INDEX -- it exists
+        # only to read a label out of the mask. The unrounded form is the cell's
+        # actual position in the node frame and is what a castalign transform
+        # should consume; rounding first would inject +-0.5 px of avoidable error
+        # (~0.196 µm at BY95's 0.3910 µm/px) into every downstream match.
         idx = np.where(keep)[0]
-        x_img = np.rint((pos[idx, 0] * 2 - (min_x_offset - 1)) / DOWNSAMPLE_XY).astype(np.int64) - 1
-        y_img = np.rint((pos[idx, 1] * 2 - (min_y_offset - 1)) / DOWNSAMPLE_XY).astype(np.int64) - 1
+        # Round THEN subtract 1, matching the other two copies exactly. Folding
+        # the -1 inside rint() would diverge at .5 ties under banker's rounding.
+        x_raw = (pos[idx, 0] * 2 - (min_x_offset - 1)) / DOWNSAMPLE_XY
+        y_raw = (pos[idx, 1] * 2 - (min_y_offset - 1)) / DOWNSAMPLE_XY
+        x_img = np.rint(x_raw).astype(np.int64) - 1
+        y_img = np.rint(y_raw).astype(np.int64) - 1
+        x_node = x_raw - 1.0
+        y_node = y_raw - 1.0
 
         in_bounds = (x_img >= 0) & (x_img < w) & (y_img >= 0) & (y_img < h)
         ids = np.zeros(idx.size, dtype=np.int64)
@@ -227,8 +247,10 @@ def main():
                 "cell_id": cid,
                 "status": status,
                 "y_img": int(y_img[j]), "x_img": int(x_img[j]),
-                "y_um": round(float(y_img[j]) * TARGET_XY_UM_PER_PX, 4),
-                "x_um": round(float(x_img[j]) * TARGET_XY_UM_PER_PX, 4),
+                "y_node": round(float(y_node[j]), 4),
+                "x_node": round(float(x_node[j]), 4),
+                "y_um": round(float(y_node[j]) * TARGET_XY_UM_PER_PX, 4),
+                "x_um": round(float(x_node[j]) * TARGET_XY_UM_PER_PX, 4),
                 "n_pixels": int(areas[cid]) if 0 < cid < areas.size else 0,
                 "mscarlet": int(mscarlet[cell_row]),
                 "total_reads": int(total_reads[cell_row]),
@@ -273,9 +295,14 @@ def main():
             "exvivo_um_per_px": EXVIVO_UM_PER_PX,
             "target_xy_um_per_px": TARGET_XY_UM_PER_PX,
             "downsample_xy": DOWNSAMPLE_XY,
-            "frame": "y_img/x_img are 0-indexed pixels in the subslice node's own "
-                     "frame; z within a node is 0 (one plane thick). Join to genes "
-                     "with expmat[row_index, :] -- never by inverting the geometry.",
+            "frame": "y_node/x_node are the cell's UNROUNDED position in the "
+                     "subslice node's frame -- transform these. y_img/x_img are the "
+                     "same point rounded to an array index, used only to read a "
+                     "cellmask label; transforming them injects +-0.5 px. z within "
+                     "a node is 0 (one plane thick). Join to genes with "
+                     "expmat[row_index, :] -- never by inverting the geometry. "
+                     "Original position and FOV are pos / pos40x / fov on the same "
+                     "row: stored at full resolution, never resampled.",
             "n_rows": len(rows), "n_mapped": n_mapped,
             "subslices": frames,
         }, fh, indent=2)
