@@ -21,9 +21,17 @@ So assign on whatever is easiest to read. The default is the downsampled DAPI fo
 that reason: a marker-only image at a high cutoff can be too sparse to find
 anterior on.
 
+One code per modality assumes every section of a series was mounted the same
+way up, and that is an assumption, not a fact: a section mounted face-down is a
+mirror, and no rotation or translation undoes a mirror. --all-slices drops the
+assumption and walks the whole series, recording a code per section under
+`sections` in the same JSON. Running it once is also how you find out whether
+the assumption held for a given brain.
+
 Usage:
     python preprocessing/assign_orientation.py --modality barseq_subslice --image <path>
     python preprocessing/assign_orientation.py --modality barseq_subslice --slice 22
+    python preprocessing/assign_orientation.py --modality barseq_subslice --all-slices
     python preprocessing/assign_orientation.py --modality invivo_ref     # image from local_config
     python preprocessing/assign_orientation.py --single-plane ...        # no section series
     python preprocessing/assign_orientation.py --show                    # print what is recorded
@@ -36,12 +44,29 @@ for display only):
     3. press L / R                  -> which hemisphere
     4. press D / V                  -> is the first section dorsal-most or ventral-most
 
+Each label is drawn as its answer is given, so a misclick is visible when it is
+made rather than three answers later; x restarts the section at any point.
+Medial carries no R/L letter until the hemisphere is answered, because that is
+the answer which resolves it.
+
 then Enter to write, any other key to start the pass over. Opposites are implied
 by construction, so a self-contradictory answer cannot be entered.
+
+Under --all-slices the same four questions run per section, except the
+dorsal/ventral one: that describes the CUTTING ORDER, not an individual
+section, so it is asked once and applies to the series. Handedness still varies
+section to section, because the in-plane answers do -- which is what makes a
+face-down section visible. Navigation is Enter to record and advance, x to redo
+the current section (from any stage, not only from confirm), b to step back, q
+to stop and keep what is recorded. Each
+section is written as it is confirmed, so an interrupted pass resumes where it
+stopped rather than starting over. The dorsal/ventral answer is asked on the
+first section, so redoing that section is what re-asks it.
 """
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -134,6 +159,51 @@ def default_image(modality: str, slice_id=None):
     return Path(path) if path else None
 
 
+def discover_sections(slice_ids=None):
+    """``[(slice_id, path)]`` for every BARseq section, in slice order.
+
+    Same candidate order as `default_image` — downsampled DAPI first, because
+    it is the legible one — but resolved across the whole series instead of one
+    file. The first candidate that yields any section wins outright, so the run
+    is never a mixture of DAPI for some sections and ALIGN tifs for others.
+
+    `slice_ids` restricts the pass to named sections, for re-doing a handful
+    without walking the series again.
+    """
+    from analysis_paths import resolve_subslice_dir
+    from preprocessing_config import HYB_DOWNSAMPLED_DIR
+
+    subslice_dir = resolve_subslice_dir()
+    candidates = [(Path(HYB_DOWNSAMPLED_DIR), "_subslice_DAPI.tif")]
+    if subslice_dir is not None:
+        candidates += [(subslice_dir, "_subslice_ALIGN.tif"),
+                       (subslice_dir, "_subslice_mScarlet_cellmask.tif")]
+
+    for root, suffix in candidates:
+        found = {}
+        for path in sorted(Path(root).glob(f"slice*{suffix}")):
+            match = re.match(r"slice(\d+)_subslice", path.name)
+            if match:
+                found[int(match.group(1))] = path
+        if not found:
+            continue
+        if slice_ids:
+            missing = [s for s in slice_ids if s not in found]
+            if missing:
+                raise SystemExit(
+                    f"No {suffix} for slice(s) {missing} under {root}. "
+                    f"Present: {sorted(found)}"
+                )
+            found = {s: found[s] for s in slice_ids}
+        return [(s, found[s]) for s in sorted(found)]
+
+    searched = "\n".join(f"  {root}  ({suffix})" for root, suffix in candidates)
+    raise FileNotFoundError(
+        f"No BARseq section images found. Searched:\n{searched}\n"
+        f"Run the preprocessing pipeline first."
+    )
+
+
 def load_display(path: Path):
     """Read `path` and reduce it to one contrast-stretched 2D image.
 
@@ -181,20 +251,40 @@ def nearest_edge(x, y, width, height, allowed):
 
 
 class OrientationPicker:
-    """Sequential prompts over one displayed image. Returns the raw answers."""
+    """Sequential prompts over one section image or a whole series.
 
-    def __init__(self, display, modality, image_path, single_plane=False,
-                 n_planes=1):
-        self.display = display
+    One image and a series are the same interaction. A series adds navigation,
+    a record written per section as it is confirmed, and a proposal carried
+    forward from the section before — most sections of a well-mounted brain
+    give the same answers, so the ones that do not are what you are looking for.
+    The proposal is drawn as labels and still needs an explicit Enter, so it
+    speeds up agreeing without letting you agree to something unseen.
+    """
+
+    def __init__(self, sections, modality, single_plane=False,
+                 propagate=True, existing=None, on_record=None):
+        self.sections = list(sections)          # [(slice_id or None, path)]
         self.modality = modality
-        self.image_path = image_path
         self.single_plane = single_plane
-        # A volume's "first section" is its first imaged plane; say so.
-        self.n_planes = n_planes
-        self.height, self.width = display.shape
-        self.answers = {}
+        self.propagate = propagate
+        self.on_record = on_record
+        self.stack = len(self.sections) > 1
+
+        # slice_id -> answers, seeded from what is already recorded so an
+        # interrupted pass resumes instead of restarting.
+        self.answers = dict(existing or {})
+        # The cutting order is a property of the SERIES, not of a section: it is
+        # the same answer every time, so it is asked once and reused. Handedness
+        # still varies section to section because the in-plane answers do.
+        self.first_section = next(
+            (a['first_section'] for a in self.answers.values()
+             if a.get('first_section')), None)
+
+        self.index = 0
+        self.pending = {}
         self.labels = []
         self.result = None
+        self.quit_early = False
 
         # Matplotlib's default single-key shortcuts (s = save figure, q = quit,
         # l = log scale) would fire underneath the answers.
@@ -203,28 +293,111 @@ class OrientationPicker:
                 plt.rcParams[key] = []
 
         self.fig, self.ax = plt.subplots(figsize=(9, 9))
-        self.ax.imshow(self.display, cmap='gray', vmin=0, vmax=1,
-                       interpolation='nearest')
-        self.ax.set_xlabel(f"+x ->        {Path(image_path).name}")
-        self.ax.set_ylabel("+y  (downward)")
         self.fig.canvas.mpl_connect('button_press_event', self.on_click)
         self.fig.canvas.mpl_connect('key_press_event', self.on_key)
-        self.restart()
+        self.load_current()
+
+    # -- sections ---------------------------------------------------------
+    @property
+    def slice_id(self):
+        return self.sections[self.index][0]
+
+    @property
+    def path(self):
+        return self.sections[self.index][1]
+
+    def previous_answers(self):
+        """In-plane answers from the nearest earlier section that has any."""
+        for i in range(self.index - 1, -1, -1):
+            prior = self.answers.get(self.sections[i][0])
+            if prior:
+                return prior
+        return None
+
+    def load_current(self):
+        """Read the current section, reset the canvas, seed its proposal."""
+        display, self.n_planes = load_display(self.path)
+        self.height, self.width = display.shape
+        self.display = display
+
+        self.ax.clear()
+        self.labels = []
+        self.ax.imshow(display, cmap='gray', vmin=0, vmax=1,
+                       interpolation='nearest')
+        self.ax.set_xlabel(f"+x ->        {self.path.name}")
+        self.ax.set_ylabel("+y  (downward)")
+
+        seed = self.answers.get(self.slice_id)
+        self.from_previous = False
+        if seed is None and self.propagate:
+            seed = self.previous_answers()
+            self.from_previous = seed is not None
+        self.pending = {k: v for k, v in (seed or {}).items()
+                        if k in ('anterior_edge', 'medial_edge', 'hemisphere')}
+        # A hand-edited record could name both in-plane answers on one axis,
+        # which derive_code rejects. Drop the pair rather than propose it.
+        anterior, medial = self.pending.get('anterior_edge'), self.pending.get('medial_edge')
+        if anterior and medial and medial not in orientation.perpendicular_edges(anterior):
+            self.pending.pop('anterior_edge')
+            self.pending.pop('medial_edge')
+            self.from_previous = False
+        self.prompt()
 
     # -- state ------------------------------------------------------------
     @property
     def stage(self):
-        for name in ('anterior_edge', 'medial_edge', 'hemisphere', 'first_section'):
-            if name == 'first_section' and self.single_plane:
-                continue
-            if name not in self.answers:
+        for name in ('anterior_edge', 'medial_edge', 'hemisphere'):
+            if name not in self.pending:
                 return name
+        if not self.single_plane and self.first_section is None:
+            return 'first_section'
         return 'confirm'
 
     def restart(self):
-        self.answers = {}
-        self.clear_labels()
+        """Clear this section's answers and ask again from the top.
+
+        The cutting order is a series-level answer asked on the first section,
+        so redoing THERE re-asks it and redoing anywhere else leaves it alone.
+        Without that, a wrong dorsal/ventral answer could only be corrected by
+        re-running the whole pass.
+        """
+        self.pending = {}
+        self.from_previous = False
+        if not self.stack or self.index == 0:
+            self.first_section = None
         self.prompt()
+
+    def progress(self):
+        if not self.stack:
+            return self.modality
+        return (f"{self.modality}   [{self.index + 1}/{len(self.sections)}]"
+                f"   slice {self.slice_id}")
+
+    def draw_answered(self):
+        """Redraw every label the answers so far support.
+
+        Called on each prompt, so a misclick shows up the moment it is made
+        rather than three answers later. Medial carries no letter until the
+        hemisphere is answered — the hemisphere is what turns medial/lateral
+        into R/L — so it is drawn unlettered until then.
+        """
+        self.clear_labels()
+        anterior = self.pending.get('anterior_edge')
+        if anterior:
+            self.edge_label(anterior, "ANTERIOR", 'yellow')
+            self.edge_label(orientation.OPPOSITE_EDGE[anterior], "POSTERIOR", 'yellow')
+
+        medial = self.pending.get('medial_edge')
+        if medial:
+            hemisphere = self.pending.get('hemisphere')
+            if hemisphere:
+                letter = 'R' if hemisphere == 'left' else 'L'
+                medial_text = f"MEDIAL ({letter})"
+                lateral_text = f"LATERAL ({orientation.opposite(letter)})"
+            else:
+                medial_text, lateral_text = "MEDIAL", "LATERAL"
+            self.edge_label(medial, medial_text, 'cyan')
+            self.edge_label(orientation.OPPOSITE_EDGE[medial], lateral_text, 'cyan')
 
     def prompt(self):
         stage = self.stage
@@ -242,7 +415,8 @@ class OrientationPicker:
         if stage == 'confirm':
             self.show_result()
             return
-        self.ax.set_title(f"{self.modality}\n{text}", fontsize=12)
+        self.draw_answered()
+        self.ax.set_title(f"{self.progress()}\n{text}", fontsize=12)
         self.fig.canvas.draw_idle()
 
     # -- events -----------------------------------------------------------
@@ -253,11 +427,11 @@ class OrientationPicker:
         if stage == 'anterior_edge':
             allowed = orientation.EDGES
         elif stage == 'medial_edge':
-            allowed = orientation.perpendicular_edges(self.answers['anterior_edge'])
+            allowed = orientation.perpendicular_edges(self.pending['anterior_edge'])
         else:
             return
         edge = nearest_edge(event.xdata, event.ydata, self.width, self.height, allowed)
-        self.answers[stage] = edge
+        self.pending[stage] = edge
         print(f"  {stage}: {edge}")
         self.prompt()
 
@@ -265,23 +439,89 @@ class OrientationPicker:
         key = (event.key or '').lower()
         stage = self.stage
 
+        # x restarts the current section from ANY stage, not only from confirm.
+        # With labels drawn as they are answered, a misclick is visible
+        # immediately, so there has to be a way to fix it immediately.
+        if key == 'x':
+            print(f"  redoing {'this section' if self.stack else 'from the top'}")
+            self.restart()
+            return
+
+        if self.stack:
+            if key == 'q':
+                print("  stopping — everything recorded so far is written")
+                self.quit_early = True
+                self.finish()
+                return
+            if key == 'b':
+                self.step_back()
+                return
+
         if stage == 'confirm':
             if key in CONFIRM_KEYS:
-                self.result = dict(self.answers)
-                plt.close(self.fig)
-            else:
+                self.record_current()
+                self.advance()
+            elif not self.stack:
                 print("  restarting")
                 self.restart()
             return
 
         if stage == 'hemisphere' and key in ('l', 'r'):
-            self.answers['hemisphere'] = 'left' if key == 'l' else 'right'
-            print(f"  hemisphere: {self.answers['hemisphere']}")
+            self.pending['hemisphere'] = 'left' if key == 'l' else 'right'
+            print(f"  hemisphere: {self.pending['hemisphere']}")
             self.prompt()
         elif stage == 'first_section' and key in ('d', 'v'):
-            self.answers['first_section'] = 'dorsal' if key == 'd' else 'ventral'
-            print(f"  first_section: {self.answers['first_section']}-most")
+            self.first_section = 'dorsal' if key == 'd' else 'ventral'
+            print(f"  first_section: {self.first_section}-most"
+                  f"{' (applies to the whole series)' if self.stack else ''}")
+            self.restamp_recorded()
             self.prompt()
+
+    # -- navigation -------------------------------------------------------
+    def record_current(self):
+        answers = dict(self.pending)
+        answers['first_section'] = None if self.single_plane else self.first_section
+        answers['image'] = str(self.path)
+        self.answers[self.slice_id] = answers
+        if self.on_record:
+            self.on_record(self.slice_id, answers)
+
+    def restamp_recorded(self):
+        """Re-record sections answered under a different cutting order.
+
+        `first_section` sets the z letter of every section in the series, so
+        redoing the first section and answering D/V differently would otherwise
+        leave the already-recorded sections carrying the old z — a record that
+        disagrees with itself, and a `majority_code` split across two codes that
+        differ only in a letter nobody re-answered.
+        """
+        stale = [sid for sid, answers in self.answers.items()
+                 if answers.get('first_section') not in (None, self.first_section)]
+        if not stale:
+            return
+        print(f"  cutting order changed — restamping {len(stale)} recorded section(s)")
+        for sid in sorted(stale, key=lambda v: (v is None, v)):
+            self.answers[sid]['first_section'] = self.first_section
+            if self.on_record:
+                self.on_record(sid, self.answers[sid])
+
+    def advance(self):
+        if self.index + 1 >= len(self.sections):
+            self.finish()
+            return
+        self.index += 1
+        self.load_current()
+
+    def step_back(self):
+        if self.index == 0:
+            print("  already at the first section")
+            return
+        self.index -= 1
+        self.load_current()
+
+    def finish(self):
+        self.result = dict(self.answers)
+        plt.close(self.fig)
 
     # -- drawing ----------------------------------------------------------
     def clear_labels(self):
@@ -305,21 +545,12 @@ class OrientationPicker:
 
     def show_result(self):
         """Draw all six labels, print the code, wait for an explicit confirm."""
-        a = self.answers
+        a = self.pending
         code = orientation.derive_code(
             a['anterior_edge'], a['medial_edge'], a['hemisphere'],
-            a.get('first_section'),
+            None if self.single_plane else self.first_section,
         )
-        posterior_edge = orientation.OPPOSITE_EDGE[a['anterior_edge']]
-        lateral_edge = orientation.OPPOSITE_EDGE[a['medial_edge']]
-        medial_letter = 'R' if a['hemisphere'] == 'left' else 'L'
-
-        self.clear_labels()
-        self.edge_label(a['anterior_edge'], "ANTERIOR", 'yellow')
-        self.edge_label(posterior_edge, "POSTERIOR", 'yellow')
-        self.edge_label(a['medial_edge'], f"MEDIAL ({medial_letter})", 'cyan')
-        self.edge_label(lateral_edge,
-                        f"LATERAL ({orientation.opposite(medial_letter)})", 'cyan')
+        self.draw_answered()
 
         if self.single_plane:
             through = ("DORSAL / VENTRAL: single plane, no series\n"
@@ -327,7 +558,7 @@ class OrientationPicker:
                        " — derived, not answered")
         else:
             first = ("z = 0" if self.n_planes > 1 else "first section")
-            through = (f"DORSAL / VENTRAL: {first} is {a['first_section']}-most\n"
+            through = (f"DORSAL / VENTRAL: {first} is {self.first_section}-most\n"
                        f"+z (into the stack) = {orientation.LETTER_NAME[code[0]]}")
         self.labels.append(self.ax.text(
             0.5, 0.5, through, transform=self.ax.transAxes,
@@ -335,16 +566,55 @@ class OrientationPicker:
             bbox=dict(facecolor='black', alpha=0.6, edgecolor='none', pad=5),
         ))
 
+        note, colour = self.deviation_note(code)
+        if note:
+            self.labels.append(self.ax.text(
+                0.5, 0.11, note, transform=self.ax.transAxes,
+                ha='center', va='center', color=colour, fontsize=11,
+                fontweight='bold',
+                bbox=dict(facecolor='black', alpha=0.7, edgecolor='none', pad=4),
+            ))
+
+        keys = ("Enter = record and advance,  x = redo,  b = back,  q = stop"
+                if self.stack else
+                "Enter = record,  x or any other key = start over")
         self.ax.set_title(
-            f"{self.modality}   ->   {code}   ({orientation.describe(code)})\n"
-            f"Enter = record,  any other key = start over",
+            f"{self.progress()}   ->   {code}   ({orientation.describe(code)})\n{keys}",
             fontsize=12,
         )
         self.fig.canvas.draw_idle()
 
         print()
         print(f"  code: {code}   {orientation.describe(code)}")
-        print(f"  Enter to record, any other key to start over.")
+        if note:
+            print(f"  {note}")
+        print(f"  {keys}")
+
+    def deviation_note(self, code):
+        """Flag a section whose code differs from the one before it.
+
+        A differing handedness is the one that matters: it is a mirror, and no
+        alignment undoes a mirror. A differing code at the SAME handedness is a
+        90-degree mounting difference, which is a rotation.
+        """
+        if not self.stack:
+            return None, None
+        prior = self.previous_answers()
+        if not prior or not prior.get('anterior_edge'):
+            return None, None
+        prior_code = orientation.derive_code(
+            prior['anterior_edge'], prior['medial_edge'], prior['hemisphere'],
+            None if self.single_plane else self.first_section,
+        )
+        if code == prior_code:
+            return (("proposed from the previous section — confirm or press x"
+                     if self.from_previous else
+                     f"same as the previous section ({prior_code})"), 'lightgreen')
+        if orientation.agree(code, prior_code):
+            return (f"DIFFERS from the previous section ({prior_code}) — "
+                    f"rotated, same handedness", 'orange')
+        return (f"MIRRORED relative to the previous section ({prior_code}) — "
+                f"opposite handedness", 'red')
 
     def run(self):
         plt.show()
@@ -376,8 +646,46 @@ def show(path):
               f"first section {entry.get('first_section')}")
         print(f"    image: {entry.get('image')}")
         print(f"    assigned: {entry.get('assigned')}")
+        if entry.get('sections'):
+            print(f"    per section: {entry.get('n_agree_with_code')} of "
+                  f"{entry.get('n_sections')} sections carry {code}")
+            report_sections(orientation.section_codes(path, name), indent=4)
     report_handedness(orientation.codes(path))
     return record
+
+
+def report_sections(section_map, indent=2):
+    """Group a modality's sections by code and name the odd ones out.
+
+    The modality-level code is a majority summary, so this is where a
+    differently-mounted section actually becomes visible.
+    """
+    pad = " " * indent
+    if not section_map:
+        return
+    by_code = {}
+    for slice_id, code in section_map.items():
+        by_code.setdefault(code, []).append(slice_id)
+
+    if len(by_code) == 1:
+        code = next(iter(by_code))
+        print(f"{pad}all {len(section_map)} sections agree: {code}")
+        return
+
+    print(f"{pad}{len(by_code)} distinct codes across {len(section_map)} sections:")
+    for code, ids in sorted(by_code.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        listed = ", ".join(str(i) for i in sorted(ids))
+        print(f"{pad}  {code}  ({len(ids):>3}): {listed}")
+
+    groups = orientation.handedness_groups(section_map)
+    if groups[1] and groups[-1]:
+        smaller = groups[1] if len(groups[1]) <= len(groups[-1]) else groups[-1]
+        print(f"{pad}MIRRORED SECTIONS: {', '.join(str(i) for i in smaller)}")
+        print(f"{pad}  These were mounted the other way up. A mirror is not a")
+        print(f"{pad}  rotation — no alignment undoes it.")
+    else:
+        print(f"{pad}All sections share a handedness — the differences are")
+        print(f"{pad}rotations, which alignment resolves.")
 
 
 def report_handedness(code_map):
@@ -402,6 +710,127 @@ def report_handedness(code_map):
 # Entry point
 # ---------------------------------------------------------------------------
 
+def resolve_subject(explicit):
+    if explicit is not None:
+        return explicit
+    from analysis_paths import subject_name
+    return subject_name()
+
+
+def assign_one(args, out_path, parser):
+    """Assign one image, recorded at the modality level. The original path."""
+    image_path = (Path(args.image) if args.image
+                  else default_image(args.modality, args.slice))
+    if image_path is None:
+        parser.error(f"No --image given and local_config.py has no path for "
+                     f"{args.modality!r}.")
+    if not image_path.exists():
+        parser.error(f"Image not found: {image_path}")
+
+    print(f"modality: {args.modality}")
+    print(f"image:    {image_path}")
+    print()
+
+    result = OrientationPicker([(None, image_path)], args.modality,
+                               single_plane=args.single_plane).run()
+    if not result:
+        print("Closed without confirming — nothing written.")
+        return
+    answers = result[None]
+
+    entry = orientation.make_entry(
+        answers['anterior_edge'], answers['medial_edge'], answers['hemisphere'],
+        answers.get('first_section'), image=image_path,
+    )
+    orientation.save(out_path, args.modality, entry,
+                     subject=resolve_subject(args.subject))
+    print()
+    print(f"Recorded {args.modality} = {entry['code']} in {out_path}")
+    print("No image was written.")
+    report_handedness(orientation.codes(out_path))
+
+
+def assign_series(args, out_path, parser):
+    """Walk a BARseq section series, recording a code per section.
+
+    One code per modality assumes uniform mounting. This drops that assumption:
+    every section is answered on its own, and a section mounted face-down shows
+    up as a handedness that disagrees with its neighbours.
+    """
+    if args.modality != 'barseq_subslice':
+        parser.error(
+            f"--all-slices walks a BARseq section series, but {args.modality!r} "
+            f"is one acquisition with one frame — there are no sections to step "
+            f"through. Assign it with --image or its local_config default."
+        )
+    if args.image:
+        parser.error("--all-slices covers the whole series; --image names one file")
+    if args.single_plane:
+        parser.error(
+            "--single-plane derives the z letter from the in-plane answers, "
+            "choosing whichever one makes the handedness consistent. Every "
+            "section would then agree with every other by construction and no "
+            "mirrored section could ever be flagged — which is the only reason "
+            "to walk the series. Answer the dorsal/ventral question instead."
+        )
+
+    sections = discover_sections(args.slices)
+    print(f"modality: {args.modality}")
+    print(f"sections: {len(sections)}  "
+          f"(slice {sections[0][0]} .. {sections[-1][0]})")
+    print(f"source:   {sections[0][1].parent}")
+
+    # Anything already on file seeds the pass, so an interrupted run resumes.
+    prior = orientation.load(out_path).get('modalities', {}).get(args.modality, {})
+    existing = {int(k): v for k, v in (prior.get('sections') or {}).items()
+                if str(k).lstrip('-').isdigit()}
+    if existing:
+        print(f"resuming: {len(existing)} section(s) already recorded")
+    if args.fresh:
+        print("fresh:    no proposal carried forward; every section answered from scratch")
+    print()
+
+    subject = resolve_subject(args.subject)
+    recorded = dict(existing)
+
+    def on_record(slice_id, answers):
+        recorded[slice_id] = orientation.make_entry(
+            answers['anterior_edge'], answers['medial_edge'],
+            answers['hemisphere'], answers.get('first_section'),
+            image=answers.get('image'),
+        )
+        # Written as each section is confirmed rather than at the end: a
+        # 62-section pass is not one sitting, and q or a closed window should
+        # leave the finished sections on file.
+        orientation.save_sections(out_path, args.modality, recorded,
+                                  subject=subject)
+        print(f"  recorded slice {slice_id} = {recorded[slice_id]['code']} "
+              f"({len(recorded)} on file)")
+
+    OrientationPicker(sections, args.modality,
+                      single_plane=args.single_plane,
+                      propagate=not args.fresh,
+                      existing=existing,
+                      on_record=on_record).run()
+
+    if not recorded:
+        print("Nothing confirmed — nothing written.")
+        return
+
+    entry = orientation.load(out_path)['modalities'][args.modality]
+    print()
+    print(f"Recorded {len(recorded)} section(s) in {out_path}")
+    print("No image was written.")
+    print(f"modality code (majority of sections): {entry['code']}   "
+          f"{orientation.describe(entry['code'])}")
+    report_sections(orientation.section_codes(out_path, args.modality))
+    report_handedness(orientation.codes(out_path))
+    print()
+    print("NOTE: subslice_graph_builder.py reads the modality-level code only, so")
+    print("      every subslice node is still stamped with the majority code. The")
+    print("      per-section records above are not yet consumed by anything.")
+
+
 def main():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -413,6 +842,18 @@ def main():
                    help='For barseq_subslice: which section to display '
                         '(default: the lowest-numbered one). Every section shares '
                         'the frame, so this only changes what you look at.')
+    p.add_argument('--all-slices', action='store_true',
+                   help='Step through every BARseq section, recording a code per '
+                        'section instead of one for the modality. Enter records '
+                        'and advances, x redoes, b steps back, q stops. The '
+                        'dorsal/ventral question is asked once, on the first '
+                        'section; redo there to re-answer it.')
+    p.add_argument('--slices', type=int, nargs='+', default=None,
+                   help='With --all-slices: restrict the pass to these sections, '
+                        'for re-doing a few without walking the series again.')
+    p.add_argument('--fresh', action='store_true',
+                   help='With --all-slices: do not carry the previous section\'s '
+                        'answers forward. Slower, but nothing is pre-agreed.')
     p.add_argument('--out', default=None,
                    help='orientation.json path (default: <ANALYSIS_ROOT>/orientation.json)')
     p.add_argument('--single-plane', action='store_true',
@@ -440,43 +881,10 @@ def main():
               f"builder reads ({', '.join(KNOWN_MODALITIES)}).")
         print("      It will be recorded, but nothing will look it up.")
 
-    image_path = (Path(args.image) if args.image
-                  else default_image(args.modality, args.slice))
-    if image_path is None:
-        p.error(f"No --image given and local_config.py has no path for "
-                f"{args.modality!r}.")
-    if not image_path.exists():
-        p.error(f"Image not found: {image_path}")
-
-    print(f"modality: {args.modality}")
-    print(f"image:    {image_path}")
-    display, n_planes = load_display(image_path)
-    print(f"  display: {display.shape[1]} x {display.shape[0]} (x, y), "
-          f"contrast stretched to the {DISPLAY_PERCENTILES[0]}-"
-          f"{DISPLAY_PERCENTILES[1]} percentile range")
-    print()
-
-    answers = OrientationPicker(display, args.modality, image_path,
-                                single_plane=args.single_plane,
-                                n_planes=n_planes).run()
-    if answers is None:
-        print("Closed without confirming — nothing written.")
-        return
-
-    entry = orientation.make_entry(
-        answers['anterior_edge'], answers['medial_edge'], answers['hemisphere'],
-        answers.get('first_section'), image=image_path,
-    )
-    subject = args.subject
-    if subject is None:
-        from analysis_paths import subject_name
-        subject = subject_name()
-
-    orientation.save(out_path, args.modality, entry, subject=subject)
-    print()
-    print(f"Recorded {args.modality} = {entry['code']} in {out_path}")
-    print("No image was written.")
-    report_handedness(orientation.codes(out_path))
+    if args.all_slices or args.slices:
+        assign_series(args, out_path, p)
+    else:
+        assign_one(args, out_path, p)
 
 
 if __name__ == '__main__':

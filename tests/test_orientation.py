@@ -203,6 +203,82 @@ check("derived z equals the answered z on exactly the non-mirrored inputs",
 check("derived-z codes all have the consistent handedness",
       all(o.handedness(v) == o.CONSISTENT_HANDEDNESS for v in single.values()))
 
+# ---------------------------------------------------------------- 6: per-section records
+print("6. per-section records — save_sections, majority, handedness groups")
+
+def section(ant, med, hemi, first='dorsal'):
+    return o.make_entry(ant, med, hemi, first)
+
+with tempfile.TemporaryDirectory() as tmp:
+    path = Path(tmp) / o.ORIENTATION_FILENAME
+
+    # 20 sections mounted alike, one mounted face-down: medial on the other
+    # edge, which is a mirror, not a rotation.
+    uniform = {n: section('top', 'right', 'left') for n in range(20, 40)}
+    flipped = section('top', 'left', 'left')
+    entries = dict(uniform); entries[31] = flipped
+
+    o.save_sections(path, 'barseq_subslice', entries, subject='TEST')
+    record = json.loads(path.read_text())
+    entry = record['modalities']['barseq_subslice']
+
+    check("subject stamped", record.get('subject') == 'TEST')
+    check("per_section flag set", entry.get('per_section') is True)
+    check("every section stored", entry['n_sections'] == 20, str(entry['n_sections']))
+    check("section keys are strings", all(isinstance(k, str) for k in entry['sections']))
+    check("modality code is the majority", entry['code'] == 'VPR', entry['code'])
+    check("n_agree counts the majority", entry['n_agree_with_code'] == 19,
+          str(entry['n_agree_with_code']))
+
+    # The whole point of the modality-level code staying populated: every
+    # existing reader, the graph builder included, keeps working unchanged.
+    check("codes() still returns one code per modality",
+          o.codes(path) == {'barseq_subslice': 'VPR'}, str(o.codes(path)))
+
+    per_section = o.section_codes(path, 'barseq_subslice')
+    check("section_codes() keys are ints", all(isinstance(k, int) for k in per_section))
+    check("section_codes() finds the deviant", per_section[31] == 'VPL',
+          per_section.get(31))
+    check("section_codes() on an unassigned modality is empty",
+          o.section_codes(path, 'invivo_ref') == {})
+
+    groups = o.handedness_groups(per_section)
+    minority = groups[1] if len(groups[1]) < len(groups[-1]) else groups[-1]
+    check("handedness_groups isolates the flipped section", minority == [31], str(minority))
+    check("groups partition every section",
+          len(groups[1]) + len(groups[-1]) == 20)
+
+    # A rotated section shares handedness with its neighbours; only a mirror
+    # does not. This is the distinction the report leans on.
+    # Rotating (anterior=top, medial=right) a quarter turn clockwise puts
+    # anterior on the right and medial on the bottom -- (right, top) would be a
+    # reflection, which is the distinction being tested.
+    rotated = o.derive_code('right', 'bottom', 'left', 'dorsal')
+    check("a 90-degree mounting difference is a different code", rotated != 'VPR', rotated)
+    check("...but the same handedness", o.agree(rotated, 'VPR'), rotated)
+    check("a face-down mounting is the opposite handedness", not o.agree('VPL', 'VPR'))
+    check("and a reflection dressed as a rotation is caught",
+          not o.agree(o.derive_code('right', 'top', 'left', 'dorsal'), 'VPR'))
+
+    # Re-saving one section must not drop the rest.
+    entries[31] = section('top', 'right', 'left')
+    o.save_sections(path, 'barseq_subslice', entries, subject='TEST')
+    after = o.section_codes(path, 'barseq_subslice')
+    check("re-saving keeps every section", len(after) == 20, str(len(after)))
+    check("corrected section takes the new code", after[31] == 'VPR', after[31])
+    check("now unanimous", len(set(after.values())) == 1)
+
+    # A second modality must survive a per-section write to the first.
+    o.save(path, 'invivo_ref', o.make_entry('top', 'right', 'left', 'dorsal'))
+    o.save_sections(path, 'barseq_subslice', entries, subject='TEST')
+    check("other modalities untouched by save_sections",
+          set(o.codes(path)) == {'barseq_subslice', 'invivo_ref'}, str(o.codes(path)))
+
+    check("sort_sections orders numerically",
+          o.sort_sections(['10', '2', '33']) == ['2', '10', '33'],
+          str(o.sort_sections(['10', '2', '33'])))
+    check("majority_code on an empty map is None", o.majority_code({}) is None)
+
 print()
 print("FAILURES:", fails if fails else "none")
 sys.exit(1 if fails else 0)

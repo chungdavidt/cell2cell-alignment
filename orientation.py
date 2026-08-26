@@ -251,6 +251,53 @@ def make_entry(anterior_edge: str,
     }
 
 
+def section_key(slice_id) -> str:
+    """Canonical JSON key for a section. JSON object keys are strings anyway."""
+    return str(int(slice_id))
+
+
+def sort_sections(keys):
+    """Section keys in numeric order, tolerating a non-numeric one."""
+    return sorted(keys, key=lambda k: (0, int(k)) if str(k).lstrip('-').isdigit()
+                  else (1, str(k)))
+
+
+def majority_code(section_entries: dict):
+    """The code most sections share, ties broken by the lowest section key.
+
+    This is the modality's reference frame. It is a *summary* of the per-section
+    records, never a substitute for them: when sections disagree it is the code
+    the majority were mounted at, and the minority are the deviants.
+    """
+    counts = {}
+    for key in sort_sections(section_entries):
+        code = section_entries[key].get('code')
+        if code:
+            counts[code] = counts.get(code, 0) + 1
+    if not counts:
+        return None
+    best = max(counts.values())
+    for key in sort_sections(section_entries):
+        code = section_entries[key].get('code')
+        if code and counts[code] == best:
+            return code
+    return None
+
+
+def handedness_groups(code_map: dict) -> dict:
+    """``{+1: [names], -1: [names]}`` — which volumes share a handedness.
+
+    Two non-empty groups mean a mirror sits between them. Across modalities that
+    is unfixable downstream; within one modality it is the set of sections
+    mounted the other way up.
+    """
+    groups = {1: [], -1: []}
+    for name in sorted(code_map, key=lambda n: (0, int(n)) if str(n).lstrip('-').isdigit()
+                       else (1, str(n))):
+        groups[handedness(code_map[name])].append(name)
+    return groups
+
+
 def load(path=None) -> dict:
     """Read the record. Missing file -> ``{'modalities': {}}``."""
     path = Path(path) if path else orientation_path()
@@ -275,6 +322,67 @@ def save(path, modality: str, entry: dict, subject: Optional[str] = None) -> Pat
         json.dump(record, f, indent=2, sort_keys=False)
         f.write("\n")
     return path
+
+
+def save_sections(path,
+                  modality: str,
+                  section_entries: dict,
+                  subject: Optional[str] = None,
+                  image=None) -> Path:
+    """Write one entry PER SECTION under `modality`.
+
+    Sections of one BARseq series are not guaranteed to have been mounted the
+    same way up, and a section mounted face-down is a mirror that no alignment
+    undoes. So each section carries its own code and its own raw answers, keyed
+    by slice number — the number, not the node name, because node names carry
+    the cutoff-folder suffix and would break the property that changing
+    ``--min-rolonies`` never invalidates an assignment.
+
+    The modality-level fields stay populated with the MAJORITY section's code
+    and answers, so `codes` and every existing reader keep working unchanged.
+    Read `sections` when you need the per-section truth; the top-level code is
+    a summary, and where sections disagree it describes only the majority.
+    """
+    entries = {section_key(k): v for k, v in section_entries.items()}
+    consensus = majority_code(entries)
+    n_agree = sum(1 for e in entries.values() if e.get('code') == consensus)
+
+    reference = next(
+        (entries[k] for k in sort_sections(entries)
+         if entries[k].get('code') == consensus),
+        {},
+    )
+    entry = {
+        'code': consensus,
+        'anterior_edge': reference.get('anterior_edge'),
+        'medial_edge': reference.get('medial_edge'),
+        'hemisphere': reference.get('hemisphere'),
+        'first_section': reference.get('first_section'),
+        # Falls back to the reference section's own image, so the modality
+        # entry names something real rather than null.
+        'image': str(image) if image is not None else reference.get('image'),
+        'assigned': datetime.now().isoformat(timespec='seconds'),
+        'per_section': True,
+        'n_sections': len(entries),
+        'n_agree_with_code': n_agree,
+        'sections': {k: entries[k] for k in sort_sections(entries)},
+    }
+    return save(path, modality, entry, subject=subject)
+
+
+def section_codes(path=None, modality: Optional[str] = None) -> dict:
+    """``{slice_id: code}`` for one modality's per-section records.
+
+    Empty when that modality was assigned as a whole rather than per section.
+    Keys are ints where the section key is numeric, so they sort naturally.
+    """
+    record = load(path)
+    entry = record.get('modalities', {}).get(modality, {})
+    out = {}
+    for key, section in (entry.get('sections') or {}).items():
+        if section.get('code'):
+            out[int(key) if str(key).lstrip('-').isdigit() else key] = section['code']
+    return out
 
 
 def codes(path=None) -> dict:
