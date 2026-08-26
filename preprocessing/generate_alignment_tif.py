@@ -62,7 +62,9 @@ from scipy import sparse
 from preprocessing_config import (
     FILT_NEURONS_PATH,
     HYB_DOWNSAMPLED_DIR,
-    OUTPUT_ROOT,
+    SUBSLICE_ALIGN_DIR,
+    QC_MIN_READS,
+    QC_MIN_GENES,
     MSCARLET_COLUMN_INDEX,
     MSCARLET_GENE_NAME,
     DOWNSAMPLE_XY,
@@ -122,10 +124,10 @@ def main():
     )
     ap.add_argument("--min-rolonies", "-n", type=int, default=1,
                     help="mScarlet rolony floor to be drawn at all (default: 1)")
-    ap.add_argument("--min-reads", type=int, default=20,
-                    help="QC total reads floor; the lab's value, per-brain (default: 20)")
-    ap.add_argument("--min-genes", type=int, default=5,
-                    help="QC distinct genes floor; the lab's value, per-brain (default: 5)")
+    ap.add_argument("--min-reads", type=int, default=QC_MIN_READS,
+                    help=f"QC total reads floor (default: config's {QC_MIN_READS})")
+    ap.add_argument("--min-genes", type=int, default=QC_MIN_GENES,
+                    help=f"QC distinct genes floor (default: config's {QC_MIN_GENES})")
     ap.add_argument("--all-cells-level", type=int, default=0,
                     help="draw non-qualifying cells at this level instead of background; "
                          "0 = off, which is the point of this image (default: 0)")
@@ -146,7 +148,7 @@ def main():
             f"Run stitch_subslices.py then downsample_subslices_cellmask.py first."
         )
     out_dir = Path(args.out) if args.out else (
-        Path(OUTPUT_ROOT) / "subslice_align"
+        Path(SUBSLICE_ALIGN_DIR)
         / f"qc{args.min_reads}_{args.min_genes}_ge{args.min_rolonies}"
     )
     out_dir.mkdir(parents=True, exist_ok=True)

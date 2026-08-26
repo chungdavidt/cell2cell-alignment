@@ -53,7 +53,18 @@ STEPS = [
         'script': 'interactive_mscarlet_threshold_cellmask_subslice.py',
         'description': 'Generate visualization figures',
     },
+    {
+        'name': 'Generate Alignment TIFs',
+        'script': 'generate_alignment_tif.py',
+        'description': 'Binary marker-only images the graph builder aligns on',
+    },
 ]
+
+# Orientation assignment is deliberately NOT a step here. It is interactive --
+# it needs a display and four answers by hand -- so it cannot run in this
+# subprocess chain. It is still part of preprocessing, and it runs LAST: after
+# this pipeline, immediately before subslice_graph_builder.py ingests the
+# alignment TIFs. See the reminder printed at the end of a full run.
 
 # Optional steps (not in main pipeline, run separately)
 OPTIONAL_STEPS = {
@@ -226,6 +237,7 @@ Examples:
         from preprocessing_config import (
             OUTPUT_ROOT, SUBSLICE_DEFINITIONS_DIR, HYB_STITCHED_DIR,
             HYB_DOWNSAMPLED_DIR, MSCARLET_CELLMASK_DIR, MSCARLET_INTERACTIVE_DIR,
+            SUBSLICE_ALIGN_DIR,
         )
         print("Status: COMPLETED successfully")
         print(f"\nOutput locations:")
@@ -234,6 +246,14 @@ Examples:
         print(f"  Downsampled: {HYB_DOWNSAMPLED_DIR}")
         print(f"  Overlays: {MSCARLET_CELLMASK_DIR}")
         print(f"  Figures: {MSCARLET_INTERACTIVE_DIR}")
+        print(f"  Alignment TIFs: {SUBSLICE_ALIGN_DIR}")
+        print("\nNext, in this order:")
+        print("  1. python preprocessing/assign_orientation.py --modality barseq_subslice")
+        print("     Last preprocessing act for this modality. Assign on the image the")
+        print("     graph will ingest -- any flip introduced after this invalidates the code.")
+        print("  2. python alignment/subslice_graph_builder.py")
+        print("     Stamps the orientation onto every node it adds. A node added before")
+        print("     the code exists carries none, and the handedness guard cannot fire.")
 
 
 if __name__ == '__main__':

@@ -132,9 +132,22 @@ def discover_subslices(
     if not directory.exists():
         raise FileNotFoundError(f"Subslice directory not found: {directory}")
 
-    files = sorted(directory.glob("slice*_subslice_mScarlet_cellmask.tif"))
-    print(f"Found {len(files)} BARseq subslice files")
+    # The ALIGN tifs are what this fits on: binary, marker-only, written by
+    # preprocessing/generate_alignment_tif.py. The step 4 overlay is the older
+    # source and stays as a fallback -- it is an RGB display figure, so
+    # load_single_subslice() collapses it by BT.601 luminance, which on BY95
+    # renders the median marker cell DARKER than the mask field behind it.
+    files = sorted(directory.glob("slice*_subslice_ALIGN.tif"))
+    if files:
+        print(f"Found {len(files)} BARseq alignment TIFs")
+        return files
 
+    files = sorted(directory.glob("slice*_subslice_mScarlet_cellmask.tif"))
+    if files:
+        print(f"Found {len(files)} BARseq subslice files (step 4 overlays)")
+        print("  No slice*_subslice_ALIGN.tif here. These are RGB display")
+        print("  overlays and fit worse; run preprocessing/generate_alignment_tif.py")
+        print("  and point SUBSLICE_DIR at its output to use the intended image.")
     return files
 
 

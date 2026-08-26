@@ -73,8 +73,18 @@ def subject_name() -> Optional[str]:
     return None if root is None else root.name
 
 
-def _mscarlet_cellmask_root() -> Path:
-    """``MSCARLET_CELLMASK_DIR`` from preprocessing_config, imported lazily.
+def _preprocessing_roots() -> "tuple[Path, Path]":
+    """(overlay root, alignment-tif root) from preprocessing_config.
+
+    A relative SUBSLICE_DIR is resolved against both: step 4's overlays live
+    under the first, generate_alignment_tif.py's output under the second.
+    """
+    cfg = _preprocessing_config()
+    return (Path(cfg.MSCARLET_CELLMASK_DIR), Path(cfg.SUBSLICE_ALIGN_DIR))
+
+
+def _preprocessing_config():
+    """preprocessing_config, imported lazily.
 
     Imported here rather than at module scope because preprocessing_config
     validates the whole preprocessing config at import — it raises when
@@ -95,19 +105,22 @@ def _mscarlet_cellmask_root() -> Path:
             f"Either fix that (it needs DATA_ROOT and SCOPE), or set "
             f"SUBSLICE_DIR to an absolute path."
         )
-    return Path(preprocessing_config.MSCARLET_CELLMASK_DIR)
+    return preprocessing_config
 
 
 def resolve_subslice_dir(value: Optional[str] = None) -> Optional[Path]:
     """Resolve ``SUBSLICE_DIR`` to an absolute directory.
 
-    The BARseq subslices the graph builder reads are step 4's output, so their
-    parent directory is already known to preprocessing_config. A relative
-    SUBSLICE_DIR inherits it and only names the threshold folder::
+    The BARseq images the graph builder reads are preprocessing output, so
+    their parent directory is already known to preprocessing_config. A relative
+    SUBSLICE_DIR inherits it and names only the trailing folder — resolved
+    against BOTH output roots, so either source works::
 
-        SUBSLICE_DIR = "threshold_0.00_cellmask_0.50"
+        SUBSLICE_DIR = "qc20_5_ge1"                  # alignment TIFs
+        SUBSLICE_DIR = "threshold_0.00_cellmask_0.50"  # step 4 overlays
 
-    which survives any later rename of the directories above it. Blank means
+    which survives any later rename of the directories above it. A name that
+    exists under both roots raises rather than guessing. Blank means
     skip subslices, and an absolute path is used verbatim — pointing at a tree
     preprocessing did not write stays possible.
 
@@ -130,23 +143,35 @@ def resolve_subslice_dir(value: Optional[str] = None) -> Optional[Path]:
     if path.is_absolute():
         return path
 
-    root = _mscarlet_cellmask_root()
-    resolved = root / path
-    if resolved.is_dir():
-        return resolved
+    roots = _preprocessing_roots()
+    hits = [r / path for r in roots if (r / path).is_dir()]
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        raise ValueError(
+            f"\n{'='*60}\n"
+            f"SUBSLICE_DIR = {value!r} names a folder under more than one\n"
+            f"preprocessing output root:\n"
+            + "".join(f"  {h}\n" for h in hits) +
+            f"\nUse an absolute path to say which one.\n"
+            f"{'='*60}"
+        )
 
-    available = sorted(p.name for p in root.glob("threshold_*") if p.is_dir()) \
-        if root.is_dir() else []
-    listing = ("\n".join(f"    {name}" for name in available) if available
-               else "    (none — run preprocessing steps 3-5 first)")
+    available = []
+    for r in roots:
+        if r.is_dir():
+            available += [f"    {r.name}/{p.name}" for p in sorted(r.iterdir())
+                          if p.is_dir()]
+    listing = "\n".join(available) if available else \
+        "    (none — run the preprocessing pipeline first)"
     raise ValueError(
         f"\n{'='*60}\n"
         f"SUBSLICE_DIR = {value!r} is relative, so it resolves under\n"
-        f"preprocessing's overlay output:\n"
-        f"  {root}\n"
-        f"but that folder does not exist there.\n\n"
+        f"preprocessing's output roots:\n"
+        + "".join(f"  {r}\n" for r in roots) +
+        f"but no such folder exists in either.\n\n"
         f"Available:\n{listing}\n\n"
-        f"Set SUBSLICE_DIR to one of those names, to an absolute path, or\n"
-        f"blank to skip subslices.\n"
+        f"Set SUBSLICE_DIR to one of those names (the trailing folder only), to\n"
+        f"an absolute path, or blank to skip subslices.\n"
         f"{'='*60}"
     )

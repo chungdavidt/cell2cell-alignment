@@ -99,6 +99,9 @@ HYB_CHANNELS_DIR = os.path.join(OUTPUT_ROOT, "hyb_channels")
 HYB_STITCHED_DIR = os.path.join(OUTPUT_ROOT, "HYB_subslice_stitched_tif")
 HYB_DOWNSAMPLED_DIR = os.path.join(OUTPUT_ROOT, "HYB_subslice_stitched_tif_downsampled_micronwise")
 MSCARLET_CELLMASK_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_cellmask_subslice")
+# Binary marker-only images the graph aligns on. One subdirectory per gate
+# combination, named by generate_alignment_tif.py.
+SUBSLICE_ALIGN_DIR = os.path.join(OUTPUT_ROOT, "subslice_align")
 MSCARLET_INTERACTIVE_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_cellmask_interactive_subslice")
 MSCARLET_LABELLED_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_overlay_dapi_labelled")
 
@@ -158,15 +161,20 @@ MSCARLET_GENE_NAME = ""
 MSCARLET_COLUMN_INDEX = 113  # Python 0-indexed (MATLAB 114)
 GCAMP_COLUMN_INDEX = 111     # Python 0-indexed (MATLAB 112)
 
-# QC thresholds.
+# QC thresholds. Per-dataset, not a constant.
 #
-# The lab's own Gen_mScarlet_plots.m for this dataset sets reads_thresh = 0 and
-# genes_thresh = 0, which makes pass_qc all-true (sum >= 0 holds for every row).
-# Subslice selection is therefore marker expression alone: expmat(:,114) > 0.
-# The earlier 20/5 came from a Using filt_neurons.pptx example, not from the
-# script they ship; on BY95 it drops ~74% of cells before the marker is read.
-QC_MIN_READS = 0
-QC_MIN_GENES = 0
+# 20/5 is the lab's cell-typing QC: their reported BY95 pass rate of 26.4%
+# reproduces exactly at these values. Their marker plotting scripts
+# (Gen_mScarlet_plots.m) deliberately use 0/0 instead, so that marker detection
+# is not gated on transcriptome quality -- two thresholds answering two
+# different questions. This pipeline runs at the cell-typing pair, so a cell
+# only counts as marker+ if its transcriptome is trustworthy; on BY95 that
+# drops ~74% of rows before the marker column is read.
+#
+# Read the dataset's own Gen_mScarlet_plots.m for every new brain rather than
+# carrying these numbers over.
+QC_MIN_READS = 20
+QC_MIN_GENES = 5
 
 # =============================================================================
 # VISUALIZATION CONSTANTS

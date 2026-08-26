@@ -87,10 +87,16 @@ def default_image(modality: str):
         subslice_dir = resolve_subslice_dir()
         if subslice_dir is None:
             return None
-        files = sorted(subslice_dir.glob("slice*_subslice_mScarlet_cellmask.tif"))
+        # Assign on the image the graph builder ingests, in its glob order --
+        # the letters describe that array, so assigning on one image and
+        # ingesting another silently invalidates them.
+        files = sorted(subslice_dir.glob("slice*_subslice_ALIGN.tif"))
+        if not files:
+            files = sorted(subslice_dir.glob("slice*_subslice_mScarlet_cellmask.tif"))
         if not files:
             raise FileNotFoundError(
-                f"No slice*_subslice_mScarlet_cellmask.tif in SUBSLICE_DIR:\n"
+                f"No slice*_subslice_ALIGN.tif or slice*_subslice_mScarlet_cellmask.tif "
+                f"in SUBSLICE_DIR:\n"
                 f"  {subslice_dir}\n"
                 f"Pass --image explicitly."
             )
