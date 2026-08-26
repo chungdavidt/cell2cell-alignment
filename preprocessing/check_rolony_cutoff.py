@@ -21,10 +21,12 @@ cells but never re-shades the survivors, so runs at different cutoffs are
 directly comparable. Step 5's `count / max_expr * BOOST` renders a 1-rolony cell
 darker than the grey mask on BY95, where the median mScarlet+ cell has 1 count.
 
-QC defaults to the lab's own cell-typing filter, `reads >= 20 AND genes >= 5`
-(BY95: 147,185 cells, 26.4%), NOT `preprocessing_config`'s QC_MIN_READS /
-QC_MIN_GENES, which are 0/0 to match the ungated marker plots in
-`Gen_mScarlet_plots.m`. Both are per-brain; override with --min-reads/--min-genes.
+Gates default to `preprocessing_config` -- QC_MIN_READS / QC_MIN_GENES (the
+lab's cell-typing filter, `reads >= 20 AND genes >= 5`; BY95: 147,185 cells,
+26.4%) and ALIGN_MIN_ROLONIES. Reading them from there rather than hardcoding
+keeps this tool and generate_alignment_tif.py from drifting apart: what you pick
+by eye here is what a pipeline run draws. All three are per-brain; override with
+--min-reads / --min-genes / --min-rolonies.
 
 Prerequisites: `stitch_subslices.py` then `downsample_subslices_cellmask.py`
 WITHOUT `--cellmask-only` (that flag skips the TIFs this tool reads).
@@ -62,6 +64,9 @@ from preprocessing_config import (
     MSCARLET_COLUMN_INDEX,
     MSCARLET_GENE_NAME,
     DOWNSAMPLE_XY,
+    QC_MIN_READS,
+    QC_MIN_GENES,
+    ALIGN_MIN_ROLONIES,
 )
 from utilities.mat_io import (
     load_filt_neurons,
@@ -314,11 +319,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    ap.add_argument("--min-rolonies", "-n", type=int, default=1,
+    ap.add_argument("--min-rolonies", "-n", type=int, default=ALIGN_MIN_ROLONIES,
                     help="cells below this rolony count are not drawn (default: 1)")
-    ap.add_argument("--min-reads", type=int, default=20,
+    ap.add_argument("--min-reads", type=int, default=QC_MIN_READS,
                     help="QC total reads floor; the lab's value, per-brain (default: 20)")
-    ap.add_argument("--min-genes", type=int, default=5,
+    ap.add_argument("--min-genes", type=int, default=QC_MIN_GENES,
                     help="QC distinct genes floor; the lab's value, per-brain (default: 5)")
     ap.add_argument("--saturate-at", type=int, default=25,
                     help="rolony count where the ramp caps (default: 25)")

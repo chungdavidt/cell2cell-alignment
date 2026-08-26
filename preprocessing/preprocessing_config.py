@@ -176,6 +176,19 @@ GCAMP_COLUMN_INDEX = 111     # Python 0-indexed (MATLAB 112)
 QC_MIN_READS = 20
 QC_MIN_GENES = 5
 
+# mScarlet rolony floor for a cell to be DRAWN into the alignment TIF.
+#
+# This is a REGISTRATION knob, not an analysis threshold. The fit is stored as
+# frame parameters on the grid, so it applies to cells that were never drawn --
+# raising it changes what you can see while aligning and nothing else. Pick it
+# by eye with check_rolony_cutoff.py, which draws the raw mScarlet TIF beside
+# the painted masks, then record it here so a pipeline run reproduces it.
+#
+# Per-dataset. generate_alignment_tif.py names its output folder after the gates
+# (qc{reads}_{genes}_ge{n}), so changing this writes somewhere new instead of
+# overwriting the previous choice.
+ALIGN_MIN_ROLONIES = 1
+
 # =============================================================================
 # VISUALIZATION CONSTANTS
 # =============================================================================

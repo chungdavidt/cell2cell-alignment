@@ -62,6 +62,7 @@ STEPS = [
         'script': 'generate_alignment_tif.py',
         'description': 'Binary marker-only images the graph builder aligns on',
         'slice_flag': '--slices',
+        'takes_min_rolonies': True,
     },
 ]
 
@@ -158,6 +159,9 @@ Examples:
                         help=f'Stop after step N (1-{len(STEPS)})')
     parser.add_argument('--dry-run', action='store_true', help='Show commands without executing')
     parser.add_argument('--threshold', type=float, default=0.0, help='mScarlet threshold (for steps 4-5)')
+    parser.add_argument('--min-rolonies', type=int, default=None,
+                        help='mScarlet rolony floor for the alignment TIFs '
+                             '(default: config ALIGN_MIN_ROLONIES)')
     parser.add_argument('--python', type=str, help='Python executable path')
 
     args = parser.parse_args()
@@ -213,6 +217,8 @@ Examples:
             step_args += [step.get('slice_flag', '--slice'), target_slice]
         if step.get('takes_threshold') and args.threshold > 0:
             step_args += threshold_args
+        if step.get('takes_min_rolonies') and args.min_rolonies is not None:
+            step_args += ['--min-rolonies', str(args.min_rolonies)]
 
         # For step 5, limit to first figure in test mode
         if i == 5 and args.test:

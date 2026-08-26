@@ -65,6 +65,7 @@ from preprocessing_config import (
     SUBSLICE_ALIGN_DIR,
     QC_MIN_READS,
     QC_MIN_GENES,
+    ALIGN_MIN_ROLONIES,
     MSCARLET_COLUMN_INDEX,
     MSCARLET_GENE_NAME,
     DOWNSAMPLE_XY,
@@ -122,8 +123,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    ap.add_argument("--min-rolonies", "-n", type=int, default=1,
-                    help="mScarlet rolony floor to be drawn at all (default: 1)")
+    ap.add_argument("--min-rolonies", "-n", type=int, default=ALIGN_MIN_ROLONIES,
+                    help=f"mScarlet rolony floor to be drawn at all "
+                         f"(default: config's {ALIGN_MIN_ROLONIES})")
     ap.add_argument("--min-reads", type=int, default=QC_MIN_READS,
                     help=f"QC total reads floor (default: config's {QC_MIN_READS})")
     ap.add_argument("--min-genes", type=int, default=QC_MIN_GENES,
