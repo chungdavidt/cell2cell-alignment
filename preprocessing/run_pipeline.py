@@ -47,16 +47,21 @@ STEPS = [
         'name': 'Generate Overlays',
         'script': 'generate_mscarlet_cellmask_subslice.py',
         'description': 'Create mScarlet cell overlays on cellmask',
+        'takes_threshold': True,
     },
     {
         'name': 'Generate Figures',
         'script': 'interactive_mscarlet_threshold_cellmask_subslice.py',
         'description': 'Generate visualization figures',
+        'takes_threshold': True,
     },
     {
+        # Its slice flag is plural and variadic, and it has no --threshold:
+        # the gates are QC + rolony count, not the overlay's display threshold.
         'name': 'Generate Alignment TIFs',
         'script': 'generate_alignment_tif.py',
         'description': 'Binary marker-only images the graph builder aligns on',
+        'slice_flag': '--slices',
     },
 ]
 
@@ -147,8 +152,10 @@ Examples:
     )
     parser.add_argument('--slice', '-s', type=int, help='Process specific slice only')
     parser.add_argument('--test', '-t', action='store_true', help='Test mode: process slice 22 only')
-    parser.add_argument('--start-from', type=int, default=1, help='Start from step N (1-5)')
-    parser.add_argument('--stop-after', type=int, default=5, help='Stop after step N (1-5)')
+    parser.add_argument('--start-from', type=int, default=1,
+                        help=f'Start from step N (1-{len(STEPS)})')
+    parser.add_argument('--stop-after', type=int, default=len(STEPS),
+                        help=f'Stop after step N (1-{len(STEPS)})')
     parser.add_argument('--dry-run', action='store_true', help='Show commands without executing')
     parser.add_argument('--threshold', type=float, default=0.0, help='mScarlet threshold (for steps 4-5)')
     parser.add_argument('--python', type=str, help='Python executable path')
@@ -164,16 +171,12 @@ Examples:
     else:
         python_exe = sys.executable
 
-    # Build extra arguments for scripts
-    extra_args = []
-    if args.test:
-        extra_args.append('--slice')
-        extra_args.append('22')
-    elif args.slice:
-        extra_args.append('--slice')
-        extra_args.append(str(args.slice))
+    # The slice selector, if any. Its flag differs per script, so it is applied
+    # per step rather than shared.
+    target_slice = '22' if args.test else (str(args.slice) if args.slice else None)
+    extra_args = ['--slice', target_slice] if target_slice else []
 
-    # Threshold args for steps 4-5
+    # Threshold args, forwarded only to the steps that declare they take it
     threshold_args = ['--threshold', str(args.threshold)]
 
     # Print header
@@ -205,10 +208,11 @@ Examples:
             print(f"\nStopping before step {i}: {step['name']}")
             break
 
-        # Add threshold args for steps 4-5
-        step_args = extra_args.copy()
-        if i >= 4 and args.threshold > 0:
-            step_args.extend(threshold_args)
+        step_args = []
+        if target_slice:
+            step_args += [step.get('slice_flag', '--slice'), target_slice]
+        if step.get('takes_threshold') and args.threshold > 0:
+            step_args += threshold_args
 
         # For step 5, limit to first figure in test mode
         if i == 5 and args.test:
