@@ -10,8 +10,20 @@ It NEVER writes an image. No transposing, no flipping, no re-saving of any TIFF,
 not behind a flag: the only file it writes is <ANALYSIS_ROOT>/orientation.json.
 Applying a reindex is a separate future script that emits new derived copies.
 
+What the code describes is the FRAME, not the pixels. Every preprocessing output
+for a section shares one canvas, one origin and one axis order, so DAPI, the step
+4 overlay and every generate_alignment_tif.py cutoff folder all yield the same
+answer. Choosing a different --min-rolonies therefore never invalidates an
+assignment; only a geometry change -- a flip, a transpose, an axis reorder --
+would, and nothing in preprocessing does that.
+
+So assign on whatever is easiest to read. The default is the downsampled DAPI for
+that reason: a marker-only image at a high cutoff can be too sparse to find
+anterior on.
+
 Usage:
     python preprocessing/assign_orientation.py --modality barseq_subslice --image <path>
+    python preprocessing/assign_orientation.py --modality barseq_subslice --slice 22
     python preprocessing/assign_orientation.py --modality invivo_ref     # image from local_config
     python preprocessing/assign_orientation.py --single-plane ...        # no section series
     python preprocessing/assign_orientation.py --show                    # print what is recorded
@@ -63,7 +75,7 @@ DISPLAY_PERCENTILES = (1.0, 99.7)
 # Image loading (read-only, display only)
 # ---------------------------------------------------------------------------
 
-def default_image(modality: str):
+def default_image(modality: str, slice_id=None):
     """The image a modality is normally assigned on, from local_config.py.
 
     local_config, not preprocessing_config: the latter resolves SCOPE at import
@@ -87,20 +99,35 @@ def default_image(modality: str):
         subslice_dir = resolve_subslice_dir()
         if subslice_dir is None:
             return None
-        # Assign on the image the graph builder ingests, in its glob order --
-        # the letters describe that array, so assigning on one image and
-        # ingesting another silently invalidates them.
-        files = sorted(subslice_dir.glob("slice*_subslice_ALIGN.tif"))
-        if not files:
-            files = sorted(subslice_dir.glob("slice*_subslice_mScarlet_cellmask.tif"))
-        if not files:
-            raise FileNotFoundError(
-                f"No slice*_subslice_ALIGN.tif or slice*_subslice_mScarlet_cellmask.tif "
-                f"in SUBSLICE_DIR:\n"
-                f"  {subslice_dir}\n"
-                f"Pass --image explicitly."
-            )
-        return files[0]
+        stem = f"slice{slice_id}" if slice_id is not None else "slice*"
+        # What the letters describe is the FRAME, not the pixels: every step 3
+        # output for a section shares one canvas, one origin and one axis
+        # order, and generate_alignment_tif.py draws into that same frame. So
+        # any of them yields the same code, and changing --min-rolonies -- which
+        # changes only which cells are drawn -- cannot invalidate an assignment.
+        #
+        # That frees the default to be the most LEGIBLE image rather than the one
+        # the graph ingests. DAPI shows the anatomy you are clicking on; a
+        # marker-only ALIGN tif at a high cutoff can be nearly empty and is a
+        # poor thing to identify anterior on. Order: DAPI, then ALIGN, then the
+        # step 4 overlay.
+        from preprocessing_config import HYB_DOWNSAMPLED_DIR
+        candidates = [
+            sorted(Path(HYB_DOWNSAMPLED_DIR).glob(f"{stem}_subslice_DAPI.tif")),
+            sorted(subslice_dir.glob(f"{stem}_subslice_ALIGN.tif")),
+            sorted(subslice_dir.glob(f"{stem}_subslice_mScarlet_cellmask.tif")),
+        ]
+        for files in candidates:
+            if files:
+                return files[0]
+        raise FileNotFoundError(
+            f"No {stem}_subslice_DAPI.tif under\n"
+            f"  {HYB_DOWNSAMPLED_DIR}\n"
+            f"and no {stem}_subslice_ALIGN.tif or {stem}_subslice_mScarlet_cellmask.tif "
+            f"under\n"
+            f"  {subslice_dir}\n"
+            f"Run the preprocessing pipeline first, or pass --image explicitly."
+        )
     else:
         return None
 
@@ -382,6 +409,10 @@ def main():
                    help=f"Graph node base name. Known: {', '.join(KNOWN_MODALITIES)}")
     p.add_argument('--image', default=None,
                    help='Image to assign on (default: the modality path in local_config.py)')
+    p.add_argument('--slice', type=int, default=None,
+                   help='For barseq_subslice: which section to display '
+                        '(default: the lowest-numbered one). Every section shares '
+                        'the frame, so this only changes what you look at.')
     p.add_argument('--out', default=None,
                    help='orientation.json path (default: <ANALYSIS_ROOT>/orientation.json)')
     p.add_argument('--single-plane', action='store_true',
@@ -409,7 +440,8 @@ def main():
               f"builder reads ({', '.join(KNOWN_MODALITIES)}).")
         print("      It will be recorded, but nothing will look it up.")
 
-    image_path = Path(args.image) if args.image else default_image(args.modality)
+    image_path = (Path(args.image) if args.image
+                  else default_image(args.modality, args.slice))
     if image_path is None:
         p.error(f"No --image given and local_config.py has no path for "
                 f"{args.modality!r}.")
