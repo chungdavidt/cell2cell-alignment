@@ -8,6 +8,9 @@ Runs the complete mScarlet preprocessing pipeline:
 3. downsample_subslices_cellmask.py - Downsample to match in-vivo resolution
 4. generate_mscarlet_cellmask_subslice.py - Create mScarlet overlays
 5. interactive_mscarlet_threshold_cellmask_subslice.py - Generate figures
+6. generate_alignment_tif.py - Binary marker-only images the graph builder aligns on
+
+Orientation assignment runs after this, interactively: see the note above STEPS.
 
 Usage:
     python run_pipeline.py                    # Run full pipeline (all slices)
@@ -72,21 +75,11 @@ STEPS = [
 # this pipeline, immediately before subslice_graph_builder.py ingests the
 # alignment TIFs. See the reminder printed at the end of a full run.
 
-# Optional steps (not in main pipeline, run separately)
-OPTIONAL_STEPS = {
-    'refine': {
-        'name': 'Refine by Threshold',
-        'script': 'refine_subslices_by_threshold.py',
-        'description': 'Filter FOVs by mScarlet intensity threshold',
-        'requires_args': ['--threshold'],
-    },
-    'align': {
-        'name': 'Create Aligned Volume',
-        'script': 'create_ex_vivo_volume.py',
-        'description': 'Create 3D aligned brain stack from 2D slices',
-        'requires_args': ['--input', '--alignment'],
-    },
-}
+# There is no OPTIONAL_STEPS table. One existed until 2026-08-27 naming
+# refine_subslices_by_threshold.py and create_ex_vivo_volume.py, but nothing ever
+# read it -- no flag reached it and neither script was dispatched. Both are now in
+# archive/unused_preprocessing/, which records why. Do not reintroduce a dispatch
+# table without a caller.
 
 
 def run_step(step_num, step_info, python_exe, script_dir, extra_args=None, dry_run=False):

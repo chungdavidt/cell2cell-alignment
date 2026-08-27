@@ -44,7 +44,7 @@ from preprocessing_config import (
     QC_MIN_READS,
     QC_MIN_GENES,
 )
-from utilities.mat_io import load_filt_neurons, save_mat, sparse_to_dense, get_expression_column, resolve_marker_column
+from utilities.mat_io import load_filt_neurons, load_mat, save_mat, sparse_to_dense, get_expression_column, resolve_marker_column
 from utilities.graph_utils import (
     parse_fov_grid_positions,
     build_adjacency_8connected,
@@ -53,6 +53,44 @@ from utilities.graph_utils import (
     get_largest_component,
 )
 from utilities.visualization import visualize_subslice
+
+
+SUBSLICE_FIELDS = (
+    'slice_id', 'fov_list', 'fov_grid_positions',
+    'mscarlet_fovs', 'bridge_fovs', 'num_mscarlet_cells',
+)
+
+
+def _entry_field(entry, name):
+    """One field off an entry, whether it came from this run (dict) or from
+    load_mat (a scipy mat_struct)."""
+    return entry[name] if isinstance(entry, dict) else getattr(entry, name)
+
+
+def _load_existing_definitions():
+    """Entries already on disk, normalised to plain dicts. [] when absent.
+
+    Mixed dict/mat_struct lists do not round-trip through save_mat, so loaded
+    entries are converted before they are merged with this run's.
+    """
+    path = Path(SUBSLICE_DEFINITIONS_FILE)
+    if not path.exists():
+        return []
+    entries = load_mat(SUBSLICE_DEFINITIONS_FILE).get('subslice_info')
+    if entries is None:
+        return []
+    if isinstance(entries, np.ndarray):
+        entries = list(entries.flatten())
+    elif not isinstance(entries, list):
+        entries = [entries]
+
+    out = []
+    for entry in entries:
+        try:
+            out.append({f: _entry_field(entry, f) for f in SUBSLICE_FIELDS})
+        except (KeyError, AttributeError):
+            continue        # malformed entry: drop rather than propagate
+    return out
 
 
 def identify_mscarlet_subslices(test_mode: bool = False, target_slice: int = None):
@@ -253,8 +291,24 @@ def identify_mscarlet_subslices(test_mode: bool = False, target_slice: int = Non
     print(f"Total slices with subslices: {len(subslice_info_list)}")
     print(f"Output file: {SUBSLICE_DEFINITIONS_FILE}")
 
+    # A PARTIAL run must not delete the slices it did not look at. This file is
+    # the only record of subslice membership and step 2 reads all of it, so
+    # writing just this run's slices would silently discard the rest.
+    # A FULL run legitimately replaces everything -- if a slice stops qualifying
+    # (e.g. after a QC threshold change) its entry SHOULD disappear.
+    partial = test_mode or target_slice is not None
+    to_save = subslice_info_list
+    if partial:
+        processed = {int(info['slice_id']) for info in subslice_info_list}
+        kept = [e for e in _load_existing_definitions()
+                if int(_entry_field(e, 'slice_id')) not in processed]
+        to_save = sorted(kept + subslice_info_list,
+                         key=lambda e: int(_entry_field(e, 'slice_id')))
+        print(f"Partial run: merging with {len(kept)} slice(s) already on file")
+        print(f"Total slices in file after merge: {len(to_save)}")
+
     # Convert to format compatible with MATLAB
-    save_mat(SUBSLICE_DEFINITIONS_FILE, {'subslice_info': subslice_info_list}, format='5')
+    save_mat(SUBSLICE_DEFINITIONS_FILE, {'subslice_info': to_save}, format='5')
     print("Saved subslice definitions\n")
 
     # Summary

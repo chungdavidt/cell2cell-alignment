@@ -3,8 +3,9 @@ Local configuration - COPY THIS FILE to local_config.py and fill in your paths.
 
     cp local_config.example.py local_config.py
 
-local_config.py is gitignored and will not be committed.
-Each person sets their own paths once.
+local_config.py is TRACKED in this repo as of 81dc5d8 — it is no longer
+gitignored, so paths in it travel between machines and every edit shows as a
+diff. Keep credentials out of it.
 """
 
 # ---------------------------------------------------------------------
@@ -35,6 +36,29 @@ DATA_ROOT = ""
 # blank too, to <DATA_ROOT>/preprocessing/ (the older co-located layout).
 # Consumed only by preprocessing; the alignment graph builder ignores it.
 OUTPUT_ROOT = ""
+
+# ---------------------------------------------------------------------
+# Per-brain thresholds — REQUIRED. Unset is a hard error, like SCOPE.
+#
+# Read by preprocessing_config, which every pipeline script imports from, so
+# these are the single place they are set and no command-line flag is needed for
+# a run to reproduce them. 0 is a valid value, which is why unset is None rather
+# than 0.
+#
+# QC_MIN_READS / QC_MIN_GENES — measure them for a new brain with
+# check_qc_metrics.py <DATA_ROOT> --no-reported, which sweeps reads/genes and
+# prints the pass rate at each pair; --lab-reads / --lab-genes checks a candidate
+# against a pass rate the lab reports. Never carry another brain's numbers over.
+# BY95's cell-typing QC is 20 / 5 (26.4% pass). 0 / 0 leaves marker detection
+# ungated on transcriptome quality — a different question, not a wrong answer.
+#
+# ALIGN_MIN_ROLONIES — mScarlet rolony floor for a cell to be drawn into the
+# alignment TIF. A registration knob, not an analysis threshold; pick it by eye
+# with check_rolony_cutoff.py. It is the "ge" in SUBSLICE_DIR.
+# ---------------------------------------------------------------------
+QC_MIN_READS = None
+QC_MIN_GENES = None
+ALIGN_MIN_ROLONIES = None
 
 # Path to the per-FOV raw directory (the one holding MAX_Pos*_*_* folders, each
 # with alignedn2vhyb01.tif + cellmask.mat).
@@ -92,14 +116,20 @@ INVIVO_PATH_RED = ""
 # Leave blank if you don't have a green volume yet.
 INVIVO_PATH_GREEN = ""
 
-# Directory of BARseq subslice overlays — preprocessing step 4's output.
+# Directory of BARseq subslice images the graph builder ingests.
 # Leave blank ("") for 2P-only alignment (no BARseq data).
 #
-# PREFERRED: a RELATIVE path, which names only the threshold folder and inherits
+# PREFERRED: a RELATIVE path, which names only the trailing folder and inherits
 # everything above it from preprocessing_config, so a rename of the output dirs
-# does not reach this file:
-#   SUBSLICE_DIR = "threshold_0.00_cellmask_0.50"
+# does not reach this file. It is resolved against BOTH output roots:
+#   SUBSLICE_DIR = "qc20_5_ge1"                   # step 6 ALIGN tifs
+#   -> <OUTPUT_ROOT>/subslice_align/qc20_5_ge1
+#   SUBSLICE_DIR = "threshold_0.00_cellmask_0.50" # step 4 overlays
 #   -> <OUTPUT_ROOT>/mScarlet_cellmask_subslice/threshold_0.00_cellmask_0.50
+# The ALIGN tifs are what the builder prefers and what it fits on — binary and
+# marker-only. The step 4 overlay is an RGB display figure and is the fallback.
+# The qc/ge numbers are QC_MIN_READS, QC_MIN_GENES and ALIGN_MIN_ROLONIES; each
+# combination writes its own folder, so this line selects which one is ingested.
 # A wrong folder name lists the ones that do exist. An absolute path is still
 # used verbatim, for subslices preprocessing did not write.
 SUBSLICE_DIR = ""

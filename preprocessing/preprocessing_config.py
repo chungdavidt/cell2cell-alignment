@@ -1,7 +1,8 @@
 """
 Configuration for preprocessing pipeline.
 
-User must configure DATA_ROOT and OUTPUT_ROOT for their environment.
+User must configure DATA_ROOT, SCOPE, QC_MIN_READS, QC_MIN_GENES and
+ALIGN_MIN_ROLONIES in local_config.py; OUTPUT_ROOT is optional there.
 All other paths are derived from these.
 """
 
@@ -161,33 +162,75 @@ MSCARLET_GENE_NAME = ""
 MSCARLET_COLUMN_INDEX = 113  # Python 0-indexed (MATLAB 114)
 GCAMP_COLUMN_INDEX = 111     # Python 0-indexed (MATLAB 112)
 
-# QC thresholds. Per-dataset, not a constant.
+# QC thresholds and the alignment rolony floor. ALL THREE ARE PER-BRAIN and are
+# declared in local_config.py beside SCOPE, not here -- switching subjects then
+# touches one file. Every consumer still imports them from this module, so
+# nothing downstream changed when they moved (2026-08-27).
 #
 # 20/5 is the lab's cell-typing QC: their reported BY95 pass rate of 26.4%
-# reproduces exactly at these values. Their marker plotting scripts
-# (Gen_mScarlet_plots.m) deliberately use 0/0 instead, so that marker detection
-# is not gated on transcriptome quality -- two thresholds answering two
-# different questions. This pipeline runs at the cell-typing pair, so a cell
+# reproduces exactly at those values, which check_qc_metrics.py verifies. The
+# same lab's marker plotting deliberately runs ungated at 0/0, so that marker
+# detection does not depend on transcriptome quality -- two thresholds answering
+# two different questions. This pipeline runs at the cell-typing pair, so a cell
 # only counts as marker+ if its transcriptome is trustworthy; on BY95 that
 # drops ~74% of rows before the marker column is read.
 #
-# Read the dataset's own Gen_mScarlet_plots.m for every new brain rather than
-# carrying these numbers over.
-QC_MIN_READS = 20
-QC_MIN_GENES = 5
+# Required, and unset is a hard error rather than a default, for the same reason
+# SCOPE is: silently inheriting the previous brain's numbers is the exact
+# failure these are meant to prevent. 0 is a legitimate value, so the unset
+# sentinel is None, not 0.
+
+
+def _require_threshold(name: str, what: str, how: str) -> int:
+    value = getattr(local_config, name, None)
+    if value is None:
+        raise ValueError(
+            f"\n{'='*60}\n"
+            f"{name} is not set in local_config.py.\n\n"
+            f"{what}\n\n"
+            f"It is per-brain, so it has no default -- inheriting the previous\n"
+            f"brain's number silently is the failure this guard exists to stop.\n"
+            f"{how}\n"
+            f"{'='*60}"
+        )
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(
+            f"{name} in local_config.py must be a non-negative int, got {value!r}"
+        )
+    return value
+
+
+_QC_SOURCE = (
+    "Measure it: run check_qc_metrics.py <DATA_ROOT> --no-reported and read the\n"
+    "reads/genes sweep. If the lab reports a pass rate for this brain, pass it as\n"
+    "--lab-reads / --lab-genes and the tool says whether a candidate pair\n"
+    "reproduces it. 0 is a valid answer -- it leaves marker detection ungated on\n"
+    "transcriptome quality, which is a different question, not a wrong one."
+)
+
+QC_MIN_READS = _require_threshold(
+    "QC_MIN_READS", "Total-reads floor for a cell to pass QC.", _QC_SOURCE)
+QC_MIN_GENES = _require_threshold(
+    "QC_MIN_GENES", "Distinct-genes floor for a cell to pass QC.", _QC_SOURCE)
 
 # mScarlet rolony floor for a cell to be DRAWN into the alignment TIF.
 #
-# This is a REGISTRATION knob, not an analysis threshold. The fit is stored as
-# frame parameters on the grid, so it applies to cells that were never drawn --
+# A REGISTRATION knob, not an analysis threshold. The fit is stored as frame
+# parameters on the grid, so it applies to cells that were never drawn --
 # raising it changes what you can see while aligning and nothing else. Pick it
 # by eye with check_rolony_cutoff.py, which draws the raw mScarlet TIF beside
-# the painted masks, then record it here so a pipeline run reproduces it.
+# the painted masks, then record it in local_config.py so a pipeline run
+# reproduces it without a command-line flag.
 #
-# Per-dataset. generate_alignment_tif.py names its output folder after the gates
+# generate_alignment_tif.py names its output folder after the gates
 # (qc{reads}_{genes}_ge{n}), so changing this writes somewhere new instead of
 # overwriting the previous choice.
-ALIGN_MIN_ROLONIES = 1
+ALIGN_MIN_ROLONIES = _require_threshold(
+    "ALIGN_MIN_ROLONIES",
+    "mScarlet rolony floor for a cell to be drawn into the alignment TIF.",
+    "Pick it by eye: run check_rolony_cutoff.py, which draws the raw mScarlet\n"
+    "TIF beside the painted masks, and read off where the kept cells stop\n"
+    "tracking real signal. 1 draws every marker+ cell that passes QC.")
 
 # =============================================================================
 # VISUALIZATION CONSTANTS

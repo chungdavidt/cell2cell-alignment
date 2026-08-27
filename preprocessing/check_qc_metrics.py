@@ -15,8 +15,9 @@ Two questions:
    many marker cells survive at >=1, >=2, >=3 ... and how many slices keep any.
 
 A third block prices a reads/genes gate on the marker+ cells subslice selection
-keeps, since QC_MIN_READS/QC_MIN_GENES are 0 and step 1 selects on
-`expmat[:, MSCARLET_COL] > 0` alone.
+keeps. It dates from when QC_MIN_READS/QC_MIN_GENES were 0 and step 1 selected
+on `expmat[:, MSCARLET_COL] > 0` alone; they are 20/5 as of 2026-08-26, so step
+1 already applies the gate and this block now prices it after the fact.
 
 Read/gene totals are computed two ways: over all 114 expmat columns (the lab's
 definition, used for the reproduction check and the QC mask) and over the

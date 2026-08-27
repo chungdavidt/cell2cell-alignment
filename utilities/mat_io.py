@@ -198,6 +198,8 @@ def _load_cell_array(group, file=None):
 
 def _load_categorical(group, file=None):
     """Load MATLAB categorical array from HDF5 group."""
+    import h5py      # function-local, as in every other h5py user in this module
+
     if file is None:
         file = group.file
 

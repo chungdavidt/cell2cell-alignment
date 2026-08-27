@@ -599,8 +599,12 @@ def _derive_graph_path(
     # Prefer block, fall back to invivo
     anchor = block_red_path if block_red_path is not None else invivo_red_path
     parent = anchor.parent
-    subject_name = parent.name
-    return parent / "alignment" / f"{subject_name}_graph.db"
+    # NOT `subject_name`: that name is imported at the top of this module, and
+    # assigning it anywhere in this function makes it function-local for the
+    # WHOLE function -- which broke the ANALYSIS_ROOT branch above with
+    # UnboundLocalError on every config that has ANALYSIS_ROOT set.
+    subject = parent.name
+    return parent / "alignment" / f"{subject}_graph.db"
 
 
 def build_subslice_graph(
