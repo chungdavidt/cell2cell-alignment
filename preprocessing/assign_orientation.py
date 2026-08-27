@@ -21,18 +21,25 @@ So assign on whatever is easiest to read. The default is the downsampled DAPI fo
 that reason: a marker-only image at a high cutoff can be too sparse to find
 anterior on.
 
-One code per modality assumes every section of a series was mounted the same
+One code for a whole section series assumes every section was mounted the same
 way up, and that is an assumption, not a fact: a section mounted face-down is a
-mirror, and no rotation or translation undoes a mirror. --all-slices drops the
-assumption and walks the whole series, recording a code per section under
-`sections` in the same JSON. Running it once is also how you find out whether
-the assumption held for a given brain.
+mirror, and no rotation or translation undoes a mirror. So barseq_subslice walks
+the series BY DEFAULT, answering every section and recording a code per section
+under `sections` in the same JSON; the modality-level code becomes the majority.
+Walking it is also how you find out whether the assumption held for a brain.
+
+invivo_ref and ex_vivo_block are one acquisition with one frame, so they are
+assigned once, from a single image. That single-image form is available for
+barseq_subslice too, behind an explicit --image, and it records a modality-level
+code that REPLACES any per-section records — which is why it asks for --replace
+before overwriting them.
 
 Usage:
-    python preprocessing/assign_orientation.py --modality barseq_subslice --image <path>
+    python preprocessing/assign_orientation.py --modality barseq_subslice           # every section
     python preprocessing/assign_orientation.py --modality barseq_subslice --slice 22
-    python preprocessing/assign_orientation.py --modality barseq_subslice --all-slices
+    python preprocessing/assign_orientation.py --modality barseq_subslice --slices 4 9 22
     python preprocessing/assign_orientation.py --modality invivo_ref     # image from local_config
+    python preprocessing/assign_orientation.py --modality barseq_subslice --image <path> --replace
     python preprocessing/assign_orientation.py --single-plane ...        # no section series
     python preprocessing/assign_orientation.py --show                    # print what is recorded
 
@@ -52,7 +59,7 @@ the answer which resolves it.
 then Enter to write, any other key to start the pass over. Opposites are implied
 by construction, so a self-contradictory answer cannot be entered.
 
-Under --all-slices the same four questions run per section, except the
+Walking the series runs the same four questions per section, except the
 dorsal/ventral one: that describes the CUTTING ORDER, not an individual
 section, so it is asked once and applies to the series. Handedness still varies
 section to section, because the in-plane answers do -- which is what makes a
@@ -92,6 +99,10 @@ from utilities.image_io import imread_tiff
 # subslice image covers them all.
 KNOWN_MODALITIES = ('barseq_subslice', 'invivo_ref', 'ex_vivo_block')
 
+# The one modality that is a SERIES of independently mounted sections rather
+# than a single acquisition, so it is the one walked section by section.
+SERIES_MODALITY = 'barseq_subslice'
+
 CONFIRM_KEYS = ('enter', 'return')
 DISPLAY_PERCENTILES = (1.0, 99.7)
 
@@ -99,6 +110,18 @@ DISPLAY_PERCENTILES = (1.0, 99.7)
 # ---------------------------------------------------------------------------
 # Image loading (read-only, display only)
 # ---------------------------------------------------------------------------
+
+def by_slice_number(paths):
+    """Section files in slice-NUMBER order.
+
+    ``sorted()`` on the filenames is lexicographic, which puts slice10 ahead of
+    slice2 and made the single-image default the wrong section.
+    """
+    def key(path):
+        match = re.match(r"slice(\d+)_subslice", path.name)
+        return (0, int(match.group(1))) if match else (1, 0)
+    return sorted(paths, key=key)
+
 
 def default_image(modality: str, slice_id=None):
     """The image a modality is normally assigned on, from local_config.py.
@@ -138,9 +161,9 @@ def default_image(modality: str, slice_id=None):
         # step 4 overlay.
         from preprocessing_config import HYB_DOWNSAMPLED_DIR
         candidates = [
-            sorted(Path(HYB_DOWNSAMPLED_DIR).glob(f"{stem}_subslice_DAPI.tif")),
-            sorted(subslice_dir.glob(f"{stem}_subslice_ALIGN.tif")),
-            sorted(subslice_dir.glob(f"{stem}_subslice_mScarlet_cellmask.tif")),
+            by_slice_number(Path(HYB_DOWNSAMPLED_DIR).glob(f"{stem}_subslice_DAPI.tif")),
+            by_slice_number(subslice_dir.glob(f"{stem}_subslice_ALIGN.tif")),
+            by_slice_number(subslice_dir.glob(f"{stem}_subslice_mScarlet_cellmask.tif")),
         ]
         for files in candidates:
             if files:
@@ -718,7 +741,26 @@ def resolve_subject(explicit):
 
 
 def assign_one(args, out_path, parser):
-    """Assign one image, recorded at the modality level. The original path."""
+    """Assign one image, recorded at the modality level.
+
+    Right for invivo_ref and ex_vivo_block, which are one acquisition with one
+    frame. For a section series it records one code and asserts every section
+    shares it, so it REPLACES per-section records rather than updating them —
+    `orientation.save` writes the modality entry whole. That is silent data
+    loss, so it is refused unless --replace says it is intended.
+    """
+    prior = orientation.load(out_path).get('modalities', {}).get(args.modality, {})
+    if prior.get('sections') and not args.replace:
+        parser.error(
+            f"{args.modality} already has per-section records "
+            f"({len(prior['sections'])} sections, code {prior.get('code')}), and a "
+            f"single-image assignment would replace them with one code for the "
+            f"whole series.\n"
+            f"  Update a section:   --slice N   (or --slices N M ...)\n"
+            f"  See what is on file: --show\n"
+            f"  Replace anyway:     --replace"
+        )
+
     image_path = (Path(args.image) if args.image
                   else default_image(args.modality, args.slice))
     if image_path is None:
@@ -757,14 +799,17 @@ def assign_series(args, out_path, parser):
     every section is answered on its own, and a section mounted face-down shows
     up as a handedness that disagrees with its neighbours.
     """
-    if args.modality != 'barseq_subslice':
+    if args.modality != SERIES_MODALITY:
         parser.error(
-            f"--all-slices walks a BARseq section series, but {args.modality!r} "
-            f"is one acquisition with one frame — there are no sections to step "
-            f"through. Assign it with --image or its local_config default."
+            f"a section pass walks a BARseq series, but {args.modality!r} is one "
+            f"acquisition with one frame — there are no sections to step through. "
+            f"Assign it with --image or its local_config default."
         )
     if args.image:
-        parser.error("--all-slices covers the whole series; --image names one file")
+        parser.error(
+            "--image names one file, so it records one code for the whole "
+            "series. Drop it to walk the sections, or keep it and add --replace."
+        )
     if args.single_plane:
         parser.error(
             "--single-plane derives the z letter from the in-plane answers, "
@@ -774,7 +819,10 @@ def assign_series(args, out_path, parser):
             "to walk the series. Answer the dorsal/ventral question instead."
         )
 
-    sections = discover_sections(args.slices)
+    # --slice and --slices differ only in how many sections they name; both
+    # restrict the same pass and both record per section.
+    wanted = args.slices or ([args.slice] if args.slice is not None else None)
+    sections = discover_sections(wanted)
     print(f"modality: {args.modality}")
     print(f"sections: {len(sections)}  "
           f"(slice {sections[0][0]} .. {sections[-1][0]})")
@@ -837,23 +885,25 @@ def main():
     p.add_argument('--modality', default=None,
                    help=f"Graph node base name. Known: {', '.join(KNOWN_MODALITIES)}")
     p.add_argument('--image', default=None,
-                   help='Image to assign on (default: the modality path in local_config.py)')
+                   help='Assign on this one image and record ONE code for the '
+                        'modality (default for invivo_ref and ex_vivo_block, which '
+                        'are single acquisitions). For barseq_subslice this skips '
+                        'the section pass, so it needs --replace to overwrite '
+                        'per-section records.')
     p.add_argument('--slice', type=int, default=None,
-                   help='For barseq_subslice: which section to display '
-                        '(default: the lowest-numbered one). Every section shares '
-                        'the frame, so this only changes what you look at.')
+                   help='Restrict the section pass to this one section, for '
+                        're-doing it without walking the series again.')
     p.add_argument('--all-slices', action='store_true',
-                   help='Step through every BARseq section, recording a code per '
-                        'section instead of one for the modality. Enter records '
-                        'and advances, x redoes, b steps back, q stops. The '
-                        'dorsal/ventral question is asked once, on the first '
-                        'section; redo there to re-answer it.')
+                   help='Accepted and redundant: barseq_subslice walks every '
+                        'section by default.')
     p.add_argument('--slices', type=int, nargs='+', default=None,
-                   help='With --all-slices: restrict the pass to these sections, '
-                        'for re-doing a few without walking the series again.')
+                   help='Restrict the section pass to these sections.')
+    p.add_argument('--replace', action='store_true',
+                   help='Allow a single-image assignment to replace existing '
+                        'per-section records with one code for the whole series.')
     p.add_argument('--fresh', action='store_true',
-                   help='With --all-slices: do not carry the previous section\'s '
-                        'answers forward. Slower, but nothing is pre-agreed.')
+                   help='Do not carry the previous section\'s answers forward as a '
+                        'proposal. Slower, but nothing is pre-agreed.')
     p.add_argument('--out', default=None,
                    help='orientation.json path (default: <ANALYSIS_ROOT>/orientation.json)')
     p.add_argument('--single-plane', action='store_true',
@@ -881,7 +931,13 @@ def main():
               f"builder reads ({', '.join(KNOWN_MODALITIES)}).")
         print("      It will be recorded, but nothing will look it up.")
 
-    if args.all_slices or args.slices:
+    # A BARseq series is walked section by section unless --image explicitly
+    # names one file: sections are mounted one at a time, so uniform mounting is
+    # the thing being measured, never the thing assumed.
+    walk = (args.modality == SERIES_MODALITY and not args.image
+            and not args.single_plane)
+    if walk or args.all_slices or args.slices or (
+            args.slice is not None and args.modality == SERIES_MODALITY):
         assign_series(args, out_path, p)
     else:
         assign_one(args, out_path, p)
