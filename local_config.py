@@ -58,7 +58,7 @@ QC_MIN_GENES = 5
 # applies to cells that were never drawn. Pick it by eye with
 # check_rolony_cutoff.py, then set it here — it is the "ge" in SUBSLICE_DIR
 # below, and each value writes its own folder rather than overwriting.
-ALIGN_MIN_ROLONIES = 1
+ALIGN_MIN_ROLONIES = 3
 
 # ---------------------------------------------------------------------
 # Raw input (read-only)
@@ -106,7 +106,7 @@ GRAPH_PATH = r""
 # NOTE: this changes node names (slice22_subslice_ALIGN, not
 # slice22_subslice_mScarlet_cellmask), so an existing graph gains nodes rather
 # than reusing them. BY95's subslice nodes are being rebuilt anyway.
-SUBSLICE_DIR = r"qc20_5_ge1"
+SUBSLICE_DIR = r"qc20_5_ge3"
 
 # TODO(David, on Windows): fill in the four BY95 2-photon TIFFs from
 # "050526 BY95\". Until then the graph is subslice-only and the cross-modality
