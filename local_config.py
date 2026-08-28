@@ -94,18 +94,19 @@ GRAPH_PATH = r""
 
 # BARseq subslices. Relative, so everything above it comes from
 # preprocessing_config and a rename never reaches this file. Resolved against
-# BOTH output roots, so either source works:
-#   "qc20_5_ge1"                     -> subslice_align/          (step 6 ALIGN tifs)
-#   "threshold_0.00_cellmask_0.50"   -> mScarlet_cellmask_subslice/ (step 4 overlays)
-# The ALIGN tifs are what the builder fits on — binary, marker-only. The step 4
+# BOTH output roots:
+#   "qc20_5_ge3"  -> subslice_align/qc20_5_ge3/   (step 6 ALIGN tifs)
+# ALIGN tifs are the only image the builder ingests — binary, marker-only. A
+# folder holding none (a step 4 overlay folder, say) is a hard error; the step 4
 # overlay is an RGB display figure whose BT.601 collapse renders BY95's median
 # marker cell darker than the mask field behind it.
 # The number is ALIGN_MIN_ROLONIES, picked by eye with check_rolony_cutoff.py;
 # each cutoff writes its own folder, so change it here to switch which one is
 # ingested. A wrong name raises and lists the folders that do exist.
-# NOTE: this changes node names (slice22_subslice_ALIGN, not
-# slice22_subslice_mScarlet_cellmask), so an existing graph gains nodes rather
-# than reusing them. BY95's subslice nodes are being rebuilt anyway.
+# NOTE: the folder name is part of the node name (slice22_subslice_ALIGN_qc20_5_ge3),
+# so switching cutoffs ADDS a parallel node set to an existing graph rather than
+# replacing one. The old set keeps its own alignment; the new one is aligned by
+# hand. force_rebuild=True is the reset.
 SUBSLICE_DIR = r"qc20_5_ge3"
 
 # TODO(David, on Windows): fill in the four BY95 2-photon TIFFs from

@@ -4,6 +4,13 @@ Subslice Graph Builder - LineStuffUp Alignment Graph for BARseq Subslices
 Builds the alignment graph from the 2P volumes named in local_config.py plus the
 downsampled BARseq subslices produced by preprocessing/.
 
+The only BARseq image ingested is the binary marker-only ALIGN tif written by
+preprocessing/generate_alignment_tif.py; a folder holding none is an error. A
+subslice node is named for its file stem AND its source folder, so each rolony
+cutoff (`qc20_5_ge1`, `qc20_5_ge5`, ...) is a distinct node set. Re-pointing
+SUBSLICE_DIR and re-running adds a parallel set rather than silently keeping the
+pixels already stored under a colliding name; alignment is redone by hand.
+
 Pixel sizes come from the scope declared as SCOPE in local_config.py, via the
 shared profile table in scope_profiles.py. 2P nodes get (z, xy, xy); BARseq
 subslice nodes get (20.0, xy, xy) — Z is the physical section thickness, and
@@ -117,6 +124,17 @@ def load_invivo_stack(path: Union[str, Path]) -> np.ndarray:
     return stack
 
 
+def subslice_node_name(path: Union[str, Path],
+                       subslice_dir: Union[str, Path]) -> str:
+    """Node name for a subslice file: its stem plus its source folder.
+
+    The folder is the rolony cutoff (`qc20_5_ge1`, `qc20_5_ge5`, ...), so two
+    cutoffs of the same section become two distinct nodes that coexist in one
+    graph instead of colliding on `slice10_subslice_ALIGN`.
+    """
+    return f"{Path(path).stem}_{Path(subslice_dir).name}"
+
+
 def discover_subslices(
     directory: Union[str, Path]
 ) -> List[Path]:
@@ -133,21 +151,20 @@ def discover_subslices(
         raise FileNotFoundError(f"Subslice directory not found: {directory}")
 
     # The ALIGN tifs are what this fits on: binary, marker-only, written by
-    # preprocessing/generate_alignment_tif.py. The step 4 overlay is the older
-    # source and stays as a fallback -- it is an RGB display figure, so
-    # load_single_subslice() collapses it by BT.601 luminance, which on BY95
-    # renders the median marker cell DARKER than the mask field behind it.
+    # preprocessing/generate_alignment_tif.py. Nothing else is accepted -- the
+    # step 4 overlay is an RGB display figure, so load_single_subslice()
+    # collapses it by BT.601 luminance, which on BY95 renders the median marker
+    # cell DARKER than the mask field behind it.
     files = sorted(directory.glob("slice*_subslice_ALIGN.tif"))
-    if files:
-        print(f"Found {len(files)} BARseq alignment TIFs")
-        return files
+    if not files:
+        raise FileNotFoundError(
+            f"No slice*_subslice_ALIGN.tif in:\n"
+            f"  {directory}\n"
+            f"Run preprocessing/generate_alignment_tif.py and point SUBSLICE_DIR "
+            f"at its output folder."
+        )
 
-    files = sorted(directory.glob("slice*_subslice_mScarlet_cellmask.tif"))
-    if files:
-        print(f"Found {len(files)} BARseq subslice files (step 4 overlays)")
-        print("  No slice*_subslice_ALIGN.tif here. These are RGB display")
-        print("  overlays and fit worse; run preprocessing/generate_alignment_tif.py")
-        print("  and point SUBSLICE_DIR at its output to use the intended image.")
+    print(f"Found {len(files)} BARseq alignment TIFs")
     return files
 
 
@@ -469,7 +486,8 @@ def add_subslices_to_graph(
     files_to_add = []
 
     for f in files:
-        node_name = f.stem  # e.g., "slice10_subslice_mScarlet_overlay_DAPI"
+        # e.g., "slice10_subslice_ALIGN_qc20_5_ge1"
+        node_name = subslice_node_name(f, subslice_dir)
         if node_name not in existing_nodes:
             files_to_add.append((f, node_name))
 
@@ -845,6 +863,7 @@ def build_subslice_graph(
     if subslice_dir:
         print("\n3. Adding BARseq subslices")
         print("-" * 60)
+        print(f"  From: {subslice_dir}")
         add_subslices_to_graph(
             g,
             subslice_dir=subslice_dir,

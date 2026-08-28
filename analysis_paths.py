@@ -77,7 +77,10 @@ def _preprocessing_roots() -> "tuple[Path, Path]":
     """(overlay root, alignment-tif root) from preprocessing_config.
 
     A relative SUBSLICE_DIR is resolved against both: step 4's overlays live
-    under the first, generate_alignment_tif.py's output under the second.
+    under the first, generate_alignment_tif.py's output under the second. Only
+    the second holds anything the graph builder will ingest — it takes ALIGN
+    tifs and nothing else — but the lookup stays symmetric so a folder name
+    under either root resolves instead of silently missing.
     """
     cfg = _preprocessing_config()
     return (Path(cfg.MSCARLET_CELLMASK_DIR), Path(cfg.SUBSLICE_ALIGN_DIR))
@@ -114,12 +117,14 @@ def resolve_subslice_dir(value: Optional[str] = None) -> Optional[Path]:
     The BARseq images the graph builder reads are preprocessing output, so
     their parent directory is already known to preprocessing_config. A relative
     SUBSLICE_DIR inherits it and names only the trailing folder — resolved
-    against BOTH output roots, so either source works::
+    against BOTH output roots::
 
-        SUBSLICE_DIR = "qc20_5_ge1"                  # alignment TIFs
+        SUBSLICE_DIR = "qc20_5_ge1"                    # alignment TIFs
         SUBSLICE_DIR = "threshold_0.00_cellmask_0.50"  # step 4 overlays
 
-    which survives any later rename of the directories above it. A name that
+    which survives any later rename of the directories above it. Resolving an
+    overlay folder is not the same as the graph builder accepting one: it
+    ingests ALIGN tifs only and raises on a folder holding none. A name that
     exists under both roots raises rather than guessing. Blank means
     skip subslices, and an absolute path is used verbatim — pointing at a tree
     preprocessing did not write stays possible.

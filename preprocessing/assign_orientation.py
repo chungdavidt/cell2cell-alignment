@@ -157,13 +157,11 @@ def default_image(modality: str, slice_id=None):
         # That frees the default to be the most LEGIBLE image rather than the one
         # the graph ingests. DAPI shows the anatomy you are clicking on; a
         # marker-only ALIGN tif at a high cutoff can be nearly empty and is a
-        # poor thing to identify anterior on. Order: DAPI, then ALIGN, then the
-        # step 4 overlay.
+        # poor thing to identify anterior on. Order: DAPI, then ALIGN.
         from preprocessing_config import HYB_DOWNSAMPLED_DIR
         candidates = [
             by_slice_number(Path(HYB_DOWNSAMPLED_DIR).glob(f"{stem}_subslice_DAPI.tif")),
             by_slice_number(subslice_dir.glob(f"{stem}_subslice_ALIGN.tif")),
-            by_slice_number(subslice_dir.glob(f"{stem}_subslice_mScarlet_cellmask.tif")),
         ]
         for files in candidates:
             if files:
@@ -171,8 +169,7 @@ def default_image(modality: str, slice_id=None):
         raise FileNotFoundError(
             f"No {stem}_subslice_DAPI.tif under\n"
             f"  {HYB_DOWNSAMPLED_DIR}\n"
-            f"and no {stem}_subslice_ALIGN.tif or {stem}_subslice_mScarlet_cellmask.tif "
-            f"under\n"
+            f"and no {stem}_subslice_ALIGN.tif under\n"
             f"  {subslice_dir}\n"
             f"Run the preprocessing pipeline first, or pass --image explicitly."
         )
@@ -199,8 +196,7 @@ def discover_sections(slice_ids=None):
     subslice_dir = resolve_subslice_dir()
     candidates = [(Path(HYB_DOWNSAMPLED_DIR), "_subslice_DAPI.tif")]
     if subslice_dir is not None:
-        candidates += [(subslice_dir, "_subslice_ALIGN.tif"),
-                       (subslice_dir, "_subslice_mScarlet_cellmask.tif")]
+        candidates += [(subslice_dir, "_subslice_ALIGN.tif")]
 
     for root, suffix in candidates:
         found = {}
