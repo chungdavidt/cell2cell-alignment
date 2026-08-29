@@ -10,23 +10,32 @@ and `assert_matches_metadata` silently returns. The constant also has no
 per-dataset knob -- it is declared "invariant across datasets" -- while BY95's
 filt_neurons.mat comes from collaborators, not the rig 0.32 was confirmed on.
 
-Two probes, neither needing image metadata:
+Three probes:
 
     B  stage step   FOV grid step in pixels, from filt_neurons.mat alone
     C  soma size    label diameters in the raw per-FOV cellmasks
+    D  the 2P side  stack geometry + acquisition metadata, from the TIFFs
 
-B is decisive. The FOV grid step is a physical stage displacement, so
-step_um / step_px IS the pixel size. It needs one number you supply, and it has
-a reference value to compare against (see below). C needs nothing at all but
-only resolves ~20%: it catches a 2x or 2.83x and cannot separate 0.32 from
-0.325.
+B and C need no image metadata at all. B is decisive on the BARseq side: the FOV
+grid step is a physical stage displacement, so step_um / step_px IS the pixel
+size. It needs one number you supply, and it has a reference value to compare
+against (see below). C needs nothing but only resolves ~20%: it catches a 2x or
+2.83x and cannot separate 0.32 from 0.325.
 
-TIFF metadata is deliberately not probed. The per-FOV file is
+D exists because a mismatch in APPARENT CELL SIZE between the two modalities is
+a different symptom from a mismatch in image extent, and it indicts the 2P, not
+BARseq. If both images really sit at the same pitch, a soma must occupy the same
+pixel count in both. When BARseq cells look ~2.83x too big, the likely cause is
+a 2P volume acquired at the 566 um zoom while SCOPE names the 200 um one. The
+cheapest discriminator is not XY at all -- it is the PLANE COUNT: huang_lab is
+401 planes at 1 um, huang_lab_566um is 201 at 2 um.
+
+BARseq TIFF metadata is deliberately not probed. The per-FOV file is
 `alignedn2vhyb01.tif` -- aligned, Noise2Void-denoised, max-projected -- at least
 three rewrites past acquisition, none of which carry calibration forward. Its
-tags are placeholders by construction. If the calibration survives anywhere it
-is upstream of that chain or in an acquisition sidecar, neither of which this
-sees.
+tags are placeholders by construction. The 2P stacks are a different matter:
+they come off the scope with ScanImage / Bruker headers intact, which is why D
+reads them and B/C do not.
 
 Read-only. Opens nothing for writing and touches no file under DATA_ROOT.
 
@@ -35,6 +44,7 @@ Usage:
     python preprocessing/check_pixel_size.py --step-um 788.8
     python preprocessing/check_pixel_size.py --slice 22 --n-fovs 8 --soma-um 12
     python preprocessing/check_pixel_size.py --only C
+    python preprocessing/check_pixel_size.py --only D --tif "C:\\path\\to\\2p_folder"
 """
 
 import argparse
@@ -354,6 +364,209 @@ def probe_soma_size(hyb_root, channels_root, n_fovs, soma_um):
     print()
 
 
+# ----------------------------------------------------------------- D: the 2P
+
+# Plane counts observed for each Huang zoom. Not a field in MICROSCOPE_PROFILES
+# -- taken from the scope_profiles.py comments ("401 z levels" for huang_lab,
+# "566.08 um FOV, 2 um Z" for the older setting) and from the by84/by94/by89 vs
+# BY95 split. Z is what separates the two profiles most cheaply: 401 planes at
+# 1 um vs 201 planes at 2 um.
+PROFILE_PLANES = {"huang_lab": 401, "huang_lab_566um": 201, "li_lab": None}
+
+# Acquisition keys worth surfacing out of a ScanImage / Bruker / MicroManager
+# header. ScanImage puts "SI.hRoiManager.scanZoomFactor" and
+# "SI.objectiveResolution" in ImageDescription; Bruker writes a .xml sidecar
+# carrying "micronsPerPixel"; MicroManager writes "PixelSizeUm" into a .txt.
+ACQ_KEY_RE = re.compile(
+    r"(micron|pixelsize|pixel_size|umperpix|um_per_pix|scanzoom|zoomfactor|"
+    r"objectiveresolution|resolution|stackzstep|zstepsize|framesperslice|"
+    r"scanframerate|fovsize|field_?of_?view)", re.I)
+
+SIDECAR_SUFFIXES = (".xml", ".txt", ".json", ".env", ".ini", ".cfg")
+
+
+def _emit_acq_lines(text, source, limit=25):
+    """Print lines of a header/sidecar that look like acquisition geometry."""
+    hits = [ln.strip() for ln in text.splitlines() if ACQ_KEY_RE.search(ln)]
+    if not hits:
+        print(f"      {source}: no geometry-looking keys "
+              f"({len(text)} chars scanned)")
+        return
+    print(f"      {source}: {len(hits)} geometry-looking line(s)")
+    for h in hits[:limit]:
+        print(f"        {h[:220]}")
+    if len(hits) > limit:
+        print(f"        ... {len(hits) - limit} more")
+
+
+def _scan_sidecars(tif_path):
+    """Report sibling files that acquisition software writes beside a stack."""
+    tif_path = Path(tif_path)
+    sibs = [f for f in tif_path.parent.iterdir()
+            if f.is_file() and f.suffix.lower() in SIDECAR_SUFFIXES]
+    if not sibs:
+        print("    sidecars: none "
+              f"({', '.join(SIDECAR_SUFFIXES)} in {tif_path.parent.name}/)")
+        return
+    print(f"    sidecars: {len(sibs)} candidate file(s)")
+    for f in sorted(sibs)[:6]:
+        try:
+            text = f.read_text(errors="replace")
+        except Exception as e:
+            print(f"      {f.name}: unreadable ({type(e).__name__})")
+            continue
+        _emit_acq_lines(text, f.name)
+
+
+def expand_tif_args(items, max_tifs):
+    """Accept files or directories; a directory is searched for TIFF stacks."""
+    out = []
+    for item in items:
+        p = Path(item)
+        if p.is_dir():
+            found = sorted(set(list(p.rglob("*.tif")) + list(p.rglob("*.tiff"))))
+            print(f"  {p}\n    {len(found)} TIFF(s) found", end="")
+            if len(found) > max_tifs:
+                print(f", showing the first {max_tifs} (--max-tifs to change)")
+                found = found[:max_tifs]
+            else:
+                print()
+            out.extend(found)
+        else:
+            out.append(p)
+    return out
+
+
+def probe_2p(paths):
+    print("=" * 72)
+    print("D. THE 2P STACK -- geometry and acquisition metadata")
+    print("=" * 72)
+
+    if not paths:
+        print("  No 2P stack given.")
+        print("  Pass --tif <path> (repeatable), or fill in INVIVO_PATH_RED /")
+        print("  INVIVO_PATH_GREEN / BLOCK_STACK_PATH_RED / BLOCK_STACK_PATH_GREEN")
+        print("  in local_config.py -- they are all blank, which is also why")
+        print("  subslice_graph_builder's assert_matches_metadata has never run")
+        print("  on this subject.\n")
+        return
+
+    import tifffile
+
+    rows = []
+    for p in paths:
+        p = Path(p)
+        print(f"\n  {p}")
+        if not p.exists():
+            print("    !! not found")
+            rows.append((p.name, "not found", "", ""))
+            continue
+        try:
+            with tifffile.TiffFile(str(p)) as tf:
+                series = tf.series[0]
+                shape, dtype = series.shape, series.dtype
+                page = tf.pages[0]
+                print(f"    shape {shape}  dtype {dtype}  pages {len(tf.pages)}")
+
+                n_planes = shape[0] if len(shape) >= 3 else 1
+                yx = shape[-2:]
+
+                for tag in ("XResolution", "YResolution", "ResolutionUnit",
+                            "Software", "Make", "Model", "DateTime"):
+                    t = page.tags.get(tag)
+                    if t is not None:
+                        print(f"    {tag}: {t.value}")
+
+                ij = tf.imagej_metadata or {}
+                if ij:
+                    keep = {k: v for k, v in ij.items()
+                            if k in ("unit", "spacing", "slices", "frames",
+                                     "channels", "Info")}
+                    print(f"    imagej_metadata: "
+                          f"{ {k: v for k, v in keep.items() if k != 'Info'} }")
+                    if "Info" in keep:
+                        _emit_acq_lines(str(keep["Info"]), "imagej Info")
+
+                desc = page.tags.get("ImageDescription")
+                if desc is not None:
+                    text = str(desc.value)
+                    print(f"    ImageDescription: {len(text)} chars")
+                    _emit_acq_lines(text, "ImageDescription")
+
+                ome = getattr(tf, "ome_metadata", None)
+                if ome:
+                    _emit_acq_lines(str(ome), "ome_metadata")
+
+                _scan_sidecars(p)
+
+                # ---- what the geometry implies -------------------------
+                print(f"\n    GEOMETRY: {n_planes} planes, {yx[0]}x{yx[1]} in-plane")
+                match = [k for k, v in PROFILE_PLANES.items()
+                         if v is not None and v == n_planes]
+                if match:
+                    print(f"    plane count matches profile: {', '.join(match)}")
+                else:
+                    known = {k: v for k, v in PROFILE_PLANES.items() if v}
+                    print(f"    plane count matches no profile (known: {known})")
+                rows.append((p.name, str(shape), str(n_planes),
+                             ", ".join(match) if match else "-"))
+
+                z_meta = None
+                if "spacing" in ij:
+                    try:
+                        z_meta = float(ij["spacing"])
+                        print(f"    z step from ImageJ metadata: {z_meta} um")
+                    except (TypeError, ValueError):
+                        pass
+
+                print(f"\n    CANDIDATE PITCHES for a {yx[1]} px frame:")
+                from scope_profiles import MICROSCOPE_PROFILES
+                soma_um = 12.0
+                for name, prof in MICROSCOPE_PROFILES.items():
+                    xy = prof["xy_um_per_px"]
+                    fov = yx[1] * xy
+                    px = soma_um / xy
+                    flag = "  <-- SCOPE" if name == SCOPE else ""
+                    print(f"      {name:<17} {xy:7.4f} um/px  FOV {fov:8.2f} um"
+                          f"  z {prof['z_um_per_px']:.1f}  "
+                          f"{soma_um:.0f}um soma = {px:5.1f} px{flag}")
+
+                print(f"\n    THE DECIDING MEASUREMENT: open this stack, measure a")
+                print(f"    soma across in pixels, and read it off the table above.")
+                print(f"    Your BARseq somas are 38.3 px raw at "
+                      f"{EXVIVO_UM_PER_PX} um/px, i.e. "
+                      f"{38.3 / DOWNSAMPLE_XY:.1f} px after the resample.")
+                print(f"    If 2P somas are near that, the pitches agree. If they")
+                print(f"    are ~2.83x smaller, SCOPE should be huang_lab_566um.")
+
+        except Exception as e:
+            print(f"    !! could not read: {type(e).__name__}: {e}")
+            rows.append((p.name, f"ERROR {type(e).__name__}", "", ""))
+
+    if len(rows) > 1:
+        print("\n" + "=" * 72)
+        print("  SUMMARY -- plane count is what separates the two Huang zooms")
+        print("=" * 72)
+        w = max(len(r[0]) for r in rows)
+        print(f"  {'file':<{w}}  {'shape':<22}{'planes':>7}  profile by planes")
+        for name, shape, planes, prof in rows:
+            print(f"  {name:<{w}}  {shape:<22}{planes:>7}  {prof}")
+        profs = {r[3] for r in rows if r[3] and r[3] != "-"}
+        print()
+        if len(profs) > 1:
+            print(f"  MIXED: {sorted(profs)} -- these stacks are not all the same")
+            print("  zoom. One SCOPE cannot describe them; the graph currently")
+            print("  stamps every 2P node with SCOPE's pitch regardless.")
+        elif profs and SCOPE not in profs:
+            print(f"  All stacks look like {sorted(profs)[0]}, but SCOPE = {SCOPE!r}.")
+            print("  That is the 2.83x, and it is one line in local_config.py.")
+        elif profs:
+            print(f"  All stacks agree with SCOPE = {SCOPE!r} on plane count.")
+            print("  Plane count is necessary, not sufficient -- confirm with a")
+            print("  soma measurement or an acquisition header above.")
+    print()
+
+
 # ------------------------------------------------------------------- driver
 
 def main():
@@ -369,11 +582,17 @@ def main():
                     help="slice to measure the FOV grid on (default: most populated)")
     ap.add_argument("--n-fovs", type=int, default=4,
                     help="FOVs to read in probe C (default 4)")
-    ap.add_argument("--only", default="", metavar="BC",
-                    help="run only these probes, e.g. 'B' or 'C'")
+    ap.add_argument("--tif", action="append", default=[], metavar="PATH",
+                    help="2P stack or a DIRECTORY of them, for probe D. "
+                         "Repeatable. Blank -> the four 2P paths in "
+                         "local_config.py, which are currently unset.")
+    ap.add_argument("--max-tifs", type=int, default=20,
+                    help="cap on TIFFs read per directory (default 20)")
+    ap.add_argument("--only", default="", metavar="BCD",
+                    help="run only these probes, e.g. 'B', 'D', 'CD'")
     args = ap.parse_args()
 
-    run = args.only.upper() or "BC"
+    run = args.only.upper() or "BCD"
 
     print("=" * 72)
     print("BARSEQ PIXEL SIZE CHECK")
@@ -393,6 +612,15 @@ def main():
         probe_stage_step(fn, args.slice, args.step_um)
     if "C" in run:
         probe_soma_size(HYB_ROOT, HYB_CHANNELS_DIR, args.n_fovs, args.soma_um)
+    if "D" in run:
+        import local_config
+        tif_args = args.tif or [
+            p for p in (getattr(local_config, name, "") for name in (
+                "INVIVO_PATH_RED", "INVIVO_PATH_GREEN",
+                "BLOCK_STACK_PATH_RED", "BLOCK_STACK_PATH_GREEN"))
+            if p
+        ]
+        probe_2p(expand_tif_args(tif_args, args.max_tifs) if tif_args else [])
 
     print("=" * 72)
     print("A ratio of 2.827 anywhere above would mean SCOPE should be")
