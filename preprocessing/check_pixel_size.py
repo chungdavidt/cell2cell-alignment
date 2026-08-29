@@ -418,14 +418,25 @@ def _scan_sidecars(tif_path):
         _emit_acq_lines(text, f.name)
 
 
-def expand_tif_args(items, max_tifs):
-    """Accept files or directories; a directory is searched for TIFF stacks."""
+def expand_tif_args(items, max_tifs, recursive=False):
+    """
+    Accept files or directories; a directory is searched for TIFF stacks.
+
+    TOP LEVEL ONLY by default. The 2P stacks sit directly in the subject folder
+    ("050526 BY95/BY95 invivo run two crosstalk removed red.tif"), while that
+    same folder holds allen_transcriptomics/BY95/hyb_raw_files/ with 1300+
+    per-FOV BARseq TIFFs underneath it. Recursing would bury the four stacks you
+    want in the FOVs you don't. --recursive opts back in.
+    """
     out = []
     for item in items:
         p = Path(item)
         if p.is_dir():
-            found = sorted(set(list(p.rglob("*.tif")) + list(p.rglob("*.tiff"))))
-            print(f"  {p}\n    {len(found)} TIFF(s) found", end="")
+            walk = p.rglob if recursive else p.glob
+            found = sorted(set(list(walk("*.tif")) + list(walk("*.tiff"))))
+            how = ("(recursive)" if recursive
+                   else "(top level only; --recursive to descend)")
+            print(f"  {p}\n    {len(found)} TIFF(s) found {how}", end="")
             if len(found) > max_tifs:
                 print(f", showing the first {max_tifs} (--max-tifs to change)")
                 found = found[:max_tifs]
@@ -588,6 +599,10 @@ def main():
                          "local_config.py, which are currently unset.")
     ap.add_argument("--max-tifs", type=int, default=20,
                     help="cap on TIFFs read per directory (default 20)")
+    ap.add_argument("--recursive", action="store_true",
+                    help="descend into subdirectories when --tif is a folder. "
+                         "Off by default: the subject folder holds the 2P stacks "
+                         "at its top level and 1300+ BARseq FOV TIFFs beneath it.")
     ap.add_argument("--only", default="", metavar="BCD",
                     help="run only these probes, e.g. 'B', 'D', 'CD'")
     args = ap.parse_args()
@@ -620,7 +635,8 @@ def main():
                 "BLOCK_STACK_PATH_RED", "BLOCK_STACK_PATH_GREEN"))
             if p
         ]
-        probe_2p(expand_tif_args(tif_args, args.max_tifs) if tif_args else [])
+        probe_2p(expand_tif_args(tif_args, args.max_tifs, args.recursive)
+                 if tif_args else [])
 
     print("=" * 72)
     print("A ratio of 2.827 anywhere above would mean SCOPE should be")
