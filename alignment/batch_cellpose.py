@@ -8,10 +8,12 @@ Settings landed on after the 2026-04-16 2D parameter sweep on by94 (vanilla
 defaults beat cellprob/flow/diameter/CLAHE/sharpen variations on visual QC).
 Anisotropy here is CELLPOSE's parameter -- a 2P volume's Z:XY voxel aspect --
 not the retired BARseq two-factor resample. Hardcoded to Z/XY = 1.81 for all
-four images, which is the
-huang_lab_566um setting (2.0 / 1.1055) that by84 and by94 were acquired on.
-The current huang_lab setting (200.19 um FOV, 1 um Z — BY95) is
-1.0 / 0.3910 = 2.56; change EVAL_PARAMS when adding images from it.
+four images, which are by84 and by94 files: 2.0 / 1.1055, from the
+huang_lab_566um profile that was deleted 2026-08-30. The number still
+describes those four stacks; it is pinned here because nothing re-derives it
+now. BY95 (huang_lab, 1.1000 um/px, 1 um Z) would be 1.0 / 1.1 = 0.909 --
+change EVAL_PARAMS when adding images from it, and re-read by84/by94's own
+XResolution tags before trusting the 1.1055.
 
 Behavior:
   - Loads the cpsam model once before the loop.
@@ -52,7 +54,7 @@ IMAGES_TO_PROCESS: list[str] = [
 EVAL_PARAMS = {
     "do_3D":              True,
     "z_axis":             0,      # TIFFs load as (Z, Y, X); cellpose 4 requires this for ndim==3
-    "anisotropy":         1.81,   # Z/XY 2.0/1.1055 (huang_lab_566um). huang_lab = 1.0/0.3910 = 2.56.
+    "anisotropy":         1.81,   # Z/XY 2.0/1.1055, by84/by94. huang_lab (BY95) = 1.0/1.1 = 0.909.
     "stitch_threshold":   0.0,
     "cellprob_threshold": 0.0,
     "flow_threshold":     0.4,

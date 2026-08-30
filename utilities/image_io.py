@@ -14,6 +14,10 @@ import numpy as np
 from pathlib import Path
 from typing import Optional, Union, List
 
+# Project root, same directory that holds the `utilities` package — importable
+# wherever `utilities.image_io` is. Stdlib-only, so it adds no dependency here.
+from scope_profiles import um_per_px_from_resolution
+
 try:
     import tifffile
     HAS_TIFFFILE = True
@@ -240,13 +244,13 @@ def get_tiff_resolution(filepath: Union[str, Path]) -> dict:
                 res_unit_tag = page.tags.get('ResolutionUnit')
                 res_unit = res_unit_tag.value if res_unit_tag else None
 
-                if unit == 'micron':
-                    # ImageJ stores pixels_per_micron in XResolution when unit='micron'
-                    xy_um_per_px = 1.0 / pixels_per_unit
-                elif res_unit == 3:  # centimeter
-                    xy_um_per_px = 1e4 / pixels_per_unit
-                elif res_unit == 2:  # inch
-                    xy_um_per_px = 25400.0 / pixels_per_unit
+                # Parsing lives in scope_profiles so it is testable without
+                # tifffile. It accepts every µm spelling including ImageJ's
+                # escaped one, and lets a recognised ImageJ unit override
+                # ResolutionUnit's inch default.
+                xy_um_per_px = um_per_px_from_resolution(
+                    pixels_per_unit, unit, res_unit
+                )
 
         # Z spacing from ImageJ metadata
         z_um_per_px = None

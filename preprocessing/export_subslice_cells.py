@@ -18,7 +18,7 @@ thick, and the edge supplies its position in the stack.
 
 `y_img` / `x_img` are the same point ROUNDED to an array index, and exist only to
 read a label out of the cellmask. Never transform them: rounding costs +-0.5
-downsampled px (~0.196 µm at BY95's 0.3910 µm/px) for no reason. The cell's
+downsampled px (~0.55 µm at BY95's 1.1000 µm/px) for no reason. The cell's
 position was never measured from the downsampled image — it is projected onto it
 from `pos`, which is stored at full resolution and never resampled. The downsample
 is lossy for PIXELS, not for CELLS.
@@ -216,7 +216,7 @@ def main():
         # only to read a label out of the mask. The unrounded form is the cell's
         # actual position in the node frame and is what a castalign transform
         # should consume; rounding first would inject +-0.5 px of avoidable error
-        # (~0.196 µm at BY95's 0.3910 µm/px) into every downstream match.
+        # (~0.55 µm at BY95's 1.1000 µm/px) into every downstream match.
         idx = np.where(keep)[0]
         # Round THEN subtract 1, matching the other two copies exactly. Folding
         # the -1 inside rint() would diverge at .5 ties under banker's rounding.

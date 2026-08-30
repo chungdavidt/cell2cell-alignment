@@ -622,7 +622,7 @@ def save_cellmask_h5(filepath, cellmask, metadata=None, compression='gzip'):
             'fov_offsets': {'FOV1': [100, 200], 'FOV2': [300, 400]},
             'min_x': 50,
             'min_y': 75,
-            'DOWNSAMPLE_XY': 1.2219,
+            'DOWNSAMPLE_XY': 3.4375,
         })
     """
     import h5py

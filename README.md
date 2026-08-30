@@ -133,16 +133,17 @@ and every pixel size in the project follows from it. The profiles live in `scope
 | Profile key | XY (µm/px) | Z (µm/px) | FOV | Used by |
 |---|---|---|---|---|
 | `li_lab` | 2.34 | 1.0 | 1200 µm | JH302 (retired) |
-| `huang_lab` | 0.3910 | 1.0 | 200.19 µm | BY95 |
-| `huang_lab_566um` | 1.1055 | 2.0 | 566.08 µm | by84, by94, by89 |
+| `huang_lab` | 1.1000 | 1.0 | 563.2 µm | BY95 |
 
-The Huang lab runs one scanner at two zooms, ~2.83× apart; `huang_lab` is the current 200 µm setting, and `huang_lab_200um` is accepted as an alias for it.
+`huang_lab` read 0.3910 µm/px over a 200.19 µm field until 2026-08-30, when the stacks' own `XResolution` tag was read: `909090/1000000` with ImageJ unit µm, i.e. **1.1000 µm/px over 563.2 µm**. The declaration had never been checked against a file, because `get_tiff_resolution` recognised only the literal string `micron` and these files say `µm` — so the guard had nothing to compare and returned silently.
+
+`huang_lab_566um` (1.1055 µm/px, 566.08 µm, 2.0 µm Z — by84, by94, by89) was deleted the same day. 563.2 and 566.08 µm are 0.51% apart, so the "one scanner at two zooms ~2.83× apart" story was itself an artifact of the wrong 200.19, and the two keys collided inside the 5% tolerance `identify_scope` matches on. Those three subjects now hard-error until their pitch is re-derived from their own tags — which is also the measurement that settles whether the two profiles were ever different.
 
 What reads it:
 
 | Consumer | Uses |
 |---|---|
-| Preprocessing | `DOWNSAMPLE_XY = xy / 0.32` — the BARseq resample factor (0.3910 → 1.2219×, 1.1055 → 3.4547×) |
+| Preprocessing | `DOWNSAMPLE_XY = xy / 0.32` — the BARseq resample factor (1.1000 → 3.4375×, 2.34 → 7.3125×) |
 | Graph builder | `(z, xy, xy)` on every 2P node, `(20.0, xy, xy)` on every BARseq subslice node |
 | `validate_mnn.py` | µm scale for MNN centroid distances |
 

@@ -26,8 +26,9 @@ ANALYSIS_ROOT = r"C:\Users\David\lab_local\projects\cell_type\analysis\BY95"
 # Source of truth for every pixel size — the BARseq resample factor, node
 # spacings, and validate_mnn's µm scale. TIFF XResolution is read only to check
 # it, and a disagreement is a hard error.
-#   "huang_lab"        0.3910 µm/px XY, 1.0 µm Z   BY95
-#   "huang_lab_566um"  1.1055 µm/px XY, 2.0 µm Z   by84, by94, by89
+#   "huang_lab"   1.1000 µm/px XY, 1.0 µm Z   BY95 (563.2 µm FOV)
+# by84/by94/by89 named "huang_lab_566um", deleted 2026-08-30 — re-derive
+# their pitch from their own XResolution tags before running them again.
 SCOPE = "huang_lab"
 
 # ---------------------------------------------------------------------

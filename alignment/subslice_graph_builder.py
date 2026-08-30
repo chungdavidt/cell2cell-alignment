@@ -86,15 +86,11 @@ from analysis_paths import (
     ALIGNMENT_SUBDIR,
 )
 from scope_profiles import (
-    MICROSCOPE_PROFILES,
-    MAX_PLAUSIBLE_XY_UM_PER_PX,
     assert_matches_metadata,
     get_profile,
-    identify_scope,
     is_plausible_xy,
     spacing_zyx,
     subslice_spacing_zyx,
-    unknown_scope_message,
 )
 
 
@@ -210,57 +206,6 @@ def load_block_stack(path: Union[str, Path]) -> np.ndarray:
     print(f"  Type: {stack.dtype}")
 
     return stack
-
-
-def detect_spacing(tiff_path: Union[str, Path], tolerance: float = 0.05) -> tuple:
-    """
-    Read (Z, Y, X) spacing from a TIFF's own resolution metadata.
-
-    Kept for inspecting what a file claims. It is NOT how node spacing is
-    decided — that is `spacing_for_tiff`, which uses SCOPE and only compares
-    against this. Retained because `validate_mnn.py` and the notebook use it to
-    report a file's declared pitch.
-
-    Returns
-    -------
-    tuple
-        ((z, y, x) spacing in µm/px, microscope_name)
-
-    Raises
-    ------
-    ValueError
-        - "No XY resolution metadata ..." when the TIFF has no XY calibration
-        - "Uncalibrated XY resolution ..." when XY exceeds
-          MAX_PLAUSIBLE_XY_UM_PER_PX (a DPI default, not a real scope)
-        - "Could not identify microscope ..." when XY is plausible but matches
-          no profile (a genuine new scope to add)
-    """
-    res = get_tiff_resolution(tiff_path)
-
-    if res['xy_um_per_px'] is None:
-        raise ValueError(
-            f"No XY resolution metadata in: {Path(tiff_path).name}\n"
-            "Add resolution in ImageJ (Image > Properties) or set spacing manually."
-        )
-
-    xy = res['xy_um_per_px']
-    z = res['z_um_per_px']
-
-    if not is_plausible_xy(xy):
-        raise ValueError(
-            f"Uncalibrated XY resolution in {Path(tiff_path).name}: detected "
-            f"{xy:.4f} µm/px (> {MAX_PLAUSIBLE_XY_UM_PER_PX} µm/px plausibility "
-            f"ceiling). This is almost certainly a screen/print DPI default "
-            f"(e.g. 72 DPI → 352.78 µm/px), not a real microscope calibration."
-        )
-
-    name = identify_scope(xy, tolerance)
-    if name is None:
-        raise ValueError(unknown_scope_message(xy, Path(tiff_path).name))
-
-    if z is None:
-        z = MICROSCOPE_PROFILES[name]['z_um_per_px']
-    return (z, xy, xy), name
 
 
 def spacing_for_tiff(tiff_path: Union[str, Path], scope: str = None) -> tuple:
@@ -462,6 +407,69 @@ def add_block_to_graph(
     )
 
 
+def assert_stored_shapes_match(
+    graph: ca.Graph,
+    present: List[tuple],
+    verbose: bool = True,
+) -> None:
+    """
+    Raise when a node already in the graph was built from differently-sized pixels.
+
+    A subslice node is named for its file stem and its cutoff folder
+    (`subslice_node_name`), and neither encodes the resample factor. So after
+    regenerating the ALIGN tifs at a new DOWNSAMPLE_XY every name still matches,
+    every file counts as "already in graph", and the run prints "All subslices
+    already in graph!" while the old pixels stay in the .db — the graph then
+    reports a physical size it no longer has. That is what happened when
+    huang_lab went from 0.3910 to 1.1000 µm/px on 2026-08-30.
+
+    Shape is read from each node's own metadata, written at add time, against
+    the TIFF header on disk — neither side decompresses an image. Nodes added
+    before the shape was recorded cannot be checked and say so rather than
+    failing: `force_rebuild=True` is the way to reset those.
+    """
+    if not present:
+        return
+
+    mismatched = []
+    unrecorded = []
+    for path, node_name in present:
+        stored = (graph.node_metadata.get(node_name) or {}).get('shape')
+        if stored is None:
+            unrecorded.append(node_name)
+            continue
+        on_disk = get_tiff_resolution(path)['shape']
+        # Stored is (1, H, W); a 2D TIFF's series shape is (H, W).
+        if tuple(stored)[-2:] != tuple(on_disk)[-2:]:
+            mismatched.append((node_name, tuple(stored), tuple(on_disk), path))
+
+    if unrecorded and verbose:
+        print(f"  {len(unrecorded)} existing node(s) carry no shape — not checked "
+              f"(added before 2026-08-30; force_rebuild=True to reset)")
+
+    if not mismatched:
+        return
+
+    lines = "\n".join(
+        f"    {name}\n"
+        f"      in graph: {stored}\n"
+        f"      on disk:  {disk}   ({Path(p).name})"
+        for name, stored, disk, p in mismatched
+    )
+    raise ValueError(
+        f"\n{'='*60}\n"
+        f"{len(mismatched)} subslice node(s) do not match the images on disk.\n\n"
+        f"{lines}\n\n"
+        f"The node name carries the cutoff folder, not the resample factor, so\n"
+        f"these would have been silently kept at their old pixel size. Either\n"
+        f"the images were regenerated at a different DOWNSAMPLE_XY, or\n"
+        f"SUBSLICE_DIR points at a different render.\n\n"
+        f"Rebuild with force_rebuild=True — and note that drops every fit on\n"
+        f"these nodes, which were made against images that no longer exist.\n"
+        f"{'='*60}"
+    )
+
+
 def add_subslices_to_graph(
     graph: ca.Graph,
     subslice_dir: Union[str, Path],
@@ -484,12 +492,17 @@ def add_subslices_to_graph(
     # Check which are already in graph
     existing_nodes = set(graph.nodes)
     files_to_add = []
+    already_present = []
 
     for f in files:
         # e.g., "slice10_subslice_ALIGN_qc20_5_ge1"
         node_name = subslice_node_name(f, subslice_dir)
         if node_name not in existing_nodes:
             files_to_add.append((f, node_name))
+        else:
+            already_present.append((f, node_name))
+
+    assert_stored_shapes_match(graph, already_present, verbose=verbose)
 
     if verbose:
         print(f"\nSubslice Loading:")
@@ -501,13 +514,18 @@ def add_subslices_to_graph(
         print("All subslices already in graph!")
         return graph
 
-    # (Z, Y, X) µm/px, plus the one orientation every subslice shares.
-    metadata = {'spacing': spacing, 'orientation': orientation_code}
-
     added = 0
     for i, (fpath, node_name) in enumerate(files_to_add, 1):
         try:
             img = load_single_subslice(fpath)
+            # (Z, Y, X) µm/px, the one orientation every subslice shares, and
+            # the shape this node's pixels were built at — see
+            # assert_stored_shapes_match for what reads it back.
+            metadata = {
+                'spacing': spacing,
+                'orientation': orientation_code,
+                'shape': tuple(int(n) for n in img.shape),
+            }
             graph.add_node(node_name, image=img, compression="normal", metadata=metadata)
             added += 1
 

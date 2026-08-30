@@ -3,10 +3,12 @@
 Measure the BARseq in-plane pixel size instead of declaring it.
 
 `EXVIVO_UM_PER_PX = 0.32` (scope_profiles.py) is the last unverified number in
-the scaling chain. The 2P side is settled -- BY95 is 200.19 um over 512 px, so
-0.3910 um/px and DOWNSAMPLE_XY = 1.2219 are correct. Nothing checks the BARseq
-side: raw hyb TIFFs carry a 72-DPI placeholder, `is_plausible_xy` rejects it,
-and `assert_matches_metadata` silently returns. The constant also has no
+the scaling chain. The 2P side WAS settled at 200.19 um over 512 px until
+2026-08-30, when probe D read the stacks' own XResolution: 909090/1000000 with
+ImageJ unit um, i.e. 1.1000 um/px over a 563.2 um field. huang_lab and
+DOWNSAMPLE_XY are now 1.1000 and 3.4375. Nothing checks the BARseq side: raw
+hyb TIFFs carry a 72-DPI placeholder, `is_plausible_xy` rejects it, and
+`assert_matches_metadata` silently returns. The constant also has no
 per-dataset knob -- it is declared "invariant across datasets" -- while BY95's
 filt_neurons.mat comes from collaborators, not the rig 0.32 was confirmed on.
 
@@ -20,15 +22,17 @@ B and C need no image metadata at all. B is decisive on the BARseq side: the FOV
 grid step is a physical stage displacement, so step_um / step_px IS the pixel
 size. It needs one number you supply, and it has a reference value to compare
 against (see below). C needs nothing but only resolves ~20%: it catches a 2x or
-2.83x and cannot separate 0.32 from 0.325.
+2.8x and cannot separate 0.32 from 0.325.
 
 D exists because a mismatch in APPARENT CELL SIZE between the two modalities is
 a different symptom from a mismatch in image extent, and it indicts the 2P, not
 BARseq. If both images really sit at the same pitch, a soma must occupy the same
-pixel count in both. When BARseq cells look ~2.83x too big, the likely cause is
-a 2P volume acquired at the 566 um zoom while SCOPE names the 200 um one. The
-cheapest discriminator is not XY at all -- it is the PLANE COUNT: huang_lab is
-401 planes at 1 um, huang_lab_566um is 201 at 2 um.
+pixel count in both. That is how the 2.81x was found: BARseq cells looked ~2.8x
+too big because SCOPE named a 200.19 um field that no BY95 stack ever had.
+Read the stack's own XResolution first -- that is now the decisive measurement,
+and get_tiff_resolution understands ImageJ's escaped um spelling as of
+2026-08-30. Plane count is a weak corroborator, not a discriminator: with one
+Huang profile left there is nothing to discriminate between.
 
 BARseq TIFF metadata is deliberately not probed. The per-FOV file is
 `alignedn2vhyb01.tif` -- aligned, Noise2Void-denoised, max-projected -- at least
@@ -366,12 +370,13 @@ def probe_soma_size(hyb_root, channels_root, n_fovs, soma_um):
 
 # ----------------------------------------------------------------- D: the 2P
 
-# Plane counts observed for each Huang zoom. Not a field in MICROSCOPE_PROFILES
-# -- taken from the scope_profiles.py comments ("401 z levels" for huang_lab,
-# "566.08 um FOV, 2 um Z" for the older setting) and from the by84/by94/by89 vs
-# BY95 split. Z is what separates the two profiles most cheaply: 401 planes at
-# 1 um vs 201 planes at 2 um.
-PROFILE_PLANES = {"huang_lab": 401, "huang_lab_566um": 201, "li_lab": None}
+# Plane counts observed per profile. Not a field in MICROSCOPE_PROFILES -- taken
+# from the scope_profiles.py comment ("401 planes, 400 um deep"). This was a
+# discriminator between the two Huang zooms until huang_lab_566um was deleted
+# 2026-08-30; with one Huang profile left it only corroborates, and a stack that
+# matches nothing here is normal for by84/by94/by89 (201 planes at 2 um) until
+# their profile is re-derived from their own tags.
+PROFILE_PLANES = {"huang_lab": 401, "li_lab": None}
 
 # Acquisition keys worth surfacing out of a ScanImage / Bruker / MicroManager
 # header. ScanImage puts "SI.hRoiManager.scanZoomFactor" and
@@ -548,7 +553,8 @@ def probe_2p(paths):
                       f"{EXVIVO_UM_PER_PX} um/px, i.e. "
                       f"{38.3 / DOWNSAMPLE_XY:.1f} px after the resample.")
                 print(f"    If 2P somas are near that, the pitches agree. If they")
-                print(f"    are ~2.83x smaller, SCOPE should be huang_lab_566um.")
+                print(f"    disagree, believe the XResolution above and fix the")
+                print(f"    huang_lab profile -- that is what happened 2026-08-30.")
 
         except Exception as e:
             print(f"    !! could not read: {type(e).__name__}: {e}")
@@ -570,7 +576,8 @@ def probe_2p(paths):
             print("  stamps every 2P node with SCOPE's pitch regardless.")
         elif profs and SCOPE not in profs:
             print(f"  All stacks look like {sorted(profs)[0]}, but SCOPE = {SCOPE!r}.")
-            print("  That is the 2.83x, and it is one line in local_config.py.")
+            print("  Plane count alone does not settle it -- read the XResolution")
+            print("  above, then fix either SCOPE or the profile it names.")
         elif profs:
             print(f"  All stacks agree with SCOPE = {SCOPE!r} on plane count.")
             print("  Plane count is necessary, not sufficient -- confirm with a")
@@ -616,7 +623,7 @@ def main():
           f"scope_profiles.py")
     print(f"                -- hand-entered, no per-dataset knob, UNVERIFIED")
     print(f"  2P pitch      {TARGET_XY_UM_PER_PX:.4f} um/px   SCOPE = {SCOPE!r}")
-    print(f"                -- 200.19 um / 512 px, confirmed")
+    print(f"                -- from the stacks' own XResolution tag, 2026-08-30")
     print(f"  DOWNSAMPLE_XY {DOWNSAMPLE_XY:.4f}x")
     print(f"  A {FOV_SIZE} px FOV is therefore "
           f"{FOV_SIZE * EXVIVO_UM_PER_PX:.1f} um across")
@@ -639,10 +646,11 @@ def main():
                  if tif_args else [])
 
     print("=" * 72)
-    print("A ratio of 2.827 anywhere above would mean SCOPE should be")
-    print("huang_lab_566um -- but the 2P is confirmed at 200.19 um / 512 px,")
-    print("so any ratio here belongs to the BARseq side and lands on one line:")
-    print("EXVIVO_UM_PER_PX in scope_profiles.py.")
+    print("The 2P pitch above was read from the stacks' own XResolution tag, so")
+    print("a ratio anywhere above belongs to the BARseq side and lands on one")
+    print("line: EXVIVO_UM_PER_PX in scope_profiles.py. If probe D reports a")
+    print("pitch that disagrees with SCOPE, fix the profile before reading any")
+    print("of the BARseq numbers -- that ratio is not yours to attribute.")
     print("=" * 72)
 
 

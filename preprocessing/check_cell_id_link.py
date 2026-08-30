@@ -18,7 +18,7 @@ Two questions, one measurement. Both come out of archive/ben_generate_in_situ_st
      four files uses (pos*2 - (min_x_offset - 1)) / DOWNSAMPLE_XY, then rounds and
      subtracts 1, which is correct only if pos40x is 0-INDEXED. If it is
      1-indexed instead, every centroid is one full-res pixel down-and-right
-     (0.32 um; 0.82 downsampled px at BY95's 1.2219x factor). See
+     (0.32 um; 0.29 downsampled px at BY95's 3.4375x factor). See
      reference_centroid_mapping_formula.md.
 
 Method, per FOV: take every filt_neurons row in that FOV (no slice or QC filter,

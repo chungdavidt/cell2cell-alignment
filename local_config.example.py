@@ -154,11 +154,14 @@ GRAPH_PATH = ""
 #
 # Values (defined in scope_profiles.py at the project root):
 #   "li_lab"           2.34   µm/px XY, 1.0 µm Z, 1200 µm FOV    JH302 (retired)
-#   "huang_lab"        0.3910 µm/px XY, 1.0 µm Z, 200.19 µm FOV  BY95
-#   "huang_lab_566um"  1.1055 µm/px XY, 2.0 µm Z, 566.08 µm FOV  by84, by94, by89
+#   "huang_lab"        1.1000 µm/px XY, 1.0 µm Z, 563.2 µm FOV   BY95
 #
-# The Huang lab runs one scanner at two zooms, ~2.83x apart — "huang_lab" is the
-# current 200 µm setting. ("huang_lab_200um" is accepted as an alias for it.)
+# huang_lab was 0.3910 µm/px over a 200.19 µm field until 2026-08-30, when the
+# stacks' own XResolution tag was read and said 1.1000. "huang_lab_566um"
+# (1.1055, by84/by94/by89) went with it: 563.2 and 566.08 µm are 0.51% apart,
+# so the "two zooms ~2.83x apart" story was an artifact of the wrong 200.19 and
+# the two keys collided inside the 5% tolerance that identify_scope uses.
+# Those three subjects now hard-error until their own tags are read.
 #
 # Required. Blank is a hard error. TIFF resolution metadata, where present, is
 # read only to CHECK this line: a file whose pixel size disagrees with SCOPE

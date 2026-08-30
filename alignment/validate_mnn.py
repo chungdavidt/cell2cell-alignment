@@ -13,9 +13,10 @@ MVP scope. No size filter, no null shuffle, no pre-vs-post nonlinear comparison
 
 Both volumes are assumed to share a voxel pitch. Distances are reported in both
 voxel and um; per-axis um is also reported because Z and XY pitches differ. The
-pitch used for the um report defaults to the current Huang lab setting
-('huang_lab': 200.19 um FOV, 1 um Z) and is overridden with --um-per-voxel
-(by84/by94/by89, the older 566.08 um zoom: 2.0,1.1055,1.1055).
+pitch used for the um report defaults to the scope named as SCOPE
+('huang_lab': 563.2 um FOV, 1.1000 um/px, 1 um Z) and is overridden with
+--um-per-voxel (by84/by94/by89, whose profile was deleted 2026-08-30:
+2.0,1.1055,1.1055 until their own tags are re-read).
 
 CLI:
     python alignment/validate_mnn.py
