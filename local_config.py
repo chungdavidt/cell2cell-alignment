@@ -69,7 +69,7 @@ DATA_ROOT = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\allen
 
 # Per-FOV raw directory (the MAX_Pos*_*_* folders).
 # Blank -> auto-detect; BY95 resolves to <DATA_ROOT>/hyb_raw_files.
-HYB_ROOT = r""
+HYB_ROOT = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\allen_transcriptomics\BY95\hyb_raw_files"
 
 # ---------------------------------------------------------------------
 # Derived output
@@ -110,15 +110,11 @@ GRAPH_PATH = r""
 # hand. force_rebuild=True is the reset.
 SUBSLICE_DIR = r"qc20_5_ge3"
 
-# TODO(David, on Windows): fill in the four BY95 2-photon TIFFs from
-# "050526 BY95\". Until then the graph is subslice-only and the cross-modality
-# handedness guard has nothing to compare. The paths that were here were
-# JH302's (retired 2026-08-22) and were removed rather than carried over.
 
 # Ex-vivo block, 2P volume of the tissue before slicing.
-BLOCK_STACK_PATH_RED = r""
-BLOCK_STACK_PATH_GREEN = r""
+BLOCK_STACK_PATH_RED = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo red.tif"
+BLOCK_STACK_PATH_GREEN = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo green.tif"
 
 # In-vivo 2P stack.
-INVIVO_PATH_RED = r""
-INVIVO_PATH_GREEN = r""
+INVIVO_PATH_RED = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\By95 invivo averaged 2x64 red.tif"
+INVIVO_PATH_GREEN = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\By95 invivo averaged 2x64 green.tif"
