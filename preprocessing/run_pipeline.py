@@ -9,6 +9,7 @@ Runs the complete mScarlet preprocessing pipeline:
 4. generate_mscarlet_cellmask_subslice.py - Create mScarlet overlays
 5. interactive_mscarlet_threshold_cellmask_subslice.py - Generate figures
 6. generate_alignment_tif.py - Binary marker-only images the graph builder aligns on
+7. export_subslice_cells.py - Cell <-> cellmask-label link table, the join back to genes
 
 Orientation assignment runs after this, interactively: see the note above STEPS.
 
@@ -66,6 +67,21 @@ STEPS = [
         'description': 'Binary marker-only images the graph builder aligns on',
         'slice_flag': '--slices',
         'takes_min_rolonies': True,
+    },
+    {
+        # The join back to the gene matrix, and the only step whose output is
+        # coordinates rather than pixels. Its y_node/x_node live in the resampled
+        # node frame, so it goes stale with DOWNSAMPLE_XY exactly like the images
+        # do -- which is why it belongs in the run rather than beside it.
+        #
+        # No --threshold and no --min-rolonies: the rolony cutoff is a
+        # registration parameter with no downstream reach, so the table carries
+        # every QC-passing marker+ cell regardless of what was drawn. Its QC pair
+        # comes from local_config like every other gate.
+        'name': 'Export Cell Table',
+        'script': 'export_subslice_cells.py',
+        'description': 'Cell <-> cellmask-label link table, the join back to genes',
+        'slice_flag': '--slices',
     },
 ]
 
@@ -250,6 +266,7 @@ Examples:
         print(f"  Overlays: {MSCARLET_CELLMASK_DIR}")
         print(f"  Figures: {MSCARLET_INTERACTIVE_DIR}")
         print(f"  Alignment TIFs: {SUBSLICE_ALIGN_DIR}")
+        print(f"  Cell table: {Path(OUTPUT_ROOT) / 'subslice_cell_table'}")
         print("\nNext, in this order:")
         print("  1. python preprocessing/assign_orientation.py --modality barseq_subslice")
         print("     Last preprocessing act for this modality. Assign on the image the")

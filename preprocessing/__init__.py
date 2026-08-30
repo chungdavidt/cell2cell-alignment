@@ -15,6 +15,7 @@ Pipeline execution order:
     5. interactive_mscarlet_threshold_cellmask_subslice.py -> batch figures (Agg,
        not interactive despite the name)
     6. generate_alignment_tif.py -> binary marker-only tifs the graph builder fits on
+    7. export_subslice_cells.py -> cell <-> cellmask-label table, the join to genes
 
 generate_mscarlet_overlay_labelled.py is NOT step 6 -- it is an optional inspection
 tool driven by edit_subslice_definitions.py.s

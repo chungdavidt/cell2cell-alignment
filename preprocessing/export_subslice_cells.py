@@ -32,9 +32,12 @@ Unmapped cells are KEPT, with `cell_id = 0` and a `status` saying why, so the
 table is a complete account of the marker+ population rather than a silently
 filtered one.
 
-QC defaults to the lab's cell-typing filter, reads >= 20 AND genes >= 5 (BY95:
-26.4% of cells), not `preprocessing_config`'s QC_MIN_READS / QC_MIN_GENES, which
-are 0/0 to match the ungated marker plots. Both are per-brain.
+QC comes from `QC_MIN_READS` / `QC_MIN_GENES` in local_config -- the lab's
+cell-typing filter, reads >= 20 AND genes >= 5 for BY95 (26.4% of cells).
+`--min-reads` / `--min-genes` override for a one-off. This used to hardcode 20/5
+because the config held 0/0 for the ungated marker plots; the config went to the
+cell-typing pair on 2026-08-26, so the two now ask the same question and the
+hardcoded copy was another brain's numbers waiting to be carried over.
 
 Writes two files and reads nothing but `filt_neurons.mat` and the downsampled
 cellmasks:
@@ -68,6 +71,8 @@ from preprocessing_config import (
     FILT_NEURONS_PATH,
     HYB_DOWNSAMPLED_DIR,
     OUTPUT_ROOT,
+    QC_MIN_READS,
+    QC_MIN_GENES,
     MSCARLET_COLUMN_INDEX,
     MSCARLET_GENE_NAME,
     DOWNSAMPLE_XY,
@@ -113,10 +118,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    ap.add_argument("--min-reads", type=int, default=20,
-                    help="QC total reads floor; the lab's value, per-brain (default: 20)")
-    ap.add_argument("--min-genes", type=int, default=5,
-                    help="QC distinct genes floor; the lab's value, per-brain (default: 5)")
+    ap.add_argument("--min-reads", type=int, default=QC_MIN_READS,
+                    help=f"QC total reads floor (default: QC_MIN_READS = {QC_MIN_READS})")
+    ap.add_argument("--min-genes", type=int, default=QC_MIN_GENES,
+                    help=f"QC distinct genes floor (default: QC_MIN_GENES = {QC_MIN_GENES})")
     ap.add_argument("--slices", "-s", type=int, nargs="+", default=None,
                     help="specific slice IDs")
     ap.add_argument("--out", default=None, help="output directory override")
