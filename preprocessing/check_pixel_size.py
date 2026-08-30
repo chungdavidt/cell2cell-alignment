@@ -562,7 +562,7 @@ def probe_2p(paths):
 
     if len(rows) > 1:
         print("\n" + "=" * 72)
-        print("  SUMMARY -- plane count is what separates the two Huang zooms")
+        print("  SUMMARY -- geometry per stack; the pitch comes from XResolution")
         print("=" * 72)
         w = max(len(r[0]) for r in rows)
         print(f"  {'file':<{w}}  {'shape':<22}{'planes':>7}  profile by planes")
