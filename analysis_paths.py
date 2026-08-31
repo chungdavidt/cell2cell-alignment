@@ -86,13 +86,16 @@ def _preprocessing_roots() -> "tuple[Path, Path]":
     return (Path(cfg.MSCARLET_CELLMASK_DIR), Path(cfg.SUBSLICE_ALIGN_DIR))
 
 
-def _preprocessing_config():
+def _preprocessing_config(reason: str = None):
     """preprocessing_config, imported lazily.
 
     Imported here rather than at module scope because preprocessing_config
     validates the whole preprocessing config at import — it raises when
     DATA_ROOT or SCOPE is unset — and a 2P-only run has no reason to satisfy
-    that. Only a relative SUBSLICE_DIR needs it.
+    that. Only a relative SUBSLICE_DIR and the raw-channel lookup need it.
+
+    `reason` names what asked for it, so the error says which config line to
+    fix rather than always blaming SUBSLICE_DIR.
     """
     preprocessing = _PROJECT_ROOT / "preprocessing"
     if str(preprocessing) not in sys.path:
@@ -100,15 +103,33 @@ def _preprocessing_config():
     try:
         import preprocessing_config
     except Exception as e:
+        why = reason or (
+            "SUBSLICE_DIR is relative, so it is resolved against "
+            "preprocessing's output tree"
+        )
         raise ValueError(
-            f"SUBSLICE_DIR is relative, so it is resolved against "
-            f"preprocessing's output tree — but preprocessing_config could not "
-            f"be loaded:\n"
+            f"{why} — but preprocessing_config could not be loaded:\n"
             f"  {type(e).__name__}: {e}\n\n"
             f"Either fix that (it needs DATA_ROOT and SCOPE), or set "
             f"SUBSLICE_DIR to an absolute path."
         )
     return preprocessing_config
+
+
+def hyb_downsampled_dir() -> Path:
+    """Where downsample_subslices_cellmask.py writes every channel.
+
+    One folder holds `slice{N}_subslice_{DAPI,GCAMP,MSCARLET}.tif` beside
+    `slice{N}_subslice_CELLMASK.h5`, all resampled to the same target shape
+    computed once from the cellmask — so a raw channel image is pixel-for-pixel
+    on the grid the ALIGN tif is painted on. That is what makes them Identity
+    siblings in the graph rather than something needing registration.
+    """
+    cfg = _preprocessing_config(
+        reason="The BARseq raw channels are preprocessing output, so their "
+               "folder comes from preprocessing_config"
+    )
+    return Path(cfg.HYB_DOWNSAMPLED_DIR)
 
 
 def resolve_subslice_dir(value: Optional[str] = None) -> Optional[Path]:

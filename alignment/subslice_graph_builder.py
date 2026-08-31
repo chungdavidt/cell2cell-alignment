@@ -67,6 +67,16 @@ BLOCK_STACK_PATH_RED = getattr(local_config, "BLOCK_STACK_PATH_RED", "")
 BLOCK_STACK_PATH_GREEN = getattr(local_config, "BLOCK_STACK_PATH_GREEN", "")
 SUBSLICE_DIR = getattr(local_config, "SUBSLICE_DIR", "")
 
+# BARseq raw fluorescence channels to carry into the graph beside the ALIGN
+# renders, e.g. ["MSCARLET"]. Empty (or missing) = skip them. Every channel
+# preprocessing downsampled is available: DAPI, GCAMP, MSCARLET. They are read
+# from HYB_DOWNSAMPLED_DIR, which is where downsample_subslices_cellmask.py
+# resamples ALL channels to one target shape computed from the cellmask — so a
+# raw channel image sits on exactly the grid the ALIGN tif is painted on.
+SUBSLICE_RAW_CHANNELS = [
+    str(c).upper() for c in getattr(local_config, "SUBSLICE_RAW_CHANNELS", []) or []
+]
+
 # The microscope that acquired this subject's data — the source of truth for
 # every pixel size below. Validated at first use, not at import, so a module
 # import (or --help) does not require a complete config.
@@ -90,6 +100,7 @@ import imageio.v2 as imageio
 from utilities.image_io import get_tiff_resolution
 import orientation
 from analysis_paths import (
+    hyb_downsampled_dir,
     analysis_subdir,
     resolve_subslice_dir,
     subject_name,
@@ -145,6 +156,38 @@ def subslice_node_name(path: Union[str, Path],
     graph instead of colliding on `slice10_subslice_ALIGN`.
     """
     return f"{Path(path).stem}_{Path(subslice_dir).name}"
+
+
+def raw_channel_node_name(slice_no: int, channel: str) -> str:
+    """Node name for a raw channel image: `slice22_mscarlet`.
+
+    No cutoff suffix, unlike an ALIGN node: the raw image is the same pixels
+    whatever rolony cutoff was rendered from it, so there is exactly one per
+    section per channel and every ALIGN render of that section is an Identity
+    sibling of it.
+    """
+    return f"slice{int(slice_no)}_{channel.lower()}"
+
+
+def raw_channel_tif(directory: Union[str, Path], slice_no: int,
+                    channel: str) -> Path:
+    """Path to one downsampled raw channel image."""
+    return Path(directory) / f"slice{int(slice_no)}_subslice_{channel.upper()}.tif"
+
+
+def align_nodes_by_slice(graph: ca.Graph) -> dict:
+    """{section number: [ALIGN node names]} for every subslice node in the graph.
+
+    One section can hold several ALIGN nodes, one per rolony cutoff rendered.
+    """
+    out = {}
+    for name in graph.nodes:
+        if "_subslice_ALIGN" not in name:
+            continue
+        m = re.match(r"slice(\d+)_", name)
+        if m:
+            out.setdefault(int(m.group(1)), []).append(name)
+    return {k: sorted(v) for k, v in sorted(out.items())}
 
 
 def discover_subslices(
@@ -597,6 +640,138 @@ def add_subslices_to_graph(
     return graph
 
 
+def add_raw_channels_to_graph(
+    graph: ca.Graph,
+    hyb_dir: Union[str, Path],
+    channels: Iterable[str],
+    save_every: int = 10,
+    output_path: Optional[Union[str, Path]] = None,
+    orientation_code: Optional[str] = None,
+    slices: Optional[Iterable[int]] = None,
+    dry_run: bool = False,
+    verbose: bool = True,
+) -> ca.Graph:
+    """
+    Add BARseq raw fluorescence nodes and wire them to the ALIGN renders.
+
+    Topology: the FIRST channel listed is the section's hub. Every other node
+    for that section — each cutoff's ALIGN render, and every other raw channel
+    — gets one `castalign.base.Identity` edge to the hub. Star, not mesh: no
+    cycles, one hop to the hub, two between any two ALIGN renders. All the
+    images involved come off the same `round(orig / DOWNSAMPLE_XY)` target
+    shape, computed once from the cellmask by downsample_subslices_cellmask.py,
+    so Identity is the literal relationship between them, not an approximation.
+
+    What that buys: a fit on ANY node of the section reaches every other node of
+    it through Identity, so the raw images inherit the alignment made on an
+    ALIGN render. What it costs: two independent fits on two renders of the same
+    section become contradictory, and BFS resolves by path length, not by which
+    was made last. Fit one node per section.
+
+    Nodes are stored with `compression="label"`, castalign's lossless gzip
+    branch (utils.compress_image:153). These are uint16 fluorescence images —
+    the heuristic would send them to the lossy JPEG path, which clips at the
+    99.9th percentile, i.e. the brightest somas.
+
+    Only sections that already have an ALIGN node are considered; a raw node
+    with no sibling would have no path to in-vivo.
+    """
+    channels = [c.upper() for c in channels]
+    if not channels:
+        return graph
+
+    hyb_dir = Path(hyb_dir)
+    if not hyb_dir.is_dir():
+        raise FileNotFoundError(
+            f"Raw channel folder not found:\n"
+            f"  {hyb_dir}\n"
+            f"SUBSLICE_RAW_CHANNELS is set, so downsample_subslices_cellmask.py\n"
+            f"must have run — it writes every channel there. Leave\n"
+            f"SUBSLICE_RAW_CHANNELS empty to skip raw channels."
+        )
+
+    by_slice = align_nodes_by_slice(graph)
+    if slices is not None:
+        wanted = {int(n) for n in slices}
+        by_slice = {k: v for k, v in by_slice.items() if k in wanted}
+    if not by_slice:
+        print("  No ALIGN nodes in the graph — nothing to attach raw channels to.")
+        return graph
+
+    spacing = subslice_spacing_zyx(SCOPE)
+    added = edges_added = missing = 0
+    present_pairs = []          # (tif path, node name) for the shape guard
+    # Nodes that exist, plus the ones this run would create -- so a dry run
+    # reports the Identity edges too instead of stopping at the node list.
+    known = set(graph.nodes)
+
+    for slice_no, align_nodes in by_slice.items():
+        hub = None
+        for channel in channels:
+            node_name = raw_channel_node_name(slice_no, channel)
+            tif = raw_channel_tif(hyb_dir, slice_no, channel)
+
+            if node_name in graph.nodes:
+                if tif.exists():
+                    present_pairs.append((tif, node_name))
+            elif not tif.exists():
+                if verbose:
+                    print(f"  slice {slice_no}: no {channel} TIF — skipped ({tif.name})")
+                missing += 1
+                continue
+            elif dry_run:
+                print(f"  would ADD: {node_name}")
+                known.add(node_name)
+                added += 1
+            else:
+                img = load_single_subslice(tif)
+                graph.add_node(
+                    node_name, image=img, compression="label",
+                    metadata={
+                        'spacing': spacing,
+                        'orientation': orientation_code,
+                        'shape': tuple(int(n) for n in img.shape),
+                    },
+                )
+                added += 1
+                known.add(node_name)
+                if verbose:
+                    print(f"  Added node: {node_name}  shape {img.shape}  lossless")
+                if save_every > 0 and output_path and added % save_every == 0:
+                    if verbose:
+                        print(f"  Saving checkpoint ({added} added)...")
+                    save_graph(graph, output_path, verbose=False)
+
+            if hub is None:
+                hub = node_name
+
+        if hub is None or hub not in known:
+            continue
+
+        # Identity to every sibling of this section: the other raw channels and
+        # every ALIGN render. Idempotent — an existing edge is left alone.
+        siblings = [raw_channel_node_name(slice_no, c) for c in channels[1:]]
+        for other in siblings + align_nodes:
+            if other not in known or other == hub:
+                continue
+            if other in graph.edges.get(hub, {}):
+                continue
+            if dry_run:
+                print(f"  would LINK: {hub} <-> {other}  (Identity)")
+            else:
+                graph.add_edge(hub, other, ca.Identity())
+            edges_added += 1
+
+    assert_stored_shapes_match(graph, present_pairs, verbose=verbose)
+
+    if verbose:
+        print(f"\n{'Would add' if dry_run else 'Added'} {added} raw channel node(s), "
+              f"{edges_added} Identity edge(s)")
+        if missing:
+            print(f"  {missing} section/channel combination(s) had no TIF")
+    return graph
+
+
 def save_graph(
     graph: ca.Graph,
     output_path: Union[str, Path],
@@ -696,6 +871,7 @@ def build_subslice_graph(
     save_every: int = 10,
     subslice_dirs: Optional[Iterable[Union[str, Path]]] = None,
     slices: Optional[Iterable[int]] = None,
+    raw_channels: Optional[Iterable[str]] = None,
     dry_run: bool = False,
 ) -> Path:
     """
@@ -723,6 +899,11 @@ def build_subslice_graph(
         puts both in one graph in a single run.
     slices : iterable of int, optional
         Restrict the add to these section numbers. None means every file.
+    raw_channels : iterable of str, optional
+        BARseq raw fluorescence channels to carry in beside the ALIGN renders
+        (`["MSCARLET"]`), overriding config's SUBSLICE_RAW_CHANNELS. They attach
+        to sections already holding an ALIGN node, so this can run against an
+        existing graph with no SUBSLICE_DIR set. Pass `[]` to skip them.
     dry_run : bool
         Report what would be added and write nothing.
 
@@ -747,6 +928,8 @@ def build_subslice_graph(
     # one run; each folder is its own node set, so they coexist.
     requested = list(subslice_dirs) if subslice_dirs else [SUBSLICE_DIR]
     subslice_paths = [d for d in (resolve_subslice_dir(v) for v in requested) if d]
+    channels = [c.upper() for c in (
+        SUBSLICE_RAW_CHANNELS if raw_channels is None else raw_channels)]
 
     # Green-without-red on the same modality would dangle the Identity edge.
     if invivo_green_path and not invivo_red_path:
@@ -785,7 +968,7 @@ def build_subslice_graph(
 
     any_invivo = bool(invivo_red_path or invivo_green_path)
     any_block = bool(block_red_path or block_green_path)
-    if not (any_invivo or any_block or subslice_paths):
+    if not (any_invivo or any_block or subslice_paths or channels):
         raise ValueError(
             "No inputs configured in local_config.py — set at least one of:\n"
             "  INVIVO_PATH_RED / INVIVO_PATH_GREEN          (in vivo 2P stack)\n"
@@ -831,6 +1014,8 @@ def build_subslice_graph(
             print(f"  subslices:     {d}" if i == 0 else f"                 {d}")
     else:
         print(f"  subslices:     (not set, skipping)")
+    print(f"  raw channels:  "
+          f"{', '.join(channels) + f'  (hub: {channels[0]})' if channels else '(none, skipping)'}")
     if dry_run:
         print()
         print("  DRY RUN — nothing will be written")
@@ -978,6 +1163,22 @@ def build_subslice_graph(
             dry_run=dry_run,
         )
 
+    if channels:
+        print("\n4. Adding BARseq raw channels")
+        print("-" * 60)
+        hyb_dir = hyb_downsampled_dir()
+        print(f"  From: {hyb_dir}")
+        add_raw_channels_to_graph(
+            g,
+            hyb_dir=hyb_dir,
+            channels=channels,
+            save_every=save_every,
+            output_path=None if dry_run else output_path,
+            orientation_code=orientation_codes.get(SUBSLICE_MODALITY),
+            slices=slices,
+            dry_run=dry_run,
+        )
+
     # -------------------------------------------------------------
     # Final save + summary
     # -------------------------------------------------------------
@@ -1004,8 +1205,12 @@ def build_subslice_graph(
         if present:
             print(f"  - {label}")
             n_anchor += 1
-    if subslice_paths:
-        print(f"  - {len(g.nodes) - n_anchor} ex vivo subslices")
+    n_align = sum(len(v) for v in align_nodes_by_slice(g).values())
+    if n_align:
+        print(f"  - {n_align} ex vivo subslices")
+    n_raw = len(g.nodes) - n_anchor - n_align
+    if n_raw:
+        print(f"  - {n_raw} BARseq raw channel nodes")
     print(f"\nReady for alignment in CASTalign!")
 
     return output_path
@@ -1030,6 +1235,7 @@ the config value and can ingest more than one in a single run:
     python alignment/subslice_graph_builder.py                       # config's SUBSLICE_DIR
     python alignment/subslice_graph_builder.py -d qc20_5_ge3 -d qc20_5_ge5
     python alignment/subslice_graph_builder.py -d qc20_5_ge5 --slices 1 22
+    python alignment/subslice_graph_builder.py --raw-channels MSCARLET
     python alignment/subslice_graph_builder.py --dry-run             # report, write nothing
 
 --force-rebuild WIPES the .db and every fitted edge, including the hand-made
@@ -1041,6 +1247,12 @@ block_stack_red -> invivo_red fit, which exists nowhere else. Back it up first.
                          "resolve like SUBSLICE_DIR. Default: config's value")
     ap.add_argument("--slices", type=int, nargs="+", default=None, metavar="N",
                     help="only these section numbers (default: every file)")
+    ap.add_argument("--raw-channels", nargs="+", default=None, metavar="NAME",
+                    help="BARseq raw channels to carry in (MSCARLET GCAMP DAPI); "
+                         "the first is the section's Identity hub. "
+                         "Default: config's SUBSLICE_RAW_CHANNELS")
+    ap.add_argument("--no-raw-channels", action="store_true",
+                    help="skip raw channels even when config asks for them")
     ap.add_argument("--dry-run", action="store_true",
                     help="report what would be added; write nothing")
     ap.add_argument("--force-rebuild", action="store_true",
@@ -1054,6 +1266,7 @@ block_stack_red -> invivo_red fit, which exists nowhere else. Back it up first.
         save_every=args.save_every,
         subslice_dirs=args.subslice_dir,
         slices=args.slices,
+        raw_channels=[] if args.no_raw_channels else args.raw_channels,
         dry_run=args.dry_run,
     )
 

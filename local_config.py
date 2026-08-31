@@ -111,6 +111,28 @@ GRAPH_PATH = r""
 SUBSLICE_DIR = r"qc20_5_ge5"
 
 
+# BARseq raw fluorescence channels to carry into the graph beside the binary
+# ALIGN renders, as Identity siblings of them. Empty list = skip.
+#
+#   []              nothing (previous behaviour)
+#   ["MSCARLET"]    the channel with a 2P counterpart -- overlay it on invivo_red
+#   ["MSCARLET", "GCAMP"]   add the BARseq GCaMP readout too
+#
+# Read from HYB_subslice_stitched_tif_downsampled_micronwise/, where
+# downsample_subslices_cellmask.py resamples EVERY channel to one target shape
+# computed from the cellmask -- so these sit pixel-for-pixel on the grid the
+# ALIGN tif is painted on, and Identity is their literal relationship.
+#
+# Node names carry no cutoff (slice22_mscarlet): there is one raw image per
+# section per channel however many rolony cutoffs were rendered from it. The
+# FIRST channel is the section's Identity hub; every ALIGN render of that
+# section links to it, so a fit made on any one of them reaches all of them.
+# The flip side: two independent fits on two renders of the same section are
+# then contradictory, and BFS resolves by path length. Fit one node per section.
+# Stored losslessly, unlike the 2P volumes -- these are uint16 fluorescence.
+SUBSLICE_RAW_CHANNELS = ["MSCARLET"]
+
+
 # Ex-vivo block, 2P volume of the tissue before slicing.
 BLOCK_STACK_PATH_RED = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo red.tif"
 BLOCK_STACK_PATH_GREEN = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo green.tif"

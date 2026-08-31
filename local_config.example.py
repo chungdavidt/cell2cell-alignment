@@ -126,13 +126,36 @@ INVIVO_PATH_GREEN = ""
 #   -> <OUTPUT_ROOT>/subslice_align/qc20_5_ge1
 #   SUBSLICE_DIR = "threshold_0.00_cellmask_0.50" # step 4 overlays
 #   -> <OUTPUT_ROOT>/mScarlet_cellmask_subslice/threshold_0.00_cellmask_0.50
-# The ALIGN tifs are what the builder prefers and what it fits on — binary and
-# marker-only. The step 4 overlay is an RGB display figure and is the fallback.
+# The ALIGN tifs are the ONLY thing the builder ingests — binary and
+# marker-only. A folder holding none raises; the step 4 overlay is an RGB
+# display figure and stopped being a fallback in 2026-08.
 # The qc/ge numbers are QC_MIN_READS, QC_MIN_GENES and ALIGN_MIN_ROLONIES; each
 # combination writes its own folder, so this line selects which one is ingested.
 # A wrong folder name lists the ones that do exist. An absolute path is still
 # used verbatim, for subslices preprocessing did not write.
 SUBSLICE_DIR = ""
+
+# BARseq raw fluorescence channels to carry into the graph beside the binary
+# ALIGN renders, as Identity siblings of them. Empty list = skip.
+#
+#   []                       nothing
+#   ["MSCARLET"]             the channel with a 2P counterpart, for overlaying
+#                            on invivo_red in the castalign GUI
+#   ["MSCARLET", "GCAMP"]    add the BARseq GCaMP readout too
+#
+# Read from <OUTPUT_ROOT>/HYB_subslice_stitched_tif_downsampled_micronwise/,
+# where downsample_subslices_cellmask.py resamples EVERY channel (DAPI, GCAMP,
+# MSCARLET, CELLMASK) to one target shape computed from the cellmask. They are
+# therefore pixel-for-pixel on the grid the ALIGN tif is painted on, which is
+# what makes Identity their literal relationship rather than an approximation.
+#
+# Node names carry no cutoff (slice22_mscarlet): one raw image per section per
+# channel, however many rolony cutoffs were rendered from it. The FIRST channel
+# is the section's Identity hub and every ALIGN render of that section links to
+# it, so a fit made on any one node reaches all of them. The flip side: two
+# independent fits on two renders of one section are then contradictory and BFS
+# resolves by path length — fit one node per section. Stored losslessly.
+SUBSLICE_RAW_CHANNELS = []
 
 # Path to the alignment graph file (.db) — used by both the graph builder and
 # the notebook. Leave BLANK to auto-derive: <ANALYSIS_ROOT>/alignment/
