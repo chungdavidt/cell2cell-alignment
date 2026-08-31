@@ -534,7 +534,17 @@ def add_subslices_to_graph(
                 'orientation': orientation_code,
                 'shape': tuple(int(n) for n in img.shape),
             }
-            graph.add_node(node_name, image=img, compression="normal", metadata=metadata)
+            # compression="label" forces castalign's lossless gzip branch
+            # (utils.compress_image:153). "normal" leaves the choice to
+            # utils.image_is_label, and when that says False a binary marker
+            # image goes down the JPEG branch, where the normaliser divides by
+            # np.quantile(img, .999) -- which on a >99.9% background image IS
+            # the background value, so the cells are clipped away and what
+            # comes back is float noise, not a mask. Measured on BY95's
+            # qc20_5_ge5 nodes 2026-08-31: stored info [2, 1, 90, ...], read
+            # back as float32 in [-1, 0]. An ALIGN tif is binary by
+            # construction, so never let the heuristic decide.
+            graph.add_node(node_name, image=img, compression="label", metadata=metadata)
             added += 1
 
             if verbose and (i <= 5 or i % 10 == 0 or i == len(files_to_add)):

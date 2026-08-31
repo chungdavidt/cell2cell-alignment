@@ -6,14 +6,21 @@ pixels can change between the TIFF on disk and what napari paints:
 
     file  ->  graph storage (utils.compress_image)  ->  layer type (alignment_gui)
 
-The last step is the one that surprises. `castalign.utils.image_is_label`
-classifies any image whose middle plane is mostly flat with a few distinct
-integer values as a LABEL image -- which a binary 0/255 marker image is. On
-that verdict `alignment_gui` builds a napari **Labels** layer instead of an
-Image layer with the red colormap. A Labels layer has no contrast limits:
-every distinct nonzero value is a solid arbitrary colour and only 0 is
-transparent. So any nonzero field paints solid, and the cells read as a second
-colour on top of it.
+Both later steps hinge on `castalign.utils.image_is_label`, and both can
+surprise:
+
+**Storage.** `compress_image` sends label-like images to lossless gzip and
+everything else to a lossy branch. When the heuristic says False on a binary
+marker image, the JPEG branch normalises by `np.quantile(img, .999)` -- which
+on a >99.9% background image IS the background value -- so the cells are
+clipped away and what comes back is float noise, not a mask. Seen on BY95's
+qc20_5_ge5 nodes 2026-08-31. `compression="label"` avoids the heuristic
+entirely; the graph builder now passes it for every subslice.
+
+**Display.** On a True verdict `alignment_gui` builds a napari Labels layer
+instead of an Image layer with the red colormap. A Labels layer has no
+contrast limits: every distinct nonzero value is a solid arbitrary colour and
+only 0 is transparent, so a nonzero background paints over everything.
 
 This script prints, per node: the stored compression format, the stored pixel
 values, the same values from the TIFF on disk, the `image_is_label` verdict for
@@ -45,11 +52,30 @@ import castalign as ca
 from castalign import utils
 
 from analysis_paths import resolve_subslice_dir
-from subslice_graph_builder import GRAPH_PATH, _derive_graph_path
+from subslice_graph_builder import (
+    GRAPH_PATH, _derive_graph_path, load_single_subslice,
+)
 
 # utils.compress_image's format codes (castalign/utils.py:146-148, 153)
 _FORMATS = {0: "raw (unused)", 1: "vp9 video, LOSSY", 2: "jpeg, LOSSY",
             3: "gzip, lossless"}
+
+
+_STEM_MARKER = "_subslice_ALIGN_"
+
+
+def source_tif(node, subslice_dir):
+    """The TIFF a subslice node was built from, found by the node's own name.
+
+    A node is named `{stem}_{render folder}` (subslice_node_name), so the
+    folder it came from is in the name even after SUBSLICE_DIR has moved on to
+    a different cutoff. Both render folders live side by side under
+    <OUTPUT_ROOT>/subslice_align/.
+    """
+    if subslice_dir is None or _STEM_MARKER not in node:
+        return None
+    stem, folder = node.split(_STEM_MARKER, 1)
+    return Path(subslice_dir).parent / folder / f"{stem}{_STEM_MARKER[:-1]}.tif"
 
 
 def value_summary(arr, limit=8):
@@ -114,22 +140,30 @@ def describe(g, node, subslice_dir, pad_z, repeat):
     print(f"  in graph:  {img.shape} {img.dtype}")
     print(f"             {summary}")
 
-    # Same file on disk, if SUBSLICE_DIR still points at the render it came from
-    if subslice_dir is not None:
-        stem = node.rsplit(f"_{Path(subslice_dir).name}", 1)[0]
-        tif = Path(subslice_dir) / f"{stem}.tif"
-        if tif.exists():
-            import tifffile
-            disk = np.asarray(tifffile.imread(str(tif)))
-            disk_summary, _ = value_summary(disk)
-            print(f"  on disk:   {disk.shape} {disk.dtype}")
-            print(f"             {disk_summary}")
-            same = (disk.shape == img.shape[1:] and
-                    np.array_equal(disk, np.asarray(img)[0]))
-            print(f"  identical: {same}"
-                  f"{'' if same else '   <-- storage changed the pixels'}")
-        else:
-            print(f"  on disk:   not found ({tif})")
+    # The node carries its own render folder, so find the source TIFF by name
+    # rather than through the current SUBSLICE_DIR -- they differ whenever the
+    # config has moved on to another cutoff since the node was added.
+    tif = source_tif(node, subslice_dir)
+    if tif is not None and tif.exists():
+        disk = np.asarray(load_single_subslice(tif))
+        disk_summary, _ = value_summary(disk)
+        print(f"  on disk:   {tif}")
+        print(f"             {disk.shape} {disk.dtype}")
+        print(f"             {disk_summary}")
+        same = (disk.shape == img.shape and
+                np.array_equal(np.asarray(disk), np.asarray(img)))
+        print(f"  identical to graph: {same}"
+              f"{'' if same else '   <-- STORAGE CHANGED THE PIXELS'}")
+        disk_is_label = utils.image_is_label(disk)
+        would = "gzip, lossless" if disk_is_label else (
+            "vp9, LOSSY" if min(disk.shape) > 10 else "jpeg, LOSSY")
+        print(f"  image_is_label(file): {disk_is_label}"
+              f"  -> compression=\"normal\" would store it as {would}")
+        print(f"                        compression=\"label\" stores it as "
+              f"gzip, lossless regardless")
+    else:
+        print(f"  on disk:   not found"
+              f"{'' if tif is None else f' ({tif})'}")
 
     is_label = utils.image_is_label(img)
     print(f"  image_is_label(node image): {is_label}"
