@@ -116,5 +116,5 @@ BLOCK_STACK_PATH_RED = r"C:\Users\David\lab_local\projects\cell_type\data\050526
 BLOCK_STACK_PATH_GREEN = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo green.tif"
 
 # In-vivo 2P stack.
-INVIVO_PATH_RED = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\By95 invivo averaged 2x64 red.tif"
-INVIVO_PATH_GREEN = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\By95 invivo averaged 2x64 green.tif"
+INVIVO_PATH_RED = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\BY95 invivo run two crosstalk removed red.tif"
+INVIVO_PATH_GREEN = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\BY95 invivo run two crosstalk removed green.tif"
