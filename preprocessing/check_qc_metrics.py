@@ -202,7 +202,11 @@ def marker_distribution(expmat, marker_col, marker_name, reads_thr, genes_thr,
 
 
 def plot_marker_histogram(col, qc, marker_name, out_path, log_scale=True):
-    """Horizontal histogram: marker count on y, number of cells on x."""
+    """Histogram: rolony count per cell on x, number of cells on y.
+
+    Log y by default -- the distribution spans orders of magnitude, so on a
+    linear axis the 0-rolony bar flattens every cutoff-relevant bar to nothing.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -212,23 +216,25 @@ def plot_marker_histogram(col, qc, marker_name, out_path, log_scale=True):
     values = np.arange(0, vmax + 1)
     n_cells = np.array([(counts == v).sum() for v in values], dtype=np.int64)
 
-    fig, axes = plt.subplots(1, 2, figsize=(11, max(4.0, 0.22 * (vmax + 1))))
+    fig, axes = plt.subplots(2, 1, figsize=(max(9.0, 0.22 * (vmax + 1)), 8))
     for ax, lo, title in (
         (axes[0], 0, f"all QC-passing cells (n={counts.size})"),
         (axes[1], 1, f"{marker_name}+ only (n={int((counts > 0).sum())})"),
     ):
         sel = values >= lo
-        ax.barh(values[sel], n_cells[sel], height=0.8, color="#b03030")
+        ax.bar(values[sel], n_cells[sel], width=0.8, color="#b03030")
         ax.set_title(title, fontsize=10)
-        ax.set_xlabel("number of cells")
-        ax.set_ylabel(f"{marker_name} rolony count per cell")
+        ax.set_xlabel(f"{marker_name} rolony count per cell")
+        ax.set_ylabel("number of cells")
         if log_scale:
-            ax.set_xscale("log")
-        ax.invert_yaxis()
-        ax.grid(axis="x", alpha=0.3)
-        for v, n in zip(values[sel], n_cells[sel]):
-            if n:
-                ax.text(n, v, f" {n}", va="center", fontsize=6)
+            ax.set_yscale("log")
+        ax.grid(axis="y", alpha=0.3)
+        # Per-bar counts stop being readable once the axis is crowded.
+        if sel.sum() <= 60:
+            for v, n in zip(values[sel], n_cells[sel]):
+                if n:
+                    ax.annotate(f"{n}", (v, n), textcoords="offset points",
+                                xytext=(0, 2), ha="center", fontsize=6)
 
     fig.suptitle(f"{marker_name} counts per QC-passing cell", fontsize=11)
     fig.tight_layout()
@@ -290,7 +296,8 @@ def main():
     ap.add_argument("--out", help="histogram path (default: <ANALYSIS_ROOT>/preprocessing/"
                                   "qc_<marker>_counts.png, else cwd)")
     ap.add_argument("--no-plot", action="store_true", help="tables only, write nothing")
-    ap.add_argument("--linear", action="store_true", help="linear x axis instead of log")
+    ap.add_argument("--linear", action="store_true",
+                    help="linear cell-count axis instead of log")
     args = ap.parse_args()
 
     reported = None if args.no_reported else {
