@@ -114,11 +114,11 @@ with tempfile.TemporaryDirectory() as tmp:
     check("subject stamped", loaded.get('subject') == 'BY95')
 
     entry_b = o.make_entry('bottom', 'left', 'left', 'ventral', image='/data/invivo.tif')
-    o.save(path, 'invivo_ref', entry_b)
+    o.save(path, 'invivo', entry_b)
     loaded = o.load(path)
     check("second modality added without disturbing the first",
           loaded['modalities']['barseq_subslice'] == entry_a
-          and loaded['modalities']['invivo_ref'] == entry_b
+          and loaded['modalities']['invivo'] == entry_b
           and loaded.get('subject') == 'BY95')
 
     entry_c = o.make_entry('left', 'top', 'right', 'dorsal', image='/data/slice22.tif')
@@ -126,9 +126,9 @@ with tempfile.TemporaryDirectory() as tmp:
     loaded = o.load(path)
     check("re-running a modality replaces its entry, others untouched",
           loaded['modalities']['barseq_subslice'] == entry_c
-          and loaded['modalities']['invivo_ref'] == entry_b)
+          and loaded['modalities']['invivo'] == entry_b)
     check("codes() reads both", o.codes(path) ==
-          {'barseq_subslice': entry_c['code'], 'invivo_ref': entry_b['code']})
+          {'barseq_subslice': entry_c['code'], 'invivo': entry_b['code']})
     check("raw answers stored, not just the code",
           all(k in entry_a for k in
               ('anterior_edge', 'medial_edge', 'hemisphere', 'first_section',
@@ -147,9 +147,9 @@ rotated = o.derive_code('right', 'bottom', 'left', 'dorsal')
 check("agreement is not equality",
       rotated != 'VPR' and o.agree('VPR', rotated), f"VPR vs {rotated}")
 check("disagreeing_pair finds it",
-      o.disagreeing_pair({'invivo_ref': mirrored[0],
+      o.disagreeing_pair({'invivo': mirrored[0],
                           'barseq_subslice': mirrored[1]}) ==
-      ('barseq_subslice', 'invivo_ref'))
+      ('barseq_subslice', 'invivo'))
 check("disagreeing_pair returns None when all agree",
       o.disagreeing_pair({'a': 'VPR', 'b': 'VPR'}) is None)
 
@@ -165,14 +165,14 @@ for node in tree.body:
 check("builder defines both orientation functions", wanted <= set(ns))
 
 guard = ns['check_orientation_handedness']
-guard({'invivo_ref': 'VPR', 'ex_vivo_block': 'VPR'}, ['invivo_ref', 'ex_vivo_block'])
-guard({}, ['invivo_ref'])
-guard({'invivo_ref': 'VPR'}, ['invivo_ref', 'ex_vivo_block'])
-guard({'invivo_ref': 'VPR', 'barseq_subslice': 'VPL'}, ['invivo_ref'])  # not configured
+guard({'invivo': 'VPR', 'block_stack': 'VPR'}, ['invivo', 'block_stack'])
+guard({}, ['invivo'])
+guard({'invivo': 'VPR'}, ['invivo', 'block_stack'])
+guard({'invivo': 'VPR', 'barseq_subslice': 'VPL'}, ['invivo'])  # not configured
 check("guard passes on agreement, missing and unconfigured codes", True)
 try:
-    guard({'invivo_ref': 'VPR', 'barseq_subslice': 'VPL'},
-          ['invivo_ref', 'barseq_subslice'])
+    guard({'invivo': 'VPR', 'barseq_subslice': 'VPL'},
+          ['invivo', 'barseq_subslice'])
     check("guard raises on a mirror", False)
 except ValueError as e:
     check("guard raises on a mirror", 'handedness disagreement' in str(e).lower())
@@ -240,7 +240,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("section_codes() finds the deviant", per_section[31] == 'VPL',
           per_section.get(31))
     check("section_codes() on an unassigned modality is empty",
-          o.section_codes(path, 'invivo_ref') == {})
+          o.section_codes(path, 'invivo') == {})
 
     groups = o.handedness_groups(per_section)
     minority = groups[1] if len(groups[1]) < len(groups[-1]) else groups[-1]
@@ -269,10 +269,10 @@ with tempfile.TemporaryDirectory() as tmp:
     check("now unanimous", len(set(after.values())) == 1)
 
     # A second modality must survive a per-section write to the first.
-    o.save(path, 'invivo_ref', o.make_entry('top', 'right', 'left', 'dorsal'))
+    o.save(path, 'invivo', o.make_entry('top', 'right', 'left', 'dorsal'))
     o.save_sections(path, 'barseq_subslice', entries, subject='TEST')
     check("other modalities untouched by save_sections",
-          set(o.codes(path)) == {'barseq_subslice', 'invivo_ref'}, str(o.codes(path)))
+          set(o.codes(path)) == {'barseq_subslice', 'invivo'}, str(o.codes(path)))
 
     check("sort_sections orders numerically",
           o.sort_sections(['10', '2', '33']) == ['2', '10', '33'],

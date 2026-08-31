@@ -89,8 +89,8 @@ You need **at least one** of the four 2P paths or `SUBSLICE_DIR` set, or the bui
 Each 2P volume is acquired in two channels: red (sparsely-labelled, used for alignment fitting and Cellpose segmentation) and green (signal of interest). The two channels share a voxel grid in hardware, so they enter the graph as sibling nodes joined by `castalign.base.Identity()`. Rigid + nonlinear edges are fitted only on the `_red ↔ _red` pair; queries between green channels (or red↔green) compose through Identity automatically and cost nothing.
 
 Per-volume node names:
-- `invivo_ref_red`, `invivo_ref_green`
-- `ex_vivo_block_red`, `ex_vivo_block_green`
+- `invivo_red`, `invivo_green`
+- `block_stack_red`, `block_stack_green`
 
 If you only have a red channel today, leave the green path blank — the green node and Identity edge are simply skipped, and you can add green later by setting the path and re-running the builder (idempotent).
 

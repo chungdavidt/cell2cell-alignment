@@ -70,9 +70,17 @@ SUBSLICE_DIR = getattr(local_config, "SUBSLICE_DIR", "")
 # import (or --help) does not require a complete config.
 SCOPE = getattr(local_config, "SCOPE", "")
 
-# Legacy node names from the pre-multi-channel schema. Presence of either in a
-# loaded graph triggers the migration guard in build_subslice_graph().
-LEGACY_NODE_NAMES = {"invivo_ref", "ex_vivo_block"}
+# Node names this builder no longer writes. Presence of any in a loaded graph
+# triggers the migration guard in build_subslice_graph(). Two generations:
+# the pre-multi-channel schema had no _red/_green suffix at all, and the 2P
+# bases were renamed 2026-08-30 to match local_config's vocabulary
+# (INVIVO_PATH_* -> invivo_*, BLOCK_STACK_PATH_* -> block_stack_*).
+LEGACY_NODE_NAMES = {
+    "invivo_ref", "ex_vivo_block",
+    "invivo_ref_red", "invivo_ref_green",
+    "ex_vivo_block_red", "ex_vivo_block_green",
+    "invivo_ref_z_tilt_corrected_red", "invivo_ref_z_tilt_corrected_green",
+}
 
 import castalign as ca
 import numpy as np
@@ -375,7 +383,7 @@ def add_invivo_to_graph(
     red_spacing: Optional[tuple] = None,
     green_spacing: Optional[tuple] = None,
     orientation_code: Optional[str] = None,
-    base_name: str = "invivo_ref",
+    base_name: str = "invivo",
 ) -> ca.Graph:
     """Add in-vivo red/green nodes joined by Identity. See `_add_volume_channels`."""
     print(f"Adding in-vivo channels under base '{base_name}'...")
@@ -395,7 +403,7 @@ def add_block_to_graph(
     red_spacing: Optional[tuple] = None,
     green_spacing: Optional[tuple] = None,
     orientation_code: Optional[str] = None,
-    base_name: str = "ex_vivo_block",
+    base_name: str = "block_stack",
 ) -> ca.Graph:
     """Add ex-vivo block red/green nodes joined by Identity. See `_add_volume_channels`."""
     print(f"Adding ex-vivo block channels under base '{base_name}'...")
@@ -770,8 +778,8 @@ def build_subslice_graph(
     # -------------------------------------------------------------
     orientation_codes = load_orientation_codes()
     configured_modalities = (
-        (["invivo_ref"] if any_invivo else [])
-        + (["ex_vivo_block"] if any_block else [])
+        (["invivo"] if any_invivo else [])
+        + (["block_stack"] if any_block else [])
         + ([SUBSLICE_MODALITY] if subslice_dir else [])
     )
     check_orientation_handedness(orientation_codes, configured_modalities)
@@ -799,12 +807,15 @@ def build_subslice_graph(
     legacy_present = LEGACY_NODE_NAMES & set(g.nodes)
     if legacy_present:
         raise ValueError(
-            "Loaded graph contains legacy non-suffixed nodes from the\n"
-            "pre-multi-channel schema:\n"
+            "Loaded graph contains node names this builder no longer writes:\n"
             f"  {sorted(legacy_present)}\n\n"
-            "Rebuild with `force_rebuild=True` to migrate to the new\n"
-            "_red / _green naming. Rigid fits will need to be redone\n"
-            "(typically minutes via Mode D in the notebook).\n\n"
+            "Either the pre-multi-channel schema (no _red / _green suffix)\n"
+            "or the pre-2026-08-30 2P names, which were invivo_ref_* and\n"
+            "ex_vivo_block_* before they were renamed to match\n"
+            "local_config: invivo_* and block_stack_*.\n\n"
+            "Rebuild with `force_rebuild=True` to migrate. Fits on the\n"
+            "renamed nodes must be redone (minutes via Mode D in the\n"
+            "notebook); subslice fits go too.\n\n"
             "    build_subslice_graph(force_rebuild=True)"
         )
 
@@ -821,15 +832,15 @@ def build_subslice_graph(
         red_spacing = green_spacing = None
 
         if invivo_red_path:
-            if "invivo_ref_red" in existing_nodes:
-                print(f"  invivo_ref_red already in graph — skipping")
+            if "invivo_red" in existing_nodes:
+                print(f"  invivo_red already in graph — skipping")
             else:
                 red_stack = load_invivo_stack(invivo_red_path)
                 red_spacing, _ = spacing_for_tiff(invivo_red_path)
 
         if invivo_green_path:
-            if "invivo_ref_green" in existing_nodes:
-                print(f"  invivo_ref_green already in graph — skipping")
+            if "invivo_green" in existing_nodes:
+                print(f"  invivo_green already in graph — skipping")
             else:
                 green_stack = load_invivo_stack(invivo_green_path)
                 green_spacing, _ = spacing_for_tiff(invivo_green_path)
@@ -839,7 +850,7 @@ def build_subslice_graph(
                 g,
                 red_stack=red_stack, green_stack=green_stack,
                 red_spacing=red_spacing, green_spacing=green_spacing,
-                orientation_code=orientation_codes.get("invivo_ref"),
+                orientation_code=orientation_codes.get("invivo"),
             )
             del red_stack, green_stack
             save_graph(g, output_path, verbose=False)
@@ -855,15 +866,15 @@ def build_subslice_graph(
         red_spacing = green_spacing = None
 
         if block_red_path:
-            if "ex_vivo_block_red" in existing_nodes:
-                print(f"  ex_vivo_block_red already in graph — skipping")
+            if "block_stack_red" in existing_nodes:
+                print(f"  block_stack_red already in graph — skipping")
             else:
                 red_stack = load_block_stack(block_red_path)
                 red_spacing, _ = spacing_for_tiff(block_red_path)
 
         if block_green_path:
-            if "ex_vivo_block_green" in existing_nodes:
-                print(f"  ex_vivo_block_green already in graph — skipping")
+            if "block_stack_green" in existing_nodes:
+                print(f"  block_stack_green already in graph — skipping")
             else:
                 green_stack = load_block_stack(block_green_path)
                 green_spacing, _ = spacing_for_tiff(block_green_path)
@@ -873,7 +884,7 @@ def build_subslice_graph(
                 g,
                 red_stack=red_stack, green_stack=green_stack,
                 red_spacing=red_spacing, green_spacing=green_spacing,
-                orientation_code=orientation_codes.get("ex_vivo_block"),
+                orientation_code=orientation_codes.get("block_stack"),
             )
             del red_stack, green_stack
             save_graph(g, output_path, verbose=False)
@@ -904,10 +915,10 @@ def build_subslice_graph(
     print(f"Total nodes: {len(g.nodes)}")
     n_anchor = 0
     for label, present in [
-        ("invivo_ref_red",      "invivo_ref_red" in g.nodes),
-        ("invivo_ref_green",    "invivo_ref_green" in g.nodes),
-        ("ex_vivo_block_red",   "ex_vivo_block_red" in g.nodes),
-        ("ex_vivo_block_green", "ex_vivo_block_green" in g.nodes),
+        ("invivo_red",      "invivo_red" in g.nodes),
+        ("invivo_green",    "invivo_green" in g.nodes),
+        ("block_stack_red",   "block_stack_red" in g.nodes),
+        ("block_stack_green", "block_stack_green" in g.nodes),
     ]:
         if present:
             print(f"  - {label}")

@@ -28,7 +28,7 @@ the series BY DEFAULT, answering every section and recording a code per section
 under `sections` in the same JSON; the modality-level code becomes the majority.
 Walking it is also how you find out whether the assumption held for a brain.
 
-invivo_ref and ex_vivo_block are one acquisition with one frame, so they are
+invivo and block_stack are one acquisition with one frame, so they are
 assigned once, from a single image. That single-image form is available for
 barseq_subslice too, behind an explicit --image, and it records a modality-level
 code that REPLACES any per-section records — which is why it asks for --replace
@@ -38,7 +38,7 @@ Usage:
     python preprocessing/assign_orientation.py --modality barseq_subslice           # every section
     python preprocessing/assign_orientation.py --modality barseq_subslice --slice 22
     python preprocessing/assign_orientation.py --modality barseq_subslice --slices 4 9 22
-    python preprocessing/assign_orientation.py --modality invivo_ref     # image from local_config
+    python preprocessing/assign_orientation.py --modality invivo     # image from local_config
     python preprocessing/assign_orientation.py --modality barseq_subslice --image <path> --replace
     python preprocessing/assign_orientation.py --single-plane ...        # no section series
     python preprocessing/assign_orientation.py --show                    # print what is recorded
@@ -97,7 +97,7 @@ from utilities.image_io import imread_tiff
 # Modality keys match graph node base names, so the graph builder looks them up
 # directly. All BARseq subslices in a dataset share one orientation, so a single
 # subslice image covers them all.
-KNOWN_MODALITIES = ('barseq_subslice', 'invivo_ref', 'ex_vivo_block')
+KNOWN_MODALITIES = ('barseq_subslice', 'invivo', 'block_stack')
 
 # The one modality that is a SERIES of independently mounted sections rather
 # than a single acquisition, so it is the one walked section by section.
@@ -138,9 +138,9 @@ def default_image(modality: str, slice_id=None):
             f"{modality!r}. Pass --image explicitly."
         )
 
-    if modality == 'invivo_ref':
+    if modality == 'invivo':
         path = getattr(local_config, 'INVIVO_PATH_RED', '')
-    elif modality == 'ex_vivo_block':
+    elif modality == 'block_stack':
         path = getattr(local_config, 'BLOCK_STACK_PATH_RED', '')
     elif modality == 'barseq_subslice':
         from analysis_paths import resolve_subslice_dir
@@ -739,7 +739,7 @@ def resolve_subject(explicit):
 def assign_one(args, out_path, parser):
     """Assign one image, recorded at the modality level.
 
-    Right for invivo_ref and ex_vivo_block, which are one acquisition with one
+    Right for invivo and block_stack, which are one acquisition with one
     frame. For a section series it records one code and asserts every section
     shares it, so it REPLACES per-section records rather than updating them —
     `orientation.save` writes the modality entry whole. That is silent data
@@ -882,7 +882,7 @@ def main():
                    help=f"Graph node base name. Known: {', '.join(KNOWN_MODALITIES)}")
     p.add_argument('--image', default=None,
                    help='Assign on this one image and record ONE code for the '
-                        'modality (default for invivo_ref and ex_vivo_block, which '
+                        'modality (default for invivo and block_stack, which '
                         'are single acquisitions). For barseq_subslice this skips '
                         'the section pass, so it needs --replace to overwrite '
                         'per-section records.')

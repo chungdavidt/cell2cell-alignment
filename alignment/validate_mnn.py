@@ -4,7 +4,7 @@ MNN Alignment Validation - Cellpose centroids + rigid transform.
 Validates a castalign rigid alignment by:
   1. Loading cellpose _seg.npy masks for ex-vivo and in-vivo volumes
   2. Computing per-label centroids in voxel coordinates
-  3. Applying the fitted rigid transform (invivo_ref -> ex_vivo_block) to in-vivo centroids
+  3. Applying the fitted rigid transform (invivo -> block_stack) to in-vivo centroids
   4. Mutual-nearest-neighbor (MNN) match against ex-vivo centroids in voxel space
   5. Reporting the MNN distance distribution in voxel and um units
 
@@ -51,8 +51,8 @@ def _scope_um_per_voxel() -> tuple:
 # Validation operates on the red (sparse) alignment channel by design — it's the
 # segmentation channel and the only side with a fitted rigid edge. Green is
 # joined via Identity in the graph but is not segmented here.
-DEFAULT_NODE_MOVABLE = "invivo_ref_red"
-DEFAULT_NODE_FIXED = "ex_vivo_block_red"
+DEFAULT_NODE_MOVABLE = "invivo_red"
+DEFAULT_NODE_FIXED = "block_stack_red"
 
 
 # ------------------------------------------------------------------
