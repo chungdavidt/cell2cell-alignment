@@ -277,9 +277,13 @@ Examples:
         print("     Its rebuild cell owns this -- flip REBUILD = True, which calls")
         print("     build_subslice_graph(force_rebuild=True), then re-run the load cell.")
         print("     Read that cell's notes first: it is destructive of every fitted edge,")
-        print("     and it is what you want after a pitch change. Running the builder as")
-        print("     a script does NOT force-rebuild -- __main__ is a bare call with")
-        print("     force_rebuild=False, which now hard-errors on a shape mismatch.")
+        print("     and it is what you want after a pitch change. The script has the")
+        print("     same power behind an explicit flag:")
+        print("       python alignment/subslice_graph_builder.py --force-rebuild")
+        print("     Bare, it AUGMENTS instead -- adding only missing nodes, and hard-")
+        print("     erroring on a shape mismatch. To add another rolony cutoff without")
+        print("     touching what is aligned:")
+        print("       python alignment/subslice_graph_builder.py -d qc20_5_ge5")
 
 
 if __name__ == '__main__':

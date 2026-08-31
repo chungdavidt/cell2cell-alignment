@@ -28,9 +28,11 @@ Author: DTC
 Date: 2024-12-15
 """
 
+import argparse
+import re
 import sys
 from pathlib import Path
-from typing import Optional, Union, List
+from typing import Iterable, Optional, Union, List
 
 # Add project root to path for local_config import
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
@@ -126,6 +128,12 @@ def load_invivo_stack(path: Union[str, Path]) -> np.ndarray:
     print(f"  Type: {stack.dtype}")
 
     return stack
+
+
+def _slice_number(path: Union[str, Path]) -> Optional[int]:
+    """Section number from a `slice{N}_subslice_ALIGN.tif` filename."""
+    m = re.match(r"slice(\d+)_subslice", Path(path).name)
+    return int(m.group(1)) if m else None
 
 
 def subslice_node_name(path: Union[str, Path],
@@ -484,18 +492,35 @@ def add_subslices_to_graph(
     save_every: int = 10,
     output_path: Optional[Union[str, Path]] = None,
     orientation_code: Optional[str] = None,
+    slices: Optional[Iterable[int]] = None,
+    dry_run: bool = False,
     verbose: bool = True
 ) -> ca.Graph:
     """
-    Add all downsampled BARseq subslices to graph.
+    Add downsampled BARseq subslices from one render folder to the graph.
 
     Subslice spacing: (Z, Y, X) = (20.0, xy, xy) µm/px, where xy is SCOPE's
     in-plane pitch — the same pitch preprocessing resampled the images to.
     Z is the physical section thickness, not a pixel size.
+
+    `slices` restricts the add to those section numbers; None means every file
+    in the folder. `dry_run` reports what would be added and writes nothing.
     """
     spacing = subslice_spacing_zyx(SCOPE)
 
     files = discover_subslices(subslice_dir)
+
+    if slices is not None:
+        wanted = {int(n) for n in slices}
+        kept = [f for f in files if _slice_number(f) in wanted]
+        missing = wanted - {_slice_number(f) for f in files}
+        if missing:
+            raise FileNotFoundError(
+                f"--slices asked for sections not in {subslice_dir}:\n"
+                f"  {sorted(missing)}\n"
+                f"Present: {sorted(n for n in (_slice_number(f) for f in files) if n is not None)}"
+            )
+        files = kept
 
     # Check which are already in graph
     existing_nodes = set(graph.nodes)
@@ -520,6 +545,11 @@ def add_subslices_to_graph(
 
     if len(files_to_add) == 0:
         print("All subslices already in graph!")
+        return graph
+
+    if dry_run:
+        for _, node_name in files_to_add:
+            print(f"  would ADD: {node_name}")
         return graph
 
     added = 0
@@ -663,7 +693,10 @@ def _derive_graph_path(
 
 def build_subslice_graph(
     force_rebuild: bool = False,
-    save_every: int = 10
+    save_every: int = 10,
+    subslice_dirs: Optional[Iterable[Union[str, Path]]] = None,
+    slices: Optional[Iterable[int]] = None,
+    dry_run: bool = False,
 ) -> Path:
     """
     Build alignment graph from whatever is configured in local_config.py.
@@ -682,6 +715,16 @@ def build_subslice_graph(
         If True, delete existing graph before building
     save_every : int
         Save subslice checkpoint every N subslices
+    subslice_dirs : iterable of str or Path, optional
+        Render folders to ingest, overriding config's SUBSLICE_DIR. Each is
+        resolved the same way (relative names resolve under the preprocessing
+        output roots), and each becomes its own node set because
+        `subslice_node_name` appends the folder — so naming two cutoffs here
+        puts both in one graph in a single run.
+    slices : iterable of int, optional
+        Restrict the add to these section numbers. None means every file.
+    dry_run : bool
+        Report what would be added and write nothing.
 
     Returns
     -------
@@ -700,7 +743,10 @@ def build_subslice_graph(
     block_green_path = Path(BLOCK_STACK_PATH_GREEN) if BLOCK_STACK_PATH_GREEN else None
     # Relative SUBSLICE_DIR inherits preprocessing's overlay output dir and
     # names only the threshold folder; absolute is used verbatim; blank skips.
-    subslice_dir = resolve_subslice_dir(SUBSLICE_DIR)
+    # `subslice_dirs` overrides config so several cutoffs can be ingested in
+    # one run; each folder is its own node set, so they coexist.
+    requested = list(subslice_dirs) if subslice_dirs else [SUBSLICE_DIR]
+    subslice_paths = [d for d in (resolve_subslice_dir(v) for v in requested) if d]
 
     # Green-without-red on the same modality would dangle the Identity edge.
     if invivo_green_path and not invivo_red_path:
@@ -729,16 +775,17 @@ def build_subslice_graph(
                 f"  {p}\n"
                 f"Fix the path or leave {label} blank to skip that node."
             )
-    if subslice_dir and not subslice_dir.is_dir():
-        raise FileNotFoundError(
-            f"SUBSLICE_DIR resolved to something that is not a directory:\n"
-            f"  {subslice_dir}\n"
-            f"Fix the path or leave SUBSLICE_DIR blank to skip subslices."
-        )
+    for d in subslice_paths:
+        if not d.is_dir():
+            raise FileNotFoundError(
+                f"Subslice folder is not a directory:\n"
+                f"  {d}\n"
+                f"Fix the path, or leave SUBSLICE_DIR blank to skip subslices."
+            )
 
     any_invivo = bool(invivo_red_path or invivo_green_path)
     any_block = bool(block_red_path or block_green_path)
-    if not (any_invivo or any_block or subslice_dir):
+    if not (any_invivo or any_block or subslice_paths):
         raise ValueError(
             "No inputs configured in local_config.py — set at least one of:\n"
             "  INVIVO_PATH_RED / INVIVO_PATH_GREEN          (in vivo 2P stack)\n"
@@ -779,7 +826,14 @@ def build_subslice_graph(
     print(f"  invivo  green: {invivo_green_path if invivo_green_path else '(not set, skipping)'}")
     print(f"  block   red:   {block_red_path    if block_red_path    else '(not set, skipping)'}")
     print(f"  block   green: {block_green_path  if block_green_path  else '(not set, skipping)'}")
-    print(f"  subslices:     {subslice_dir      if subslice_dir      else '(not set, skipping)'}")
+    if subslice_paths:
+        for i, d in enumerate(subslice_paths):
+            print(f"  subslices:     {d}" if i == 0 else f"                 {d}")
+    else:
+        print(f"  subslices:     (not set, skipping)")
+    if dry_run:
+        print()
+        print("  DRY RUN — nothing will be written")
     print()
 
     # -------------------------------------------------------------
@@ -790,7 +844,7 @@ def build_subslice_graph(
     configured_modalities = (
         (["invivo"] if any_invivo else [])
         + (["block_stack"] if any_block else [])
-        + ([SUBSLICE_MODALITY] if subslice_dir else [])
+        + ([SUBSLICE_MODALITY] if subslice_paths else [])
     )
     check_orientation_handedness(orientation_codes, configured_modalities)
     print()
@@ -799,8 +853,11 @@ def build_subslice_graph(
     # Load or create graph
     # -------------------------------------------------------------
     if force_rebuild and output_path.exists():
-        print("Force rebuild — deleting existing graph")
-        output_path.unlink()
+        if dry_run:
+            print("Force rebuild — WOULD DELETE the existing graph")
+        else:
+            print("Force rebuild — deleting existing graph")
+            output_path.unlink()
 
     if output_path.exists():
         print("Existing graph found — augmenting with any missing nodes")
@@ -844,6 +901,8 @@ def build_subslice_graph(
         if invivo_red_path:
             if "invivo_red" in existing_nodes:
                 print(f"  invivo_red already in graph — skipping")
+            elif dry_run:
+                print(f"  would ADD: invivo_red")
             else:
                 red_stack = load_invivo_stack(invivo_red_path)
                 red_spacing, _ = spacing_for_tiff(invivo_red_path)
@@ -851,6 +910,8 @@ def build_subslice_graph(
         if invivo_green_path:
             if "invivo_green" in existing_nodes:
                 print(f"  invivo_green already in graph — skipping")
+            elif dry_run:
+                print(f"  would ADD: invivo_green")
             else:
                 green_stack = load_invivo_stack(invivo_green_path)
                 green_spacing, _ = spacing_for_tiff(invivo_green_path)
@@ -878,6 +939,8 @@ def build_subslice_graph(
         if block_red_path:
             if "block_stack_red" in existing_nodes:
                 print(f"  block_stack_red already in graph — skipping")
+            elif dry_run:
+                print(f"  would ADD: block_stack_red")
             else:
                 red_stack = load_block_stack(block_red_path)
                 red_spacing, _ = spacing_for_tiff(block_red_path)
@@ -885,6 +948,8 @@ def build_subslice_graph(
         if block_green_path:
             if "block_stack_green" in existing_nodes:
                 print(f"  block_stack_green already in graph — skipping")
+            elif dry_run:
+                print(f"  would ADD: block_stack_green")
             else:
                 green_stack = load_block_stack(block_green_path)
                 green_spacing, _ = spacing_for_tiff(block_green_path)
@@ -899,24 +964,30 @@ def build_subslice_graph(
             del red_stack, green_stack
             save_graph(g, output_path, verbose=False)
 
-    if subslice_dir:
+    for d in subslice_paths:
         print("\n3. Adding BARseq subslices")
         print("-" * 60)
-        print(f"  From: {subslice_dir}")
+        print(f"  From: {d}")
         add_subslices_to_graph(
             g,
-            subslice_dir=subslice_dir,
+            subslice_dir=d,
             save_every=save_every,
-            output_path=output_path,
+            output_path=None if dry_run else output_path,
             orientation_code=orientation_codes.get(SUBSLICE_MODALITY),
+            slices=slices,
+            dry_run=dry_run,
         )
 
     # -------------------------------------------------------------
     # Final save + summary
     # -------------------------------------------------------------
-    print("\nSaving final graph")
-    print("-" * 60)
-    save_graph(g, output_path)
+    if dry_run:
+        print("\nDry run — nothing written")
+        print("-" * 60)
+    else:
+        print("\nSaving final graph")
+        print("-" * 60)
+        save_graph(g, output_path)
 
     print("\n" + "=" * 60)
     print("GRAPH BUILD COMPLETE")
@@ -933,7 +1004,7 @@ def build_subslice_graph(
         if present:
             print(f"  - {label}")
             n_anchor += 1
-    if subslice_dir:
+    if subslice_paths:
         print(f"  - {len(g.nodes) - n_anchor} ex vivo subslices")
     print(f"\nReady for alignment in CASTalign!")
 
@@ -944,5 +1015,48 @@ def build_subslice_graph(
 # Usage
 # ============================================
 
+def main():
+    ap = argparse.ArgumentParser(
+        description="Build or augment the alignment graph from local_config.py",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Default (no flags) AUGMENTS: every node already in the graph is left alone and
+anything missing is added, reading SUBSLICE_DIR from local_config.py.
+
+A subslice node is named `{stem}_{render folder}`, so each rolony cutoff is its
+own node set and several coexist in one graph. Naming folders here overrides
+the config value and can ingest more than one in a single run:
+
+    python alignment/subslice_graph_builder.py                       # config's SUBSLICE_DIR
+    python alignment/subslice_graph_builder.py -d qc20_5_ge3 -d qc20_5_ge5
+    python alignment/subslice_graph_builder.py -d qc20_5_ge5 --slices 1 22
+    python alignment/subslice_graph_builder.py --dry-run             # report, write nothing
+
+--force-rebuild WIPES the .db and every fitted edge, including the hand-made
+block_stack_red -> invivo_red fit, which exists nowhere else. Back it up first.
+""")
+    ap.add_argument("-d", "--subslice-dir", action="append", default=None,
+                    metavar="DIR",
+                    help="render folder to ingest (repeatable); relative names "
+                         "resolve like SUBSLICE_DIR. Default: config's value")
+    ap.add_argument("--slices", type=int, nargs="+", default=None, metavar="N",
+                    help="only these section numbers (default: every file)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="report what would be added; write nothing")
+    ap.add_argument("--force-rebuild", action="store_true",
+                    help="DESTRUCTIVE: delete the graph and every fitted edge first")
+    ap.add_argument("--save-every", type=int, default=10, metavar="N",
+                    help="checkpoint every N subslices (default: 10)")
+    args = ap.parse_args()
+
+    build_subslice_graph(
+        force_rebuild=args.force_rebuild,
+        save_every=args.save_every,
+        subslice_dirs=args.subslice_dir,
+        slices=args.slices,
+        dry_run=args.dry_run,
+    )
+
+
 if __name__ == "__main__":
-    build_subslice_graph()
+    main()
