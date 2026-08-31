@@ -108,7 +108,7 @@ GRAPH_PATH = r""
 # so switching cutoffs ADDS a parallel node set to an existing graph rather than
 # replacing one. The old set keeps its own alignment; the new one is aligned by
 # hand. force_rebuild=True is the reset.
-SUBSLICE_DIR = r"qc20_5_ge3"
+SUBSLICE_DIR = r"qc20_5_ge5"
 
 
 # Ex-vivo block, 2P volume of the tissue before slicing.
