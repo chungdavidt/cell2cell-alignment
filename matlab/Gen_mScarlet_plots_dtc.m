@@ -21,7 +21,7 @@ counts = [];
 
 for nn= 1:numel(uniq_slices)
     in_slice=filt_neurons.slice==uniq_slices(nn);
-    f = figure('Position',[50 50 600 400],'Visible','off');
+    f = figure('Position',[50 50 600 400]);
     med_count= full(median(sum(filt_neurons.expmat(in_slice&pass_qc,:),2)));
     disp('Slice number: ' + string(nn) + '   Median count: ' + string(med_count));
     scatter(filt_neurons.pos(in_slice&pass_qc,1)*um_per_px,filt_neurons.pos(in_slice&pass_qc,2)*um_per_px, ...
