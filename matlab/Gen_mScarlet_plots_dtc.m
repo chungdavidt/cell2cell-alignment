@@ -1,6 +1,7 @@
 % Gen_mScarlet_plots_dtc.m -- Gen_mScarlet_plots.m drawn square: x and y span the same
 % range and one unit is the same length on both axes, so the scatter has
-% the section's proportions. Everything else is unchanged.
+% the section's proportions. Saves a .png beside each .fig. Everything
+% else is unchanged.
 
 reads_thresh=20;
 genes_thresh=5;
@@ -38,6 +39,7 @@ for nn= 1:numel(uniq_slices)
     end
     cd('mScarlet_plots_dtc')
     savefig('Slice number' + string(nn))
+    exportgraphics(f, 'Slice number' + string(nn) + '.png', 'Resolution', 300)
     cd ..
     close(f);
 end
