@@ -1,10 +1,6 @@
-% Gen_GCaMP_plots_dtc.m -- Gen_GCaMP_plots.m with the figure drawn to scale.
-% Axes are microns, not filt_neurons.pos units, and the aspect is square,
-% so the scatter has the same geometry as the section. Everything else --
-% column, thresholds, QC mask, clim, printouts -- is unchanged.
-
-% filt_neurons.pos pitch. pos*2 is the 0.32 um/px stitched canvas.
-um_per_px = 0.64;
+% Gen_GCaMP_plots_dtc.m -- Gen_GCaMP_plots.m with the x and y axes at equal pixel
+% spacing, so the scatter comes out with the section's proportions instead
+% of being stretched to the figure window. Everything else is unchanged.
 
 reads_thresh=20;
 genes_thresh=5;
@@ -24,14 +20,13 @@ for nn= 1:numel(uniq_slices)
     f = figure('Position',[50 50 600 400]);
     med_count= full(median(sum(filt_neurons.expmat(in_slice&pass_qc,:),2)));
     disp('Slice number: ' + string(nn) + '   Median count: ' + string(med_count));
-    scatter(filt_neurons.pos(in_slice&pass_qc,1)*um_per_px,filt_neurons.pos(in_slice&pass_qc,2)*um_per_px, ...
+    scatter(filt_neurons.pos(in_slice&pass_qc,1),filt_neurons.pos(in_slice&pass_qc,2), ...
         5,...
         countspercell(in_slice&pass_qc),...
         'filled');
     clim([0 5]);
     set(gca,'ydir','reverse')
     axis image
-    xlabel('\mum'); ylabel('\mum')
     colorbar;
     title(sprintf('slice %u',uniq_slices(nn)));
     disp('_______________________________________________________________')
