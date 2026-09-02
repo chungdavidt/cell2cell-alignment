@@ -39,6 +39,11 @@ Output (full resolution, no downsampling):
     <OUTPUT_ROOT>/HYB_slice_stitched_tif/slice{N}_{GCAMP,DAPI,MSCARLET}.tif
     <OUTPUT_ROOT>/HYB_slice_stitched_tif/slice{N}_CELLMASK.h5
 
+Each channel TIF carries labelled scale bars BURNED INTO ITS PIXELS in the
+bottom-left corner -- see SCALE_BAR_LENGTHS_UM below. They are drawn here, after
+stitch_fov_channels returns, never inside it, so they reach these images and
+nothing else. The cellmask is left alone: it is a label array, not a picture.
+
 The names carry no `subslice` token on purpose: `downsample_subslices_cellmask.py`
 globs `slice*_subslice_CELLMASK*` and the graph builder globs
 `*_subslice_ALIGN.tif`, so neither can pick these up.
@@ -74,6 +79,7 @@ from preprocessing_config import (
     HYB_CHANNELS_DIR,
     HYB_SLICE_STITCHED_DIR,
     FOV_SIZE,
+    EXVIVO_UM_PER_PX,
 )
 from stitch_subslices import stitch_fov_channels
 from utilities.mat_io import load_filt_neurons, save_cellmask_h5
@@ -89,6 +95,120 @@ MIN_ROWS = 1
 # Below this the regression cannot leave its slope free, so calculate_fov_offset
 # pins it at 1. Mirrored here only so --dry-run can count and report it.
 SLOPE_FIT_MIN_ROWS = 3
+
+
+# ------------------------------------------------------------------
+# Scale bars
+#
+# Burned into the pixels of the three channel TIFs. These images exist to be
+# eyeballed, and a burned bar stays at the right physical length through any
+# later crop or downsample, where an annotation drawn on a figure would not.
+#
+# All of it lives in this file rather than utilities/ so it cannot reach
+# stitch_subslices.stitch_fov_channels, and from there step 3's downsample,
+# step 4's overlay and the ALIGN tif the graph is fitted on.
+#
+# Not drawn on the cellmask: that canvas is uint32 where every nonzero value is
+# a cell id, so a bar would be a fake cell whose value collides with a real one.
+# ------------------------------------------------------------------
+
+# Bar lengths in um, stacked in the bottom-left with the longest at the bottom.
+# At EXVIVO_UM_PER_PX (0.32) a 20 um bar is 62 px and a 50 um bar 156 px on a
+# canvas over 10,000 px wide -- legible zoomed in on cells, invisible with the
+# whole section on screen, which is what the 1000 um bar is for. Edit freely.
+SCALE_BAR_LENGTHS_UM = (20.0, 50.0, 1000.0)
+
+# Inset from the left and bottom edges, and the vertical gap between one bar's
+# block and the next. Physical, so they hold at any resolution.
+SCALE_BAR_MARGIN_UM = 60.0
+SCALE_BAR_SPACING_UM = 40.0
+
+# Each bar's thickness is a fraction of its own length, so a 20 um bar is not a
+# slab and a 1 mm bar is not a hair. Clamped at both ends.
+SCALE_BAR_THICKNESS_FRACTION = 1.0 / 12.0
+SCALE_BAR_THICKNESS_MIN_PX = 4
+SCALE_BAR_THICKNESS_MAX_PX = 120
+
+# Label height as a multiple of its bar's thickness.
+SCALE_BAR_LABEL_SCALE = 2.0
+
+
+def _render_label(text, height_px):
+    """Boolean mask of `text` drawn in white, roughly `height_px` tall.
+
+    PIL's default bitmap font is ~11 px tall, a smudge on a canvas thousands of
+    px wide, and a TrueType font would be a font path to configure per machine.
+    Rendering at the default size and repeating each pixel an integer number of
+    times is blocky and needs nothing beyond Pillow, which is already required.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    font = ImageFont.load_default()
+    probe = ImageDraw.Draw(Image.new('L', (1, 1)))
+    left, top, right, bottom = probe.textbbox((0, 0), text, font=font)
+    w, h = max(right - left, 1), max(bottom - top, 1)
+
+    small = Image.new('L', (w, h), 0)
+    ImageDraw.Draw(small).text((-left, -top), text, fill=255, font=font)
+    mask = np.array(small) > 0
+
+    factor = max(1, int(round(height_px / h)))
+    return np.repeat(np.repeat(mask, factor, axis=0), factor, axis=1)
+
+
+def draw_scale_bars(image, um_per_px, lengths_um=SCALE_BAR_LENGTHS_UM):
+    """Burn labelled white scale bars into the bottom-left of `image`, in place.
+
+    Returns (overwritten, drawn): how many of the pixels the bars and labels
+    cover were nonzero beforehand, out of how many were written. That is the
+    occlusion report -- a bar destroys whatever was under it, and the bottom-left
+    corner of a bounding box over FOV placements is *usually* empty but is not
+    guaranteed to be. 0 out of N means the bars landed on blank canvas; a large
+    fraction means one is sitting on tissue and the corner should change.
+
+    White is the canvas's own maximum, not the dtype's. Once a 65535 pixel
+    exists in a raw uint16 fluorescence canvas that really peaks at a few
+    thousand, any autoscaling viewer stretches its display range to 65535 and
+    darkens the tissue the image exists to show.
+    """
+    height, width = image.shape[:2]
+    white = int(image.max()) or int(np.iinfo(image.dtype).max)
+
+    margin = int(round(SCALE_BAR_MARGIN_UM / um_per_px))
+    spacing = int(round(SCALE_BAR_SPACING_UM / um_per_px))
+
+    overwritten = 0
+    drawn = 0
+    y = height - margin  # bottom edge of the next bar, exclusive
+
+    for length_um in sorted(lengths_um, reverse=True):
+        length_px = int(round(length_um / um_per_px))
+        thickness = int(np.clip(round(length_px * SCALE_BAR_THICKNESS_FRACTION),
+                                SCALE_BAR_THICKNESS_MIN_PX,
+                                SCALE_BAR_THICKNESS_MAX_PX))
+        label = _render_label(f"{length_um:g} um",
+                              SCALE_BAR_LABEL_SCALE * thickness)
+        label_h, label_w = label.shape
+        block_h = thickness + spacing // 2 + label_h
+
+        if margin + max(length_px, label_w) > width or y - block_h < 0:
+            print(f"    Scale bar {length_um:g} um does not fit this canvas, skipped")
+            continue
+
+        bar = image[y - thickness:y, margin:margin + length_px]
+        overwritten += int(np.count_nonzero(bar))
+        drawn += bar.size
+        bar[:] = white
+
+        label_bottom = y - thickness - spacing // 2
+        text = image[label_bottom - label_h:label_bottom, margin:margin + label_w]
+        overwritten += int(np.count_nonzero(text[label]))
+        drawn += int(label.sum())
+        text[label] = white
+
+        y = label_bottom - label_h - spacing
+
+    return overwritten, drawn
 
 
 def slice_fov_lists(filt_neurons, targets=None):
@@ -245,9 +365,11 @@ def stitch_slices(targets=None, dry_run=False):
         prefix = f"slice{slice_id}"
 
         for channel, image in (("GCAMP", gcamp), ("DAPI", dapi), ("MSCARLET", mscarlet)):
+            occluded, painted = draw_scale_bars(image, EXVIVO_UM_PER_PX)
             path = output_dir / f"{prefix}_{channel}.tif"
             imwrite_tiff(path, image)
-            print(f"    {channel}: {get_file_size_mb(path):.1f} MB")
+            print(f"    {channel}: {get_file_size_mb(path):.1f} MB"
+                  f"   scale bars covered {occluded}/{painted} nonzero px")
 
         cellmask_file = output_dir / f"{prefix}_CELLMASK.h5"
         save_cellmask_h5(cellmask_file, cellmask, metadata={
