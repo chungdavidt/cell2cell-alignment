@@ -99,6 +99,10 @@ SUBSLICE_DEFINITIONS_DIR = os.path.join(OUTPUT_ROOT, "subslice_definitions")
 HYB_CHANNELS_DIR = os.path.join(OUTPUT_ROOT, "hyb_channels")
 HYB_STITCHED_DIR = os.path.join(OUTPUT_ROOT, "HYB_subslice_stitched_tif")
 HYB_DOWNSAMPLED_DIR = os.path.join(OUTPUT_ROOT, "HYB_subslice_stitched_tif_downsampled_micronwise")
+# Whole sections, every FOV that has a cell in the slice. Written by
+# stitch_slices.py, outside the 7-step run. The name carries no "subslice"
+# token so the step 3 and graph-builder globs cannot pick these up.
+HYB_SLICE_STITCHED_DIR = os.path.join(OUTPUT_ROOT, "HYB_slice_stitched_tif")
 MSCARLET_CELLMASK_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_cellmask_subslice")
 # Binary marker-only images the graph aligns on. One subdirectory per gate
 # combination, named by generate_alignment_tif.py.
