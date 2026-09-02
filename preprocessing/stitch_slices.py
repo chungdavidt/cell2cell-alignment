@@ -113,24 +113,23 @@ SLOPE_FIT_MIN_ROWS = 3
 # ------------------------------------------------------------------
 
 # Bar lengths in um, stacked in the bottom-left with the longest at the bottom.
-# At EXVIVO_UM_PER_PX (0.32) these are 62, 156 and 312 px, against a canvas over
-# 10,000 px wide -- all three are read zoomed in on cells, not with the whole
-# section on screen. Edit freely.
-SCALE_BAR_LENGTHS_UM = (20.0, 50.0, 100.0)
+# At EXVIVO_UM_PER_PX (0.32) these are 62, 312 and 781 px, against a canvas over
+# 10,000 px wide -- read zoomed in on cells, not with the whole section on
+# screen. Edit freely.
+SCALE_BAR_LENGTHS_UM = (20.0, 100.0, 250.0)
 
 # Inset from the left and bottom edges, and the vertical gap between one bar's
 # block and the next. Physical, so they hold at any resolution.
 SCALE_BAR_MARGIN_UM = 60.0
 SCALE_BAR_SPACING_UM = 40.0
 
-# One thickness for every bar, physical like the rest of these. 3 um is 9 px at
-# EXVIVO_UM_PER_PX, what the 100 um bar drew when thickness was a fraction of
-# each bar's own length -- that scheme is gone, so a 20 um bar and a 100 um bar
-# now differ in length only.
-SCALE_BAR_THICKNESS_UM = 3.0
+# One thickness for every bar, physical like the rest of these. Bars differ in
+# length only. 6 um is 19 px at EXVIVO_UM_PER_PX.
+SCALE_BAR_THICKNESS_UM = 6.0
 
 # Label height as a multiple of the bar thickness, so every label is the same
-# size too. 6.0 puts it at 55 px against a 9 px bar.
+# size too, and doubling the thickness doubles the text with it. 6.0 puts it at
+# 110 px against a 19 px bar.
 SCALE_BAR_LABEL_SCALE = 6.0
 
 
