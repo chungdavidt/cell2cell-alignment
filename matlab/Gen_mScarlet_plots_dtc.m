@@ -1,12 +1,12 @@
-% Gen_GCaMP_plots_dtc.m
+% Gen_mScarlet_plots_dtc.m
 %
 % Per-slice counts-per-cell scatter, drawn in the stitched-canvas frame so it
 % overlays stitch_slices.py's whole-slice channel TIFs pixel for pixel.
 %
-% Differs from Gen_GCaMP_plots.m in geometry only. The data path -- expmat
+% Differs from Gen_mScarlet_plots.m in geometry only. The data path -- expmat
 % column, QC mask, colour, clim, median-count printout -- is unchanged.
 %
-%   Gen_GCaMP_plots.m         this script
+%   Gen_mScarlet_plots.m      this script
 %   ---------------------     ---------------------------------------------
 %   scatter(pos1, pos2)       scatter at pos*2 - (min_offset - 1)
 %   axes aspect from figure   daspect [1 1 1]: one data unit is square
@@ -31,20 +31,20 @@
 % marker-filtered FOV list in subslice_definitions.mat, which filt_neurons alone
 % does not determine.
 %
-% Standalone by design. Gen_mScarlet_plots_dtc.m is the same script with
+% Standalone by design. Gen_GCaMP_plots_dtc.m is the same script with
 % GENE_COL, CLIM_MAX, OUT_DIR and BACKGROUND_CHANNEL retargeted -- fix one
 % and fix the other. Their originals drifted apart exactly here.
 %
 % Requires filt_neurons in the workspace with fields expmat, slice, pos, pos40x
-% and fov. Gen_GCaMP_plots.m needs only the first three.
+% and fov. Gen_mScarlet_plots.m needs only the first three.
 
 %% ---------------------------------------------------------------- config
 
-% expmat column, MATLAB 1-indexed. 112 GCaMP, 114 mScarlet. Index only -- the
+% expmat column, MATLAB 1-indexed. 114 mScarlet, 112 GCaMP. Index only -- the
 % 114-gene panel labels these slots with stale gene names.
-GENE_COL   = 112;
-CLIM_MAX   = 20;              % 20 for GCaMP, 10 for mScarlet
-OUT_DIR    = 'GCaMP_plots_dtc';
+GENE_COL   = 114;
+CLIM_MAX   = 10;              % 10 for mScarlet, 20 for GCaMP
+OUT_DIR    = 'mScarlet_plots_dtc';
 
 % Marker plotting is deliberately ungated on transcriptome quality; this is not
 % the 20/5 cell-typing pair in local_config.py.
@@ -63,10 +63,10 @@ EXVIVO_UM_PER_PX = 0.32;      % scope_profiles.EXVIVO_UM_PER_PX
 FOV_SIZE         = 3200;      % preprocessing_config.FOV_SIZE
 CELL_DIAMETER_UM = 10;        % marker diameter, drawn to scale
 
-% Folder holding slice%d_GCAMP.tif from stitch_slices.py. Empty draws no
+% Folder holding slice%d_MSCARLET.tif from stitch_slices.py. Empty draws no
 % background and leaves the axes set up for one.
 BACKGROUND_DIR = '';
-BACKGROUND_CHANNEL = 'GCAMP';
+BACKGROUND_CHANNEL = 'MSCARLET';
 
 SLICES    = [];               % [] = every slice
 WRITE_CSV = true;             % mapped coordinates + counts, per slice
