@@ -133,27 +133,67 @@ SCALE_BAR_THICKNESS_UM = 6.0
 SCALE_BAR_LABEL_SCALE = 6.0
 
 
-def _render_label(text, height_px):
-    """Boolean mask of `text` drawn in white, roughly `height_px` tall.
+# Scalable fonts tried in order, by the bare names PIL resolves against the
+# system font directories. Arial ships with Windows, DejaVu with matplotlib and
+# most Linux distributions.
+SCALE_BAR_FONTS = ("arialbd.ttf", "arial.ttf", "DejaVuSans-Bold.ttf", "DejaVuSans.ttf")
 
-    PIL's default bitmap font is ~11 px tall, a smudge on a canvas thousands of
-    px wide, and a TrueType font would be a font path to configure per machine.
-    Rendering at the default size and repeating each pixel an integer number of
-    times is blocky and needs nothing beyond Pillow, which is already required.
-    """
-    from PIL import Image, ImageDraw, ImageFont
 
-    font = ImageFont.load_default()
+def _text_mask(text, font):
+    """Boolean mask of `text` rendered by `font`, cropped to its ink."""
+    from PIL import Image, ImageDraw
+
     probe = ImageDraw.Draw(Image.new('L', (1, 1)))
     left, top, right, bottom = probe.textbbox((0, 0), text, font=font)
     w, h = max(right - left, 1), max(bottom - top, 1)
 
-    small = Image.new('L', (w, h), 0)
-    ImageDraw.Draw(small).text((-left, -top), text, fill=255, font=font)
-    mask = np.array(small) > 0
+    canvas = Image.new('L', (w, h), 0)
+    ImageDraw.Draw(canvas).text((-left, -top), text, fill=255, font=font)
+    return np.array(canvas) > 0
 
-    factor = max(1, int(round(height_px / h)))
-    return np.repeat(np.repeat(mask, factor, axis=0), factor, axis=1)
+
+def _render_label(text, height_px):
+    """Boolean mask of `text` drawn in white, `height_px` tall.
+
+    A scalable font where one can be found. This drew with PIL's default bitmap
+    font at first, whose glyphs are ~11 px tall -- about 5x7 px per digit -- and
+    reached this size by repeating each pixel 10 times. At 5x7 a 5 and a 6 differ
+    by one pixel, which that upscale turns into one 10 px block, and "250 um"
+    reads as "260 um". The blocky upscale survives only as the fallback for a
+    machine with no usable font at all.
+    """
+    from PIL import ImageFont
+
+    target = max(1, int(round(height_px)))
+
+    font = None
+    for name in SCALE_BAR_FONTS:
+        try:
+            font = ImageFont.truetype(name, target)
+            break
+        except OSError:
+            continue
+    if font is None:
+        try:
+            font = ImageFont.load_default(size=target)  # Pillow >= 10.1
+        except TypeError:
+            print(f"    No scalable font found; labels fall back to a {target}x "
+                  f"upscale of PIL's bitmap font and digits may misread")
+            mask = _text_mask(text, ImageFont.load_default())
+            factor = max(1, int(round(target / mask.shape[0])))
+            return np.repeat(np.repeat(mask, factor, axis=0), factor, axis=1)
+
+    # A font's em size is not its glyph height, so `target` px of font gives
+    # digits some fraction of that tall. Measure once and correct.
+    mask = _text_mask(text, font)
+    if mask.shape[0] != target:
+        corrected = max(1, int(round(target * target / mask.shape[0])))
+        try:
+            font = ImageFont.truetype(font.path, corrected)
+        except (AttributeError, OSError):
+            font = ImageFont.load_default(size=corrected)
+        mask = _text_mask(text, font)
+    return mask
 
 
 def draw_scale_bars(image, um_per_px, lengths_um=SCALE_BAR_LENGTHS_UM):
