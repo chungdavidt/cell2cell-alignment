@@ -113,10 +113,10 @@ SLOPE_FIT_MIN_ROWS = 3
 # ------------------------------------------------------------------
 
 # Bar lengths in um, stacked in the bottom-left with the longest at the bottom.
-# At EXVIVO_UM_PER_PX (0.32) a 20 um bar is 62 px and a 50 um bar 156 px on a
-# canvas over 10,000 px wide -- legible zoomed in on cells, invisible with the
-# whole section on screen, which is what the 1000 um bar is for. Edit freely.
-SCALE_BAR_LENGTHS_UM = (20.0, 50.0, 1000.0)
+# At EXVIVO_UM_PER_PX (0.32) these are 62, 156 and 312 px, against a canvas over
+# 10,000 px wide -- all three are read zoomed in on cells, not with the whole
+# section on screen. Edit freely.
+SCALE_BAR_LENGTHS_UM = (20.0, 50.0, 100.0)
 
 # Inset from the left and bottom edges, and the vertical gap between one bar's
 # block and the next. Physical, so they hold at any resolution.
@@ -124,13 +124,16 @@ SCALE_BAR_MARGIN_UM = 60.0
 SCALE_BAR_SPACING_UM = 40.0
 
 # Each bar's thickness is a fraction of its own length, so a 20 um bar is not a
-# slab and a 1 mm bar is not a hair. Clamped at both ends.
-SCALE_BAR_THICKNESS_FRACTION = 1.0 / 12.0
+# slab and a long one is not a hair. Clamped at both ends. Was 1/12, which drew
+# a slab at 1 mm.
+SCALE_BAR_THICKNESS_FRACTION = 1.0 / 36.0
 SCALE_BAR_THICKNESS_MIN_PX = 4
-SCALE_BAR_THICKNESS_MAX_PX = 120
+SCALE_BAR_THICKNESS_MAX_PX = 40
 
-# Label height as a multiple of its bar's thickness.
-SCALE_BAR_LABEL_SCALE = 2.0
+# Label height as a multiple of its bar's thickness. 6.0 against a 1/36 fraction
+# is the same absolute text size 2.0 gave against 1/12: thinning the bars was
+# not meant to shrink their labels. Raise it if the text is still too small.
+SCALE_BAR_LABEL_SCALE = 6.0
 
 
 def _render_label(text, height_px):
