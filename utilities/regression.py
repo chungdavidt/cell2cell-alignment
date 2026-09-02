@@ -115,39 +115,65 @@ def linear_regression(
 def calculate_fov_offset(
     pos: np.ndarray,
     pos40x: np.ndarray,
-    scale_factor: float = 2.0
-) -> Tuple[int, int]:
+    scale_factor: float = 2.0,
+    fit_slope: bool = True,
+    return_slope: bool = False,
+):
     """
-    Calculate FOV offset using regression on cell positions.
+    Calculate FOV offset from the cell positions inside it.
 
     This is the core calculation from stitch_subslices.m:
         pos * scale_factor = offset + pos40x
         offset = intercept from regression
 
+    The model fixes the slope at 1 — the two coordinate systems differ by a
+    translation and the `scale_factor` already applied — but the default fit
+    leaves it free and discards it, which is why it needs 3 cells to be
+    over-determined and raises below that. `fit_slope=False` pins the slope at 1
+    and averages `pos*scale - pos40x` instead, so a FOV with a single cell can
+    still be placed. Callers that stitch every FOV of a slice need that; step 2's
+    subslice stitching keeps the default so its output is unchanged.
+
     Args:
         pos: Cell positions in full-resolution space (N, 2)
         pos40x: Cell positions in 40x space (N, 2)
         scale_factor: Scale factor (default 2.0)
+        fit_slope: Fit and discard a slope (default, needs >= 3 cells), or pin
+            it at 1 and average the residual (needs >= 1)
+        return_slope: Also return the fitted (x, y) slopes — the quantity the
+            default path throws away, and the check on whether pinning it costs
+            anything. Slopes are None when fit_slope=False.
 
     Returns:
-        Tuple of (x_offset, y_offset) as integers
+        (x_offset, y_offset) as integers, or
+        (x_offset, y_offset, (x_slope, y_slope)) when return_slope is True
 
     Raises:
-        ValueError: If fewer than 3 cells provided
+        ValueError: If too few cells for the chosen estimator
     """
     pos = np.asarray(pos)
     pos40x = np.asarray(pos40x)
 
-    if pos.shape[0] < 3:
-        raise ValueError(f"Need at least 3 cells for regression, got {pos.shape[0]}")
+    if fit_slope:
+        if pos.shape[0] < 3:
+            raise ValueError(f"Need at least 3 cells for regression, got {pos.shape[0]}")
 
-    # X offset: pos(:,1)*2 = offset_x + pos40x(:,1)
-    # IMPORTANT: MATLAB uses 1-indexed columns, Python uses 0-indexed
-    # pos(:,1) in MATLAB = pos[:,0] in Python (x coordinate)
-    # pos(:,2) in MATLAB = pos[:,1] in Python (y coordinate)
-    x_offset, _ = linear_regression(pos40x[:, 0], pos[:, 0] * scale_factor)
+        # X offset: pos(:,1)*2 = offset_x + pos40x(:,1)
+        # IMPORTANT: MATLAB uses 1-indexed columns, Python uses 0-indexed
+        # pos(:,1) in MATLAB = pos[:,0] in Python (x coordinate)
+        # pos(:,2) in MATLAB = pos[:,1] in Python (y coordinate)
+        x_offset, x_slope = linear_regression(pos40x[:, 0], pos[:, 0] * scale_factor)
 
-    # Y offset
-    y_offset, _ = linear_regression(pos40x[:, 1], pos[:, 1] * scale_factor)
+        # Y offset
+        y_offset, y_slope = linear_regression(pos40x[:, 1], pos[:, 1] * scale_factor)
+    else:
+        if pos.shape[0] < 1:
+            raise ValueError("Need at least 1 cell to place a FOV, got 0")
 
+        x_offset = float(np.mean(pos[:, 0] * scale_factor - pos40x[:, 0]))
+        y_offset = float(np.mean(pos[:, 1] * scale_factor - pos40x[:, 1]))
+        x_slope = y_slope = None
+
+    if return_slope:
+        return round(x_offset), round(y_offset), (x_slope, y_slope)
     return round(x_offset), round(y_offset)

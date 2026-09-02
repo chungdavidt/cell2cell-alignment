@@ -18,14 +18,18 @@ one row in that slice -- that mapping exists nowhere else, since the raw
 directories are named `MAX_Pos{N}_{row}_{col}` with nothing naming a slice.
 
 Stitching is `stitch_subslices.stitch_fov_channels`, imported rather than copied
-so the two cannot drift. Everything it does is inherited as-is:
+so the two cannot drift:
 
   - Each FOV is placed by regressing `pos*2 = offset + pos40x` on its own rows in
     that slice, counted over raw filt_neurons rows (the QC and marker screens do
     not reach this code).
-  - A FOV with fewer than 3 rows in the slice CANNOT be placed and is skipped
-    with a warning, and is left out of the canvas bounds. `--dry-run` reports how
-    many FOVs that will be per slice.
+  - **Every FOV is stitched** — this passes `min_rows=1`. A FOV with 1 or 2 rows
+    has too few points to leave the regression's slope free, so the slope is
+    pinned at 1, which the model asserts anyway (`pos*2 = offset + pos40x`), and
+    the offset is the mean residual. Step 2 keeps the default `min_rows=3` and
+    is unchanged. `--dry-run` reports how many FOVs per slice are placed that way,
+    and the range of the slopes the regression fits where it can — the quantity
+    pinning replaces.
   - Overlap between FOVs is max-projected per pixel for the three fluorescence
     channels. The cellmask is not: the later FOV overwrites, with a running
     global offset so labels stay unique across the canvas.
@@ -77,9 +81,14 @@ from utilities.image_io import imwrite_tiff, get_file_size_mb
 from utilities.regression import calculate_fov_offset
 
 
-# stitch_fov_channels' own gate, mirrored so --dry-run can report what it will
-# skip. calculate_fov_offset fits an intercept and a slope and raises below this.
-MIN_ROWS_FOR_PLACEMENT = 3
+# Every FOV in the slice gets stitched, so the only FOV this cannot place is one
+# with no rows at all -- and such a FOV never enters the list, which is built from
+# rows. Passed to stitch_fov_channels, whose own default is 3 (step 2's behaviour).
+MIN_ROWS = 1
+
+# Below this the regression cannot leave its slope free, so calculate_fov_offset
+# pins it at 1. Mirrored here only so --dry-run can count and report it.
+SLOPE_FIT_MIN_ROWS = 3
 
 
 def slice_fov_lists(filt_neurons, targets=None):
@@ -118,8 +127,12 @@ def slice_fov_lists(filt_neurons, targets=None):
 def plan_canvas(fov_list, slice_id, filt_neurons, row_counts):
     """What stitch_fov_channels would allocate, without loading an image.
 
-    Runs the same per-FOV regression on the same rows, so the placed/skipped
-    split and the canvas match the real run. Returns (height, width, n_placed).
+    Runs the same placement on the same rows, so the canvas and the
+    regressed/pinned split match the real run.
+
+    Returns (height, width, n_placed, n_pinned, slopes), where slopes are the
+    (x, y) pairs the regression fitted and then discarded on the FOVs that had
+    enough rows for it -- the check on whether pinning costs anything.
     """
     fov_names = np.asarray(filt_neurons['fov'])
     slice_ids = np.asarray(filt_neurons['slice']).flatten()
@@ -134,22 +147,33 @@ def plan_canvas(fov_list, slice_id, filt_neurons, row_counts):
         groups.setdefault(str(fov_names[j]), []).append(j)
 
     offsets = []
+    slopes = []
+    n_pinned = 0
     for fov_name in fov_list:
-        if row_counts[fov_name] < MIN_ROWS_FOR_PLACEMENT:
+        if row_counts[fov_name] < MIN_ROWS:
             continue
         i_cell = np.asarray(groups[fov_name])
+        fit_slope = row_counts[fov_name] >= SLOPE_FIT_MIN_ROWS
         try:
-            offsets.append(calculate_fov_offset(pos[i_cell], pos40x[i_cell], scale_factor=2.0))
+            x_off, y_off, slope = calculate_fov_offset(
+                pos[i_cell], pos40x[i_cell], scale_factor=2.0,
+                fit_slope=fit_slope, return_slope=True,
+            )
         except Exception:
             continue
+        offsets.append((x_off, y_off))
+        if fit_slope:
+            slopes.append(slope)
+        else:
+            n_pinned += 1
 
     if not offsets:
-        return 0, 0, 0
+        return 0, 0, 0, 0, slopes
 
     offsets = np.array(offsets)
     width = int(offsets[:, 0].max()) + FOV_SIZE - int(offsets[:, 0].min())
     height = int(offsets[:, 1].max()) + FOV_SIZE - int(offsets[:, 1].min())
-    return height, width, len(offsets)
+    return height, width, len(offsets), n_pinned, slopes
 
 
 def stitch_slices(targets=None, dry_run=False):
@@ -165,16 +189,35 @@ def stitch_slices(targets=None, dry_run=False):
     print(f"  Slices to process: {len(entries)}\n")
 
     if dry_run:
-        print(f"{'slice':>6}  {'FOVs':>5}  {'<3 rows':>7}  {'placed':>6}  {'canvas (h x w)':>19}  {'RAM MB':>8}")
+        print(f"{'slice':>6}  {'FOVs':>5}  {'pinned':>6}  {'placed':>6}  "
+              f"{'canvas (h x w)':>19}  {'RAM MB':>8}")
+        all_slopes = []
         for slice_id, fov_list, counts in entries:
-            short = [f for f in fov_list if counts[f] < MIN_ROWS_FOR_PLACEMENT]
-            height, width, n_placed = plan_canvas(fov_list, slice_id, filt_neurons, counts)
+            pinned = [f for f in fov_list if counts[f] < SLOPE_FIT_MIN_ROWS]
+            height, width, n_placed, n_pinned, slopes = plan_canvas(
+                fov_list, slice_id, filt_neurons, counts)
+            all_slopes.extend(slopes)
             # 3 uint16 channels + 1 uint32 cellmask, allocated together.
             ram_mb = height * width * (2 * 3 + 4) / 1e6
-            print(f"{slice_id:>6}  {len(fov_list):>5}  {len(short):>7}  {n_placed:>6}  "
+            print(f"{slice_id:>6}  {len(fov_list):>5}  {n_pinned:>6}  {n_placed:>6}  "
                   f"{height:>8} x {width:<8}  {ram_mb:>8.0f}")
-            if short:
-                print(f"          skipped: {', '.join(short)}")
+            if pinned:
+                detail = ', '.join(f"{f} ({counts[f]} row{'s' if counts[f] != 1 else ''})"
+                                   for f in pinned)
+                print(f"          slope pinned: {detail}")
+            missing = [f for f in fov_list if counts[f] < MIN_ROWS]
+            if missing:
+                print(f"          NOT PLACED: {', '.join(missing)}")
+
+        if all_slopes:
+            sx = np.array([s_[0] for s_ in all_slopes])
+            sy = np.array([s_[1] for s_ in all_slopes])
+            print()
+            print("Slopes the regression fitted and discarded, over every FOV with "
+                  f">= {SLOPE_FIT_MIN_ROWS} rows (n={len(all_slopes)}).")
+            print("Pinning replaces these with exactly 1.0:")
+            print(f"  x: min {sx.min():.6f}  median {np.median(sx):.6f}  max {sx.max():.6f}")
+            print(f"  y: min {sy.min():.6f}  median {np.median(sy):.6f}  max {sy.max():.6f}")
         return
 
     output_dir = Path(HYB_SLICE_STITCHED_DIR)
@@ -184,16 +227,17 @@ def stitch_slices(targets=None, dry_run=False):
     channels_root = Path(HYB_CHANNELS_DIR)
 
     for i, (slice_id, fov_list, counts) in enumerate(entries):
-        short = [f for f in fov_list if counts[f] < MIN_ROWS_FOR_PLACEMENT]
+        pinned = [f for f in fov_list if counts[f] < SLOPE_FIT_MIN_ROWS]
         print("=" * 40)
         print(f"[{i+1}/{len(entries)}] Stitching slice {slice_id} (whole slice)")
         print("=" * 40)
         print(f"  FOVs in slice: {len(fov_list)}")
-        print(f"  FOVs with < {MIN_ROWS_FOR_PLACEMENT} rows (will be skipped): {len(short)}\n")
+        print(f"  FOVs placed with the slope pinned at 1 (< {SLOPE_FIT_MIN_ROWS} rows): "
+              f"{len(pinned)}\n")
 
         stitch_start = time.time()
         gcamp, dapi, mscarlet, cellmask, min_x, min_y, fov_offsets = stitch_fov_channels(
-            fov_list, slice_id, filt_neurons, hyb_root, channels_root
+            fov_list, slice_id, filt_neurons, hyb_root, channels_root, min_rows=MIN_ROWS
         )
         print(f"  Stitching completed in {time.time() - stitch_start:.1f} seconds\n")
 

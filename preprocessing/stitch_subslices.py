@@ -57,6 +57,7 @@ def stitch_fov_channels(
     filt_neurons: dict,
     hyb_root: Path,
     channels_root: Path,
+    min_rows: int = 3,
 ) -> tuple:
     """
     Stitch FOVs using regression-based positioning.
@@ -67,6 +68,12 @@ def stitch_fov_channels(
         filt_neurons: filt_neurons data dict
         hyb_root: Path to hyb/ directory
         channels_root: Path to extracted channels directory
+        min_rows: Fewest filt_neurons rows a FOV needs in this slice to be
+            placed. 3 (default) is what the offset regression needs to be
+            over-determined, and is step 2's behaviour. Below 3 the slope is
+            pinned at 1 instead of fitted (calculate_fov_offset(fit_slope=False)),
+            which places a FOV from a single cell -- for callers that stitch every
+            FOV of a slice rather than a marker-selected subslice.
 
     Returns:
         Tuple of (gcamp_stitched, dapi_stitched, mscarlet_stitched,
@@ -97,16 +104,23 @@ def stitch_fov_channels(
         cell_mask = in_fov & in_slice
         i_cell = np.where(cell_mask)[0]
 
-        if len(i_cell) < 3:
-            print(f"    WARNING: FOV {fov_name} has < 3 cells, skipping")
+        if len(i_cell) < max(min_rows, 1):
+            print(f"    WARNING: FOV {fov_name} has < {max(min_rows, 1)} cells, skipping")
             continue
 
         try:
-            # Regression: pos*2 = offset + pos40x
+            # Regression: pos*2 = offset + pos40x. Under 3 cells there are too
+            # few points to leave the slope free, so it is pinned at 1 -- only
+            # reachable when the caller lowered min_rows.
+            fit_slope = len(i_cell) >= 3
+            if not fit_slope:
+                print(f"    FOV {fov_name} has {len(i_cell)} cells, "
+                      f"placing with the slope pinned at 1")
             x_offset, y_offset = calculate_fov_offset(
                 pos[i_cell],
                 pos40x[i_cell],
-                scale_factor=2.0
+                scale_factor=2.0,
+                fit_slope=fit_slope,
             )
 
             fov_offsets[i] = [x_offset, y_offset]
