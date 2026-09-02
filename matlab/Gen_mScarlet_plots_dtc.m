@@ -1,6 +1,6 @@
-% Gen_mScarlet_plots_dtc.m -- Gen_mScarlet_plots.m with the x and y axes at equal pixel
-% spacing, so the scatter comes out with the section's proportions instead
-% of being stretched to the figure window. Everything else is unchanged.
+% Gen_mScarlet_plots_dtc.m -- Gen_mScarlet_plots.m drawn square: x and y span the same
+% range and one unit is the same length on both axes, so the scatter has
+% the section's proportions. Everything else is unchanged.
 
 reads_thresh=20;
 genes_thresh=5;
@@ -17,7 +17,7 @@ counts = [];
 
 for nn= 1:numel(uniq_slices)
     in_slice=filt_neurons.slice==uniq_slices(nn);
-    f = figure('Position',[50 50 600 400]);
+    f = figure('Position',[50 50 600 600]);
     med_count= full(median(sum(filt_neurons.expmat(in_slice&pass_qc,:),2)));
     disp('Slice number: ' + string(nn) + '   Median count: ' + string(med_count));
     scatter(filt_neurons.pos(in_slice&pass_qc,1),filt_neurons.pos(in_slice&pass_qc,2), ...
@@ -27,6 +27,8 @@ for nn= 1:numel(uniq_slices)
     clim([0 5]);
     set(gca,'ydir','reverse')
     axis image
+    lims = [min([xlim ylim]) max([xlim ylim])];
+    xlim(lims); ylim(lims);
     colorbar;
     title(sprintf('slice %u',uniq_slices(nn)));
     disp('_______________________________________________________________')
