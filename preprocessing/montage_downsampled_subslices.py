@@ -21,6 +21,17 @@ cell in the MSCARLET montage. Slices run left to right in ascending order,
 wrapping every --columns (10 by default): 62 sections fill 6 rows and 2 cells of
 a 7th, and the remaining 8 cells stay black.
 
+NOTHING IS BURNED IN
+    No scale bars, no slice numbers -- removed 2026-09-02 after the first run,
+    and the reason is not that they landed on tissue. They were drawn at the
+    sheet's own maximum, ~44,000 px of ink per tile over 62 tiles, and every
+    autoscaling viewer picks its display maximum by walking the histogram. On one
+    whole-slice TIF that already defeats ImageJ's B&C Auto; 62 tiles' worth pins
+    the display range to the ink and renders the tissue black. A montage is a
+    thing you look at, so an annotation that costs you the picture costs more
+    than it is worth. Every tile is the same pitch as every other and the order
+    is ascending slice number, which is what the labels were for.
+
 GRID
     Each section's canvas is a bounding box over its own FOVs, so no two are the
     same size and each has to be padded to fill its cell. Every cell is the same
@@ -30,32 +41,16 @@ GRID
     into fewer pixels but makes the layout depend on which section lands where;
     --dry-run prints what it would have cost so the choice can be revisited.
 
-    A tile sits at the TOP-LEFT of its cell. The scale bars are drawn at the
-    tile's own edges rather than the cell's, so they stay at the bottom of the
-    tissue instead of floating below it in the padding. The label starts at that
-    same shared corner but is bounded by the CELL, so a section narrower than
-    its own text is still labelled -- see draw_slice_label.
-
-WHAT IS BURNED IN
-    Each tile carries "slice N" in its top-left and, by default, the same scale
-    bars stitch_slices.py burns into the whole-slice TIFs in its bottom-left.
-    Both are white at the montage's own maximum, both report how many nonzero
-    pixels they covered. `draw_scale_bars`, `_render_label` and every SCALE_BAR_*
-    constant are imported from stitch_slices.py rather than copied, so a retune
-    there reaches here.
-
-    At TARGET_XY_UM_PER_PX the bars are much smaller than they are on a
-    full-resolution section -- 1.1 um/px puts the 250 um bar at 227 px -- which
-    is why they are per tile and not one to a montage: one bar in the corner of a
-    30,000 px image is invisible zoomed out and absent wherever you are zoomed
-    in. --scale-bars montage draws a single set at the montage's bottom-left
-    instead, --scale-bars none draws none.
+    A tile sits at the TOP-LEFT of its cell.
 
 PIXELS
     Raw uint16 carried through with no per-tile normalization, so one contrast
-    window in a viewer compares sections against each other honestly. The
-    cellmask (slice{N}_subslice_CELLMASK.h5) is not tiled: it is a uint32 label
-    array where a scale bar would be a fake cell id.
+    window in a viewer compares sections against each other honestly. The cost
+    is that one bright section sets the window for all 62 -- the per-tile max and
+    mean are printed as each tile is pasted, and the sheet's maximum is reported
+    with the slice holding it, which is what to read when the sheet looks empty.
+    The cellmask (slice{N}_subslice_CELLMASK.h5) is not tiled: it is a uint32
+    label array, not a picture.
 
 The output folder is hardcoded below rather than added to preprocessing_config,
 because no pipeline step reads it. Nothing can pick these files up despite the
@@ -91,14 +86,6 @@ from preprocessing_config import (
     OUTPUT_ROOT,
     TARGET_XY_UM_PER_PX,
 )
-from stitch_slices import (
-    draw_scale_bars,
-    _render_label,
-    SCALE_BAR_LENGTHS_UM,
-    SCALE_BAR_MARGIN_UM,
-    SCALE_BAR_THICKNESS_UM,
-    SCALE_BAR_LABEL_SCALE,
-)
 from utilities.image_io import (
     imread_tiff,
     imwrite_tiff,
@@ -121,11 +108,6 @@ DEFAULT_COLUMNS = 10
 # Black seam between cells, in um so it holds at any pitch. 100 um is 91 px at
 # 1.1 um/px. Not drawn around the outside of the grid.
 MONTAGE_GUTTER_UM = 100.0
-
-# Height of the "slice N" label, in um like the scale bar constants. 200 um is
-# 182 px at 1.1 um/px, which is legible with the whole 7-row sheet on screen.
-# Expect to retune this by eye.
-SLICE_LABEL_HEIGHT_UM = 200.0
 
 SLICE_RE = re.compile(r'slice(\d+)_subslice')
 
@@ -236,44 +218,8 @@ def cell_origin(index, grid):
             col * (grid['cell_w'] + grid['gutter']))
 
 
-def draw_slice_label(image, text, white):
-    """Burn `text` into the top-left of `image`, in place.
-
-    Returns (overwritten, drawn) like draw_scale_bars: how many of the pixels
-    written were nonzero beforehand, out of how many were written. The top-left
-    corner of a bounding box over FOV placements is usually empty but is not
-    guaranteed to be, and unlike a scale bar this one cannot be moved to a
-    quieter corner without leaving the cell.
-
-    Pass the CELL, not the tile. The two share a top-left corner, so the text
-    starts in the same place either way -- but bounded by the tile, a label
-    wider than a narrow section is dropped entirely, and an unlabelled tile is
-    the one thing a contact sheet cannot afford. On the first BY95 run that
-    silenced 8 of 62: "slice 11" is ~700 px wide at SLICE_LABEL_HEIGHT_UM 200,
-    and one FOV is only 931 px after the downsample. Bounded by the cell it
-    runs on into the padding instead, which is black and belongs to no other
-    tile. It still cannot reach a neighbour: cells do not overlap and the
-    gutter separates them.
-    """
-    height, width = image.shape[:2]
-    margin = int(round(SCALE_BAR_MARGIN_UM / UM_PER_PX))
-    label = _render_label(text, SLICE_LABEL_HEIGHT_UM / UM_PER_PX)
-    label_h, label_w = label.shape
-
-    if margin + label_w > width or margin + label_h > height:
-        print(f"    Label {text!r} does not fit this cell "
-              f"({width} x {height} px), skipped -- lower "
-              f"SLICE_LABEL_HEIGHT_UM (now {SLICE_LABEL_HEIGHT_UM:g})")
-        return 0, 0
-
-    patch = image[margin:margin + label_h, margin:margin + label_w]
-    overwritten = int(np.count_nonzero(patch[label]))
-    patch[label] = white
-    return overwritten, int(label.sum())
-
-
 def report_geometry(grid, dtype):
-    """The grid, the bar geometry and the file size, once, before any pixels."""
+    """The grid and the file size, once, before any pixels."""
     n = len(grid['slice_ids'])
     px = grid['height'] * grid['width']
     mb = px * np.dtype(dtype).itemsize / 1e6
@@ -282,34 +228,25 @@ def report_geometry(grid, dtype):
           f"({grid['columns'] * grid['rows'] - n} blank)")
     print(f"Cell:   {grid['cell_w']} x {grid['cell_h']} px "
           f"({grid['cell_w'] * UM_PER_PX:.0f} x {grid['cell_h'] * UM_PER_PX:.0f} um), "
-          f"gutter {grid['gutter']} px")
+          f"gutter {grid['gutter']} px at {UM_PER_PX:g} um/px")
     print(f"Sheet:  {grid['width']} x {grid['height']} px = {px/1e6:.0f} Mpx, "
           f"{mb:.0f} MB per channel {dtype}")
     print(f"        per-column/per-row cells would be {grid['packed_px']/1e6:.0f} Mpx "
-          f"({100 * grid['packed_px'] / px:.0f}% of this)")
-    print(f"Scale bars at {UM_PER_PX:g} um/px:")
-    thickness = max(1, int(round(SCALE_BAR_THICKNESS_UM / UM_PER_PX)))
-    for length_um in sorted(SCALE_BAR_LENGTHS_UM):
-        print(f"  {length_um:g} um -> {int(round(length_um / UM_PER_PX))} px")
-    print(f"  thickness {SCALE_BAR_THICKNESS_UM:g} um -> {thickness} px")
-    print(f"  bar label -> {int(round(SCALE_BAR_LABEL_SCALE * thickness))} px")
-    print(f"  slice label {SLICE_LABEL_HEIGHT_UM:g} um -> "
-          f"{int(round(SLICE_LABEL_HEIGHT_UM / UM_PER_PX))} px")
-    print(f"  corner inset {SCALE_BAR_MARGIN_UM:g} um -> "
-          f"{int(round(SCALE_BAR_MARGIN_UM / UM_PER_PX))} px\n")
+          f"({100 * grid['packed_px'] / px:.0f}% of this)\n")
 
 
-def build_channel(channel, entries, shapes, grid, dtype, scale_bars):
-    """One montage array for one channel, tiles pasted and annotations burned.
+def build_channel(channel, entries, shapes, grid, dtype):
+    """One montage array for one channel, tiles pasted at their cell origins.
 
-    Two passes over the slices, because the white the annotations are drawn in
-    is the finished sheet's own maximum and so cannot be known until every tile
-    is down.
+    Prints each tile's max and mean. Nothing is normalized -- the sheet carries
+    one contrast window for all 62 sections -- so one bright section darkens the
+    rest, and these are the numbers that say whether that is what happened.
     """
     by_slice = dict(entries)
     montage = np.zeros((grid['height'], grid['width']), dtype=dtype)
 
-    drawn_on = []
+    placed = 0
+    brightest = (0, None)
     for index, slice_id in enumerate(grid['slice_ids']):
         path = by_slice[slice_id].get(channel)
         if path is None:
@@ -323,43 +260,22 @@ def build_channel(channel, entries, shapes, grid, dtype, scale_bars):
                 f"{(h, w)}; the file changed under the run.")
         y0, x0 = cell_origin(index, grid)
         montage[y0:y0 + h, x0:x0 + w] = tile
-        drawn_on.append((slice_id, y0, x0, h, w))
 
-    if not drawn_on:
-        return montage, 0
+        tile_max = int(tile.max())
+        print(f"    slice {slice_id:<3} {w} x {h}  max {tile_max:>6}  "
+              f"mean {float(tile.mean()):8.1f}")
+        if tile_max > brightest[0]:
+            brightest = (tile_max, slice_id)
+        placed += 1
 
-    # White is the montage's own maximum, not the dtype's: one 65535 pixel in a
-    # uint16 fluorescence image that really peaks at a few thousand makes every
-    # autoscaling viewer darken the tissue. Taken once over the whole sheet so
-    # every annotation on it is the same white.
-    white = int(montage.max()) or int(np.iinfo(dtype).max)
-
-    overwritten = drawn = 0
-    for slice_id, y0, x0, h, w in drawn_on:
-        # The label gets the whole cell, so a section narrower than its own text
-        # is still labelled; the bars get the tile, so they stay at the bottom
-        # of the tissue rather than floating below it in the padding.
-        cell_view = montage[y0:y0 + grid['cell_h'], x0:x0 + grid['cell_w']]
-        o, d = draw_slice_label(cell_view, f"slice {slice_id}", white)
-        overwritten += o
-        drawn += d
-
-        if scale_bars == 'tile':
-            o, d = draw_scale_bars(montage[y0:y0 + h, x0:x0 + w], UM_PER_PX)
-            overwritten += o
-            drawn += d
-
-    if scale_bars == 'montage':
-        o, d = draw_scale_bars(montage, UM_PER_PX)
-        overwritten += o
-        drawn += d
-
-    print(f"    labels and bars covered {overwritten}/{drawn} nonzero px")
-    return montage, len(drawn_on)
+    if placed:
+        print(f"    sheet max {brightest[0]} (slice {brightest[1]}) -- set the "
+              f"viewer's display range by hand, not with Auto")
+    return montage, placed
 
 
 def montage_subslices(targets=None, columns=DEFAULT_COLUMNS, channels=CHANNELS,
-                      scale_bars='tile', dry_run=False):
+                      dry_run=False):
     input_dir = Path(HYB_DOWNSAMPLED_DIR)
     if not input_dir.exists():
         raise FileNotFoundError(
@@ -399,8 +315,7 @@ def montage_subslices(targets=None, columns=DEFAULT_COLUMNS, channels=CHANNELS,
 
     for channel in channels:
         print(f"{channel}")
-        montage, placed = build_channel(
-            channel, entries, shapes, grid, dtype, scale_bars)
+        montage, placed = build_channel(channel, entries, shapes, grid, dtype)
         if not placed:
             print(f"    no {channel} tifs found, montage not written")
             continue
@@ -429,11 +344,8 @@ def main():
     parser.add_argument('--channel', action='append', choices=CHANNELS,
                         dest='channels',
                         help='Montage this channel only; repeatable')
-    parser.add_argument('--scale-bars', choices=('tile', 'montage', 'none'),
-                        default='tile',
-                        help='Where to burn scale bars (default: one set per tile)')
     parser.add_argument('--dry-run', action='store_true',
-                        help='Report grid, sizes and bar geometry, write nothing')
+                        help='Report grid and sizes, write nothing')
     args = parser.parse_args()
 
     if args.columns < 1:
@@ -448,7 +360,6 @@ def main():
     montage_subslices(targets=targets,
                       columns=args.columns,
                       channels=tuple(args.channels or CHANNELS),
-                      scale_bars=args.scale_bars,
                       dry_run=args.dry_run)
 
 
