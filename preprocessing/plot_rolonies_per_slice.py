@@ -44,6 +44,15 @@ LABELS = {
     "max": "Max rolonies in one cell",
     "median_pos": "Median rolonies per mScarlet+ cell",
     "mean_pos": "Mean rolonies per mScarlet+ cell",
+    "rolonies_per_qc_cell": "Mean rolonies per QC-passing cell",
+}
+
+# Not in the CSV; computed from columns that are. `mean_pos` already divides by
+# the marker+ cells, so the open question is only the other denominator -- every
+# QC-passing cell, zeros included.
+DERIVED = {
+    "rolonies_per_qc_cell": lambda r: float(r["rolonies"]) / float(r["qc"])
+                                      if float(r["qc"]) else 0.0,
 }
 
 
@@ -84,13 +93,17 @@ def main():
         rows = list(csv.DictReader(fh))
     if not rows:
         raise ValueError(f"{path} has no rows")
-    if args.column not in rows[0]:
+    if args.column not in rows[0] and args.column not in DERIVED:
         raise ValueError(f"No column {args.column!r} in {path.name}. "
-                         f"Columns: {', '.join(rows[0])}")
+                         f"Columns: {', '.join(rows[0])}. "
+                         f"Derived: {', '.join(DERIVED)}")
 
     rows.sort(key=lambda r: int(r["slice"]))
     slices = [int(r["slice"]) for r in rows]
-    values = [float(r[args.column]) for r in rows]
+    if args.column in DERIVED:
+        values = [DERIVED[args.column](r) for r in rows]
+    else:
+        values = [float(r[args.column]) for r in rows]
 
     fig, ax = plt.subplots(figsize=(14, 6))
     ax.bar(range(len(slices)), values, color=BAR_COLOR, width=0.8)
@@ -104,8 +117,11 @@ def main():
     if not args.no_labels:
         # Rotated and small: 62 slices side by side leave no room for horizontal
         # text. Headroom is opened below so the tallest bar's label still fits.
+        # One format for the whole column, not per bar: a mean that happens to
+        # land on 5.0 should still read "5.0" beside its neighbour's "4.7".
+        fmt = "{:,.0f}" if all(v == int(v) for v in values) else "{:,.1f}"
         for i, v in enumerate(values):
-            ax.text(i, v, f"{v:,.0f}" if v == int(v) else f"{v:,.1f}",
+            ax.text(i, v, fmt.format(v),
                     ha="center", va="bottom", rotation=90, fontsize=6)
         ax.set_ylim(0, max(values) * 1.30)
 
