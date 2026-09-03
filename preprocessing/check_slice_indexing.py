@@ -8,9 +8,9 @@ TIFFs, no cellmasks.
 WHAT THIS CAN AND CANNOT ANSWER
     The code half needs no probe. Every script here compares the section
     number's VALUE (`slice_ids == slice_id`) and nothing indexes an array with
-    it, so a MATLAB/Python off-by-one cannot arise. What is possible is that
-    the numbering, assigned by the lab's upstream BARseq processing, does not
-    follow the physical section order.
+    it, so a MATLAB/Python off-by-one cannot arise. What is possible is that the
+    numbering, assigned by the lab's upstream BARseq processing, does not follow
+    the physical section order.
 
     Note what that would and would not break. The cell-level checks
     (check_cell_id_link.py, measure_lookup_disagreement.py) all work INSIDE one
@@ -19,47 +19,55 @@ WHAT THIS CAN AND CANNOT ANSWER
     consistent with a wrong order. Downstream, a section number is a label on a
     graph node, not a z coordinate: each section is fitted to the 2P
     independently, so a wrong order would not corrupt an alignment. It would
-    matter for assign_orientation.py's series walk, which asks the cutting
-    order once and propagates it, and for reading a montage as a progression.
+    matter for assign_orientation.py's series walk, which asks the cutting order
+    once and propagates it, and for reading a montage as a progression.
 
-Seven reports, each printed with the evidence rather than a verdict:
+WHY `pos` IS NOT USED HERE
+    `pos` is the STITCHING coordinate: calculate_fov_offset regresses
+    `pos*2 = offset + pos40x` to place a FOV on the canvas, so it locates a cell
+    within an image, not a section on a slide. A check that compared section
+    centroids in it -- on the assumption that consecutive sections should be
+    physical neighbours -- flagged 45 of BY95's 62 sections when run globally
+    and 37 when run per slide, and meant nothing either way: the centroids sit
+    34-465 units apart while a section spans thousands, so they are nearly
+    coincident and "nearest" is noise. The check was deleted rather than given a
+    scale reference, because the premise was wrong, not the threshold. Nothing
+    in filt_neurons records where a section sat on its slide.
+
+Six reports, each printed with the evidence rather than a verdict:
 
 1. THE FIELD ITSELF
    Range, NaN fraction, gaps in 1..max, cells per section.
 
 2. slice VS orig_slice
-   Both are in filt_neurons. A difference is NOT by itself a renumbering: on
-   BY95 orig_slice takes 8 values over 62 sections, one per section with no
-   splits, which is a SLIDE and not an original section number. Check 4 settles
-   that against the FOV names. A slice number drawing from several orig_slice
-   values would be a merge, and is flagged separately.
+   Both are in filt_neurons, and a difference is NOT by itself a renumbering.
+   On BY95 orig_slice takes 8 values over 62 sections, one per section with no
+   splits, which is a SLIDE. Check 4 settles that against the FOV names. A slice
+   number drawing from several orig_slice values would be a merge, and is
+   flagged separately.
 
-3. THE uniq_slice / slice_boundaries PARTITION
+3. THE uniq_slice PARTITION
    Read from the loaded struct, where it lives, rather than the file's top
-   level.
+   level. Reported as RUNS of consecutive section numbers per group: a group
+   holding 27-31 and 38-42 is two runs, not scatter.
 
 4. SECTIONS PER SLIDE
    Slide membership from the `MAX_Pos{N}_{row}_{col}` FOV names, cross-checked
-   against orig_slice. Then the blocks of consecutive section numbers per
-   slide, and the order the numbering visits slides in. Few long blocks means
-   the numbering follows the mounting; sections numbered independently of how
-   they were mounted would scatter.
+   against orig_slice -- BY95 matches on 62 of 62. Then blocks of consecutive
+   section numbers per slide and the order the numbering visits slides in. Few
+   long blocks means the numbering follows the mounting; sections numbered
+   independently of how they were mounted would scatter across slides.
 
 5. DOES THE SERIES GROW MONOTONICALLY?
    The strongest evidence available without an image, and the only check here
    that no coordinate frame can spoil. A series cut from one end starts small
-   and grows, so cells per section should rise with the section number.
-   Reported as a rank correlation and an out-of-order pair count against the
-   ~50% a random permutation gives.
+   and grows, so cells per section should rise with the section number. Reported
+   as a rank correlation and an out-of-order pair count against the ~50% a
+   random permutation gives. BY95: +0.975 and 7.0%, against 43.5% for a
+   permutation of its own counts.
 
-6. STAGE LAYOUT WITHIN EACH SLIDE
-   Consecutive section numbers should be neighbours in stage coordinates --
-   but `pos` is a WITHIN-SLIDE coordinate, so this runs one slide at a time.
-   Run globally on BY95 it flagged 45 of 62 sections, nearly all of them pairs
-   on different slides: an artefact of comparing two frames, not a finding.
-
-7. FOVs SHARED BETWEEN SECTIONS
-   Normal when two sections are mounted close enough to share a field. Which
+6. FOVs SHARED BETWEEN SECTIONS
+   Normal when two sections are mounted close enough to share a field. WHICH
    section numbers share one is the informative part: adjacent numbers mean
    adjacent mounting.
 
@@ -238,25 +246,30 @@ def report_groups(fn, slice_ids, finite, max_report):
         if not nums:
             print(f"    group {gid:>2}: empty")
             continue
-        runs = nums == list(range(nums[0], nums[-1] + 1))
-        contiguous += bool(runs)
-        span = f"{nums[0]}-{nums[-1]}" if runs else ", ".join(map(str, nums[:12]))
-        print(f"    group {gid:>2}: {len(nums):>3} sections  "
-              f"{'consecutive ' if runs else 'SCATTERED   '}{span}"
-              f"{'' if runs or len(nums) <= 12 else ' ...'}")
+        # Runs of consecutive numbers, not a consecutive/scattered binary:
+        # a group holding 27-31 and 38-42 is TWO runs, which is what
+        # alternating a pair of slides looks like, and calling that
+        # "scattered" was wrong.
+        runs = []
+        for n in nums:
+            if runs and runs[-1][1] + 1 == n:
+                runs[-1][1] = n
+            else:
+                runs.append([n, n])
+        contiguous += (len(runs) == 1)
+        span = ", ".join(f"{a}-{b}" if a != b else str(a) for a, b in runs[:6])
+        print(f"    group {gid:>2}: {len(nums):>3} sections in "
+              f"{len(runs)} run{'s' if len(runs) != 1 else ' '}   {span}"
+              f"{' ...' if len(runs) > 6 else ''}")
     if len(members) > max_report:
         print(f"    ... {len(members) - max_report} more")
 
     print()
-    if contiguous == len(members):
-        print("  Every group is a consecutive block of section numbers, so the "
-              "numbering runs\n  with the groups rather than across them -- "
-              "what you want if the groups are runs\n  and the sections were "
-              "numbered in cutting order.")
-    else:
-        print(f"  {len(members) - contiguous} group(s) hold NON-consecutive "
-              f"section numbers. Either the\n  numbering is global and the "
-              f"groups are not runs, or the two disagree.")
+    print("  A group is a slide (check 4 proves it). One run per group means "
+          "the numbering\n  went through a slide before moving on; two runs "
+          "per group means the series\n  alternated between a pair of slides. "
+          "Either is a numbering that follows the\n  mounting. Many short runs "
+          "would not be.")
     print()
     return members
 
@@ -417,86 +430,12 @@ def report_series_trend(slice_ids, finite, max_report):
     print()
 
 
-def report_layout(slice_ids, finite, pos, section_slide, max_report):
-    """Check 6: stage layout, WITHIN a slide only.
-
-    Restricted to one slide at a time because `pos` is a within-slide
-    coordinate. Run globally on BY95 it flagged 45 of 62 sections and nearly
-    every flagged pair was two sections on different slides -- an artefact of
-    comparing two frames, not a finding. That version of this check was wrong.
-    """
-    print("=" * 70)
-    print("6. STAGE LAYOUT WITHIN EACH SLIDE")
-    print("=" * 70)
-
-    if pos is None or pos.ndim != 2 or pos.shape[1] < 2:
-        print("  pos is absent or not N x 2 -- cannot place sections.\n")
-        return
-    if not section_slide:
-        print("  Slide membership unknown, so any position comparison would "
-              "span frames.")
-        print("  Skipped rather than reported as a finding.\n")
-        return
-
-    ints = np.full(slice_ids.shape, -1, dtype=int)
-    ints[finite] = slice_ids[finite].astype(int)
-
-    by_slide = {}
-    for s, sl in section_slide.items():
-        by_slide.setdefault(sl, []).append(s)
-
-    total_flagged = 0
-    total_tested = 0
-    for sl in sorted(by_slide):
-        members = sorted(by_slide[sl])
-        if len(members) < 3:
-            print(f"  slide {sl}: {len(members)} section(s), too few to test")
-            continue
-        centroids = {}
-        for s in members:
-            p = pos[finite & (ints == s)]
-            centroids[s] = (float(p[:, 0].mean()), float(p[:, 1].mean()))
-
-        coords = np.array([centroids[s] for s in members])
-        flagged = []
-        for i, s in enumerate(members):
-            d = np.hypot(coords[:, 0] - coords[i, 0], coords[:, 1] - coords[i, 1])
-            d[i] = np.inf
-            nearest = members[int(np.argmin(d))]
-            nbrs = {members[i - 1] if i else None,
-                    members[i + 1] if i + 1 < len(members) else None}
-            if nearest not in nbrs:
-                flagged.append((s, nearest, float(d.min())))
-        total_flagged += len(flagged)
-        total_tested += len(members)
-
-        print(f"  slide {sl}: sections {members[0]}-{members[-1]} "
-              f"({len(members)}), {len(flagged)} flagged")
-        for s, nearest, dist in flagged[:max_report]:
-            print(f"      section {s} sits nearest {nearest} ({dist:.0f} away), "
-                  f"not its numeric neighbour")
-
-    print()
-    if not total_tested:
-        print("  No slide holds enough sections to test.")
-    elif not total_flagged:
-        print("  Within every slide, each section's numeric neighbour is also "
-              "its nearest")
-        print("  neighbour in space. The numbering follows the mounting.")
-    else:
-        print(f"  {total_flagged} of {total_tested} sections flagged within "
-              f"their own slide.")
-        print("  Unlike a cross-slide comparison these share a coordinate "
-              "frame, so they are")
-        print("  worth looking at in the montage.")
-    print()
-
 def report_shared_fovs(slice_ids, finite, fov, max_report):
     """FOVs claimed by more than one section."""
     if fov is None:
         return
     print("=" * 70)
-    print("7. FOVs SHARED BETWEEN SECTIONS")
+    print("6. FOVs SHARED BETWEEN SECTIONS")
     print("=" * 70)
 
     ints = np.full(slice_ids.shape, -1, dtype=int)
@@ -552,7 +491,11 @@ def main():
     if slice_ids is None:
         raise SystemExit("filt_neurons has no readable `slice` field.")
 
-    pos = np.asarray(fn["pos"]) if fn.get("pos") is not None else None
+    # `pos` is deliberately NOT read. It is the STITCHING coordinate --
+    # calculate_fov_offset regresses `pos*2 = offset + pos40x` to place a FOV on
+    # the canvas -- so it locates a cell within an image, not a section on a
+    # slide. A check that compared section centroids in it flagged 37 of 62
+    # sections and meant nothing; see the note in the docstring.
     fov = fn.get("fov")
     fov = None if fov is None else np.asarray(fov).ravel()
 
@@ -561,7 +504,6 @@ def main():
     report_groups(fn, slice_ids, finite, args.max_report)
     section_slide = report_slides(slice_ids, finite, fov, orig, args.max_report)
     report_series_trend(slice_ids, finite, args.max_report)
-    report_layout(slice_ids, finite, pos, section_slide, args.max_report)
     report_shared_fovs(slice_ids, finite, fov, args.max_report)
 
     print("=" * 70)
