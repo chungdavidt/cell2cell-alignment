@@ -557,9 +557,11 @@ def main():
     fov = None if fov is None else np.asarray(fov).ravel()
 
     _, finite = report_field(slice_ids)
-    report_orig_slice(fn, slice_ids, finite, args.max_report)
-    groups = report_groups(data_root, slice_ids, finite, args.max_report)
-    report_layout(slice_ids, finite, pos, fov, groups, args.max_report)
+    orig = report_orig_slice(fn, slice_ids, finite, args.max_report)
+    report_groups(fn, slice_ids, finite, args.max_report)
+    section_slide = report_slides(slice_ids, finite, fov, orig, args.max_report)
+    report_series_trend(slice_ids, finite, args.max_report)
+    report_layout(slice_ids, finite, pos, section_slide, args.max_report)
     report_shared_fovs(slice_ids, finite, fov, args.max_report)
 
     print("=" * 70)
