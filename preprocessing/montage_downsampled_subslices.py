@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Tile every downsampled subslice into one montage per channel.
+Tile the downsampled subslices into one image per ROW, per channel.
 
-A contact sheet, for looking at all 62 sections at once. It stitches nothing:
-step 3 already wrote each section as a single image, and this reads those files
-and pastes them into a grid. `filt_neurons.mat`, `subslice_definitions.mat` and
-the raw FOVs are never opened.
+A contact sheet cut into strips. It stitches nothing: step 3 already wrote each
+section as a single image, and this reads those files and pastes them into a
+row. `filt_neurons.mat`, `subslice_definitions.mat` and the raw FOVs are never
+opened.
 
 Input (written by downsample_subslices_cellmask.py, step 3, TARGET_XY_UM_PER_PX):
 
@@ -14,41 +14,49 @@ Input (written by downsample_subslices_cellmask.py, step 3, TARGET_XY_UM_PER_PX)
 
 Output:
 
-    <OUTPUT_ROOT>/HYB_subslice_downsampled_montage/montage_{CHANNEL}.tif
+    <OUTPUT_ROOT>/HYB_subslice_downsampled_montage/
+        montage_{CHANNEL}_row{i}_slice{first}-{last}.tif
 
-The three montages share one geometry, so a cell in the DAPI montage is the same
-cell in the MSCARLET montage. Slices run left to right in ascending order,
-wrapping every --columns (10 by default): 62 sections fill 6 rows and 2 cells of
-a 7th, and the remaining 8 cells stay black.
+Slices run left to right in ascending order, --columns per row (10 by default),
+so BY95's 62 sections come out as 7 files per channel: six rows of 10 and a last
+row of 2. One sheet holding all 62 was the first build and was **too unwieldy to
+work with (David, 2026-09-02)** -- 45,969 x 27,146 px, 2,496 MB per channel.
+
+ROWS ARE INDEPENDENT IMAGES, SO EACH SIZES ITS OWN CELLS
+    Every section's canvas is a bounding box over its own FOVs, so no two are the
+    same size and each has to be padded to fill its cell. Within one row every
+    cell is the same size -- the widest tile in that row by the tallest -- but
+    one row's cell has nothing to do with another's. That is the point of
+    splitting: BY95's sections run 931 px (a single FOV) in the first rows to
+    4,515 px in the last, and on one sheet the small ones carried the large
+    ones' padding. Per row it is 407 Mpx against 1,248, and no single file is
+    over ~350 MB.
+
+    Within a row the three channels share one geometry, so a cell in the DAPI
+    strip is the same cell in the MSCARLET strip. Across rows they do not, and
+    do not need to.
+
+    A tile sits at the TOP-LEFT of its cell.
 
 NOTHING IS BURNED IN
     No scale bars, no slice numbers -- removed 2026-09-02 after the first run,
     and the reason is not that they landed on tissue. They were drawn at the
-    sheet's own maximum, ~44,000 px of ink per tile over 62 tiles, and every
-    autoscaling viewer picks its display maximum by walking the histogram. On one
-    whole-slice TIF that already defeats ImageJ's B&C Auto; 62 tiles' worth pins
-    the display range to the ink and renders the tissue black. A montage is a
-    thing you look at, so an annotation that costs you the picture costs more
-    than it is worth. Every tile is the same pitch as every other and the order
-    is ascending slice number, which is what the labels were for.
-
-GRID
-    Each section's canvas is a bounding box over its own FOVs, so no two are the
-    same size and each has to be padded to fill its cell. Every cell is the same
-    size here -- the widest tile by the tallest -- so the grid lines are evenly
-    spaced and one section does not shift the others. The alternative, sizing
-    each column to its own widest tile and each row to its own tallest, packs
-    into fewer pixels but makes the layout depend on which section lands where;
-    --dry-run prints what it would have cost so the choice can be revisited.
-
-    A tile sits at the TOP-LEFT of its cell.
+    image's own maximum, and every autoscaling viewer picks its display maximum
+    by walking the histogram, so the ink pinned the display range and rendered
+    the tissue black. Every tile is the same pitch as every other and the order
+    is ascending slice number, which is what the labels were for; the filename
+    carries the slice range.
 
 PIXELS
     Raw uint16 carried through with no per-tile normalization, so one contrast
-    window in a viewer compares sections against each other honestly. The cost
-    is that one bright section sets the window for all 62 -- the per-tile max and
-    mean are printed as each tile is pasted, and the sheet's maximum is reported
-    with the slice holding it, which is what to read when the sheet looks empty.
+    window compares sections against each other honestly. The cost is that one
+    bright pixel sets the window for its whole row: BY95's slice 53 holds a
+    saturated 65,328 where every other section tops out at 3,780, and with a
+    0-65,328 display range tissue at a mean of 10-40 is black. The per-tile max
+    and mean are printed as each tile is pasted, and each row reports its own
+    maximum with the slice holding it -- read those, then set the viewer's
+    display range by hand (0-1000 works for BY95 DAPI). Do not press Auto.
+
     The cellmask (slice{N}_subslice_CELLMASK.h5) is not tiled: it is a uint32
     label array, not a picture.
 
@@ -61,10 +69,10 @@ config, which this folder is not. The files themselves are named montage_*, so
 even copied into one of those directories they would match no pattern.
 
 Usage:
-    python montage_downsampled_subslices.py --dry-run   # geometry + sizes, writes nothing
+    python montage_downsampled_subslices.py --dry-run   # rows + sizes, writes nothing
     python montage_downsampled_subslices.py
-    python montage_downsampled_subslices.py --columns 8
-    python montage_downsampled_subslices.py --slices 10 22 30   # a small test sheet
+    python montage_downsampled_subslices.py --columns 6
+    python montage_downsampled_subslices.py --slices 10 22 30   # one short row
     python montage_downsampled_subslices.py --channel DAPI
 """
 
@@ -106,7 +114,7 @@ UM_PER_PX = TARGET_XY_UM_PER_PX
 DEFAULT_COLUMNS = 10
 
 # Black seam between cells, in um so it holds at any pitch. 100 um is 91 px at
-# 1.1 um/px. Not drawn around the outside of the grid.
+# 1.1 um/px. Not drawn at either end of the row.
 MONTAGE_GUTTER_UM = 100.0
 
 SLICE_RE = re.compile(r'slice(\d+)_subslice')
@@ -116,9 +124,9 @@ def discover(input_dir, targets=None):
     """[(slice_id, {channel: path})], slice order ascending.
 
     A slice appears if at least one of its channel TIFs is present. A channel
-    missing from a slice leaves that cell black in that channel's montage only --
-    the grid is measured over every file found, so the three montages keep one
-    geometry whatever is missing.
+    missing from a slice leaves that cell black in that channel's strip only --
+    a row is measured over every file found in it, so its three channels keep
+    one geometry whatever is missing.
     """
     found = {}
     for channel in CHANNELS:
@@ -146,7 +154,7 @@ def read_headers(entries):
 
     Step 3 resamples every channel of a section to one target shape computed from
     its cellmask, so a section whose channels disagree means those files were not
-    written by the same run, and the montage would be tiling two geometries.
+    written by the same run, and the strip would be tiling two geometries.
     """
     shapes = {}
     dtypes = set()
@@ -170,84 +178,79 @@ def read_headers(entries):
     if len(dtypes) > 1:
         raise ValueError(
             f"Downsampled subslices have mixed dtypes: {sorted(str(d) for d in dtypes)}.\n"
-            f"  One montage cannot hold both. Re-run step 3 for the odd ones out."
+            f"  One image cannot hold both. Re-run step 3 for the odd ones out."
         )
     return shapes, dtypes.pop()
 
 
-def plan_grid(shapes, columns):
-    """Cell size, grid shape and the montage's pixel extent.
+def plan_rows(shapes, columns):
+    """One plan per row: its slices, its own cell size, its pixel extent.
 
-    Returns a dict; `packed_px` is what per-column-width / per-row-height would
-    have come to, reported for comparison and not used to place anything.
+    Each row is written as its own file, so its cell is the widest tile IN THAT
+    ROW by the tallest. Nothing is shared between rows.
     """
     slice_ids = sorted(shapes)
-    rows = -(-len(slice_ids) // columns)          # ceil
     gutter = int(round(MONTAGE_GUTTER_UM / UM_PER_PX))
 
-    cell_h = max(h for h, _ in shapes.values())
-    cell_w = max(w for _, w in shapes.values())
-
-    # Same row-major placement, sizing each column to its own widest tile and
-    # each row to its own tallest.
-    col_w = [0] * columns
-    row_h = [0] * rows
-    for i, slice_id in enumerate(slice_ids):
-        h, w = shapes[slice_id]
-        col_w[i % columns] = max(col_w[i % columns], w)
-        row_h[i // columns] = max(row_h[i // columns], h)
-
-    return {
-        'slice_ids': slice_ids,
-        'columns': columns,
-        'rows': rows,
-        'gutter': gutter,
-        'cell_h': cell_h,
-        'cell_w': cell_w,
-        'height': rows * cell_h + (rows - 1) * gutter,
-        'width': columns * cell_w + (columns - 1) * gutter,
-        'packed_px': ((sum(row_h) + (rows - 1) * gutter)
-                      * (sum(col_w) + (columns - 1) * gutter)),
-    }
+    rows = []
+    for start in range(0, len(slice_ids), columns):
+        members = slice_ids[start:start + columns]
+        cell_h = max(shapes[s][0] for s in members)
+        cell_w = max(shapes[s][1] for s in members)
+        rows.append({
+            'index': len(rows) + 1,            # 1-based, appears in the filename
+            'slice_ids': members,
+            'gutter': gutter,
+            'cell_h': cell_h,
+            'cell_w': cell_w,
+            'height': cell_h,
+            'width': len(members) * cell_w + (len(members) - 1) * gutter,
+        })
+    return rows
 
 
-def cell_origin(index, grid):
-    """Top-left pixel (y, x) of the cell holding the index'th slice."""
-    row, col = divmod(index, grid['columns'])
-    return (row * (grid['cell_h'] + grid['gutter']),
-            col * (grid['cell_w'] + grid['gutter']))
+def cell_origin(index_in_row, row):
+    """Top-left pixel (y, x) of the cell holding the index'th slice of `row`."""
+    return (0, index_in_row * (row['cell_w'] + row['gutter']))
 
 
-def report_geometry(grid, dtype):
-    """The grid and the file size, once, before any pixels."""
-    n = len(grid['slice_ids'])
-    px = grid['height'] * grid['width']
-    mb = px * np.dtype(dtype).itemsize / 1e6
-
-    print(f"Grid:   {grid['columns']} x {grid['rows']} cells for {n} slices "
-          f"({grid['columns'] * grid['rows'] - n} blank)")
-    print(f"Cell:   {grid['cell_w']} x {grid['cell_h']} px "
-          f"({grid['cell_w'] * UM_PER_PX:.0f} x {grid['cell_h'] * UM_PER_PX:.0f} um), "
-          f"gutter {grid['gutter']} px at {UM_PER_PX:g} um/px")
-    print(f"Sheet:  {grid['width']} x {grid['height']} px = {px/1e6:.0f} Mpx, "
-          f"{mb:.0f} MB per channel {dtype}")
-    print(f"        per-column/per-row cells would be {grid['packed_px']/1e6:.0f} Mpx "
-          f"({100 * grid['packed_px'] / px:.0f}% of this)\n")
+def row_stem(channel, row):
+    """Filename stem: the row's position and the slice range it holds."""
+    return (f"montage_{channel}_row{row['index']}"
+            f"_slice{row['slice_ids'][0]}-{row['slice_ids'][-1]}")
 
 
-def build_channel(channel, entries, shapes, grid, dtype):
-    """One montage array for one channel, tiles pasted at their cell origins.
+def report_rows(rows, dtype):
+    """Every row's cell, extent and file size, before any pixels."""
+    itemsize = np.dtype(dtype).itemsize
+    total_px = 0
+    print(f"Rows:   {len(rows)} at {UM_PER_PX:g} um/px, "
+          f"gutter {rows[0]['gutter']} px, dtype {dtype}")
+    for row in rows:
+        px = row['height'] * row['width']
+        total_px += px
+        print(f"  row {row['index']}  slices {row['slice_ids'][0]}-"
+              f"{row['slice_ids'][-1]} ({len(row['slice_ids'])})  "
+              f"cell {row['cell_w']} x {row['cell_h']}  ->  "
+              f"{row['width']} x {row['height']} px, "
+              f"{px * itemsize / 1e6:.0f} MB")
+    print(f"  total {total_px/1e6:.0f} Mpx, {total_px * itemsize / 1e6:.0f} MB "
+          f"per channel across {len(rows)} files\n")
 
-    Prints each tile's max and mean. Nothing is normalized -- the sheet carries
-    one contrast window for all 62 sections -- so one bright section darkens the
-    rest, and these are the numbers that say whether that is what happened.
+
+def build_row(channel, entries, shapes, row, dtype):
+    """One strip for one row of one channel, tiles pasted at their cell origins.
+
+    Prints each tile's max and mean. Nothing is normalized -- the strip carries
+    one contrast window for every section in it -- so one bright pixel sets the
+    window for the row, and these are the numbers that say which.
     """
     by_slice = dict(entries)
-    montage = np.zeros((grid['height'], grid['width']), dtype=dtype)
+    strip = np.zeros((row['height'], row['width']), dtype=dtype)
 
     placed = 0
     brightest = (0, None)
-    for index, slice_id in enumerate(grid['slice_ids']):
+    for index, slice_id in enumerate(row['slice_ids']):
         path = by_slice[slice_id].get(channel)
         if path is None:
             print(f"    slice {slice_id}: no {channel} tif, cell left black")
@@ -258,8 +261,8 @@ def build_channel(channel, entries, shapes, grid, dtype):
             raise ValueError(
                 f"{path.name} is {tile.shape} on disk but its header said "
                 f"{(h, w)}; the file changed under the run.")
-        y0, x0 = cell_origin(index, grid)
-        montage[y0:y0 + h, x0:x0 + w] = tile
+        y0, x0 = cell_origin(index, row)
+        strip[y0:y0 + h, x0:x0 + w] = tile
 
         tile_max = int(tile.max())
         print(f"    slice {slice_id:<3} {w} x {h}  max {tile_max:>6}  "
@@ -269,9 +272,9 @@ def build_channel(channel, entries, shapes, grid, dtype):
         placed += 1
 
     if placed:
-        print(f"    sheet max {brightest[0]} (slice {brightest[1]}) -- set the "
+        print(f"    row max {brightest[0]} (slice {brightest[1]}) -- set the "
               f"viewer's display range by hand, not with Auto")
-    return montage, placed
+    return strip, placed
 
 
 def montage_subslices(targets=None, columns=DEFAULT_COLUMNS, channels=CHANNELS,
@@ -295,48 +298,56 @@ def montage_subslices(targets=None, columns=DEFAULT_COLUMNS, channels=CHANNELS,
         )
 
     shapes, dtype = read_headers(entries)
-    grid = plan_grid(shapes, columns)
+    rows = plan_rows(shapes, columns)
 
     print(f"Input:  {input_dir}")
     print(f"Output: {OUTPUT_DIR}")
     print(f"Slices: {len(entries)}\n")
-    report_geometry(grid, dtype)
+    report_rows(rows, dtype)
 
     if dry_run:
-        for index, slice_id in enumerate(grid['slice_ids']):
-            row, col = divmod(index, columns)
-            h, w = shapes[slice_id]
-            present = "".join(c[0] for c in CHANNELS if c in dict(entries)[slice_id])
-            print(f"  slice {slice_id:<3} r{row} c{col}  {w} x {h}  [{present}]")
+        for row in rows:
+            for index, slice_id in enumerate(row['slice_ids']):
+                h, w = shapes[slice_id]
+                present = "".join(c[0] for c in CHANNELS
+                                  if c in dict(entries)[slice_id])
+                print(f"  row {row['index']} col {index}  slice {slice_id:<3} "
+                      f"{w} x {h}  [{present}]")
         print("\nDry run: nothing written.")
         return
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    written = 0
     for channel in channels:
         print(f"{channel}")
-        montage, placed = build_channel(channel, entries, shapes, grid, dtype)
-        if not placed:
-            print(f"    no {channel} tifs found, montage not written")
-            continue
-        out_path = OUTPUT_DIR / f"montage_{channel}.tif"
-        imwrite_tiff(out_path, montage)
-        print(f"    {placed} tiles -> {out_path.name}, "
-              f"{montage.shape[1]} x {montage.shape[0]}, "
-              f"{get_file_size_mb(out_path):.0f} MB")
-        del montage
+        for row in rows:
+            print(f"  row {row['index']} (slices {row['slice_ids'][0]}-"
+                  f"{row['slice_ids'][-1]})")
+            strip, placed = build_row(channel, entries, shapes, row, dtype)
+            if not placed:
+                print(f"    no {channel} tifs in this row, not written")
+                continue
+            out_path = OUTPUT_DIR / f"{row_stem(channel, row)}.tif"
+            imwrite_tiff(out_path, strip)
+            written += 1
+            print(f"    {placed} tiles -> {out_path.name}, "
+                  f"{strip.shape[1]} x {strip.shape[0]}, "
+                  f"{get_file_size_mb(out_path):.0f} MB")
+            del strip
 
-    print(f"\nWrote to {OUTPUT_DIR}")
+    print(f"\nWrote {written} files to {OUTPUT_DIR}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Tile every downsampled subslice into one montage per channel",
+        description="Tile the downsampled subslices into one image per row, per channel",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument('--columns', '-c', type=int, default=DEFAULT_COLUMNS,
-                        help=f'Slices per row (default {DEFAULT_COLUMNS})')
+                        help=f'Slices per row, and so per file '
+                             f'(default {DEFAULT_COLUMNS})')
     parser.add_argument('--slice', '-s', type=int, default=None,
                         help='Include this slice only')
     parser.add_argument('--slices', type=int, nargs='+', default=None,
@@ -345,7 +356,7 @@ def main():
                         dest='channels',
                         help='Montage this channel only; repeatable')
     parser.add_argument('--dry-run', action='store_true',
-                        help='Report grid and sizes, write nothing')
+                        help='Report rows and sizes, write nothing')
     args = parser.parse_args()
 
     if args.columns < 1:
