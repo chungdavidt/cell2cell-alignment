@@ -20,10 +20,11 @@ Output:
 The row number leads so a listing groups a row's three channels together, and it
 is zero-padded so row10 does not sort ahead of row2.
 
-Slices run left to right in ascending order, --columns per row (10 by default),
-so BY95's 62 sections come out as 7 files per channel: six rows of 10 and a last
-row of 2. One sheet holding all 62 was the first build and was **too unwieldy to
-work with (David, 2026-09-02)** -- 45,969 x 27,146 px, 2,496 MB per channel.
+Slices run left to right in ascending order, --columns per row (5 by default,
+David's call after seeing 10), so BY95's 62 sections come out as 13 files per
+channel: twelve rows of 5 and a last row of 2. One sheet holding all 62 was the
+first build and was **too unwieldy to work with (David, 2026-09-02)** --
+45,969 x 27,146 px, 2,496 MB per channel.
 
 ROWS ARE INDEPENDENT IMAGES, SO EACH SIZES ITS OWN CELLS
     Every section's canvas is a bounding box over its own FOVs, so no two are the
@@ -32,8 +33,9 @@ ROWS ARE INDEPENDENT IMAGES, SO EACH SIZES ITS OWN CELLS
     one row's cell has nothing to do with another's. That is the point of
     splitting: BY95's sections run 931 px (a single FOV) in the first rows to
     4,515 px in the last, and on one sheet the small ones carried the large
-    ones' padding. Measured on BY95's own shapes, per row it is 426 Mpx against
-    1,248, and no single file is over 349 MB.
+    ones' padding, and the narrower the row the less of it there is. Measured on
+    BY95's own shapes: one sheet 1,248 Mpx, 10 per row 426, 5 per row 368, with
+    the largest single file falling from 2,496 MB to 349 to 174.
 
     Within a row the three channels share one geometry, so a cell in the DAPI
     strip is the same cell in the MSCARLET strip. Across rows they do not, and
@@ -76,7 +78,7 @@ no `_subslice_` at all.
 Usage:
     python montage_downsampled_subslices.py --dry-run   # rows + sizes, writes nothing
     python montage_downsampled_subslices.py
-    python montage_downsampled_subslices.py --columns 6
+    python montage_downsampled_subslices.py --columns 10
     python montage_downsampled_subslices.py --slices 10 22 30   # one short row
     python montage_downsampled_subslices.py --channel DAPI
 """
@@ -116,7 +118,7 @@ CHANNELS = ("GCAMP", "DAPI", "MSCARLET")
 # is what a micron is worth in these files.
 UM_PER_PX = TARGET_XY_UM_PER_PX
 
-DEFAULT_COLUMNS = 10
+DEFAULT_COLUMNS = 5
 
 # Black seam between cells, in um so it holds at any pitch. 100 um is 91 px at
 # 1.1 um/px. Not drawn at either end of the row.
