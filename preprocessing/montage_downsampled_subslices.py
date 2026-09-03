@@ -30,9 +30,11 @@ GRID
     into fewer pixels but makes the layout depend on which section lands where;
     --dry-run prints what it would have cost so the choice can be revisited.
 
-    A tile sits at the TOP-LEFT of its cell, and the label and scale bars are
-    drawn at the tile's own edges rather than the cell's, so they stay against
-    the tissue instead of floating in the padding.
+    A tile sits at the TOP-LEFT of its cell. The scale bars are drawn at the
+    tile's own edges rather than the cell's, so they stay at the bottom of the
+    tissue instead of floating below it in the padding. The label starts at that
+    same shared corner but is bounded by the CELL, so a section narrower than
+    its own text is still labelled -- see draw_slice_label.
 
 WHAT IS BURNED IN
     Each tile carries "slice N" in its top-left and, by default, the same scale
@@ -241,7 +243,17 @@ def draw_slice_label(image, text, white):
     written were nonzero beforehand, out of how many were written. The top-left
     corner of a bounding box over FOV placements is usually empty but is not
     guaranteed to be, and unlike a scale bar this one cannot be moved to a
-    quieter corner without leaving the tile.
+    quieter corner without leaving the cell.
+
+    Pass the CELL, not the tile. The two share a top-left corner, so the text
+    starts in the same place either way -- but bounded by the tile, a label
+    wider than a narrow section is dropped entirely, and an unlabelled tile is
+    the one thing a contact sheet cannot afford. On the first BY95 run that
+    silenced 8 of 62: "slice 11" is ~700 px wide at SLICE_LABEL_HEIGHT_UM 200,
+    and one FOV is only 931 px after the downsample. Bounded by the cell it
+    runs on into the padding instead, which is black and belongs to no other
+    tile. It still cannot reach a neighbour: cells do not overlap and the
+    gutter separates them.
     """
     height, width = image.shape[:2]
     margin = int(round(SCALE_BAR_MARGIN_UM / UM_PER_PX))
@@ -249,7 +261,9 @@ def draw_slice_label(image, text, white):
     label_h, label_w = label.shape
 
     if margin + label_w > width or margin + label_h > height:
-        print(f"    Label {text!r} does not fit this tile, skipped")
+        print(f"    Label {text!r} does not fit this cell "
+              f"({width} x {height} px), skipped -- lower "
+              f"SLICE_LABEL_HEIGHT_UM (now {SLICE_LABEL_HEIGHT_UM:g})")
         return 0, 0
 
     patch = image[margin:margin + label_h, margin:margin + label_w]
@@ -322,13 +336,16 @@ def build_channel(channel, entries, shapes, grid, dtype, scale_bars):
 
     overwritten = drawn = 0
     for slice_id, y0, x0, h, w in drawn_on:
-        tile_view = montage[y0:y0 + h, x0:x0 + w]
-
-        o, d = draw_slice_label(tile_view, f"slice {slice_id}", white)
+        # The label gets the whole cell, so a section narrower than its own text
+        # is still labelled; the bars get the tile, so they stay at the bottom
+        # of the tissue rather than floating below it in the padding.
+        cell_view = montage[y0:y0 + grid['cell_h'], x0:x0 + grid['cell_w']]
+        o, d = draw_slice_label(cell_view, f"slice {slice_id}", white)
         overwritten += o
         drawn += d
+
         if scale_bars == 'tile':
-            o, d = draw_scale_bars(tile_view, UM_PER_PX)
+            o, d = draw_scale_bars(montage[y0:y0 + h, x0:x0 + w], UM_PER_PX)
             overwritten += o
             drawn += d
 
