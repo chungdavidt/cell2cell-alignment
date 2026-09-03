@@ -15,7 +15,10 @@ Input (written by downsample_subslices_cellmask.py, step 3, TARGET_XY_UM_PER_PX)
 Output:
 
     <OUTPUT_ROOT>/HYB_subslice_downsampled_montage/
-        montage_{CHANNEL}_row{i}_slice{first}-{last}.tif
+        row{i}_slice{first}-{last}_montage_{CHANNEL}.tif
+
+The row number leads so a listing groups a row's three channels together, and it
+is zero-padded so row10 does not sort ahead of row2.
 
 Slices run left to right in ascending order, --columns per row (10 by default),
 so BY95's 62 sections come out as 7 files per channel: six rows of 10 and a last
@@ -29,8 +32,8 @@ ROWS ARE INDEPENDENT IMAGES, SO EACH SIZES ITS OWN CELLS
     one row's cell has nothing to do with another's. That is the point of
     splitting: BY95's sections run 931 px (a single FOV) in the first rows to
     4,515 px in the last, and on one sheet the small ones carried the large
-    ones' padding. Per row it is 407 Mpx against 1,248, and no single file is
-    over ~350 MB.
+    ones' padding. Measured on BY95's own shapes, per row it is 426 Mpx against
+    1,248, and no single file is over 349 MB.
 
     Within a row the three channels share one geometry, so a cell in the DAPI
     strip is the same cell in the MSCARLET strip. Across rows they do not, and
@@ -65,8 +68,10 @@ because no pipeline step reads it. Nothing can pick these files up despite the
 `subslice` token in the folder name: every glob in the pipeline is a
 per-directory `Path(dir).glob`, and downsample_subslices_cellmask.py,
 assign_orientation.py and the graph builder all glob directories named in the
-config, which this folder is not. The files themselves are named montage_*, so
-even copied into one of those directories they would match no pattern.
+config, which this folder is not. The filenames could not be picked up even if
+copied into one of those directories: every pipeline pattern is anchored at
+`slice*_subslice_` or `*_subslice_ALIGN`, and these start with `row` and contain
+no `_subslice_` at all.
 
 Usage:
     python montage_downsampled_subslices.py --dry-run   # rows + sizes, writes nothing
@@ -215,9 +220,15 @@ def cell_origin(index_in_row, row):
 
 
 def row_stem(channel, row):
-    """Filename stem: the row's position and the slice range it holds."""
-    return (f"montage_{channel}_row{row['index']}"
-            f"_slice{row['slice_ids'][0]}-{row['slice_ids'][-1]}")
+    """Filename stem: the row's position first, then its slices, then the channel.
+
+    Row first so a directory listing groups the three channels of one row
+    together instead of scattering them across three channel blocks, and
+    zero-padded so row10 does not sort before row2 at a small --columns.
+    """
+    return (f"row{row['index']:02d}"
+            f"_slice{row['slice_ids'][0]}-{row['slice_ids'][-1]}"
+            f"_montage_{channel}")
 
 
 def report_rows(rows, dtype):
