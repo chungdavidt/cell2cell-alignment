@@ -24,13 +24,26 @@ definition, used for the reproduction check and the QC mask) and over the
 barcoded panel alone (columns 0..PANEL_END-1), which excludes unused-1..5 and
 the three readout channels.
 
-The only file written is the histogram PNG.
+--exclude-slices drops every cell in those sections before anything is counted,
+for a section whose data is bad. It applies to every block, so the reproduction
+check runs on a subset of the brain and is no longer a reproduction of the
+reported number -- it says so and withholds its verdict when the flag is used.
+Cells with a NaN slice (assigned to no section) are never dropped, and a slice
+number with no cells is an error, so a typo cannot write a file whose name
+claims an exclusion that did not happen. The flag is local to this script, like
+plot_gene_histograms.py's flag of the same name: no config name holds it and the
+pipeline still renders the section. --compare is untouched -- the second dataset
+is a different brain.
+
+The only file written is the histogram PNG,
+qc_<marker>_counts[_ex{slices}].png.
 
 Usage:
     python preprocessing/check_qc_metrics.py <DATA_ROOT_or_filt_neurons.mat>
     python preprocessing/check_qc_metrics.py            # uses local_config.DATA_ROOT
     python preprocessing/check_qc_metrics.py --lab-reads 20 --lab-genes 5
     python preprocessing/check_qc_metrics.py --out qc.png --no-plot
+    python preprocessing/check_qc_metrics.py --exclude-slices 58
     python preprocessing/check_qc_metrics.py --compare <OTHER_DATA_ROOT>
     python preprocessing/check_qc_metrics.py --no-reported          # new brain
 
@@ -75,8 +88,11 @@ def _pct(n, total):
     return 100.0 * n / total if total else 0.0
 
 
-def _default_out(marker_name):
-    name = f"qc_{marker_name.lower()}_counts.png"
+def _default_out(marker_name, excluded=()):
+    stem = f"qc_{marker_name.lower()}_counts"
+    if excluded:
+        stem += "_ex" + "_".join(str(s) for s in excluded)
+    name = f"{stem}.png"
     try:
         from analysis_paths import analysis_subdir
 
@@ -86,6 +102,40 @@ def _default_out(marker_name):
     except Exception:
         pass
     return Path.cwd() / name
+
+
+def drop_slices(expmat, slice_field, excluded):
+    """expmat without the rows in `excluded`, and the keep mask that cut them.
+
+    Mirrors plot_gene_histograms.drop_slices, kept local so this script still
+    runs off a bare filt_neurons.mat path. The mask comes back because `slice`
+    is passed on to the per-count table and the sweep, and has to lose the same
+    rows the matrix did. Cells whose slice is NaN belong to no section and are
+    always kept -- NaN equals nothing, so the mask never sees them.
+    """
+    import scipy.sparse as sp
+
+    if slice_field is None:
+        raise SystemExit("--exclude-slices: filt_neurons.mat has no `slice` field")
+    sl = np.asarray(slice_field).ravel().astype(float)
+    if sl.size != expmat.shape[0]:
+        raise SystemExit(f"--exclude-slices: `slice` is {sl.size} rows against "
+                         f"expmat's {expmat.shape[0]}")
+
+    present = set(np.unique(sl[~np.isnan(sl)]).astype(int).tolist())
+    missing = [s for s in excluded if s not in present]
+    if missing:
+        raise SystemExit(f"--exclude-slices {missing}: no cells in this dataset. "
+                         f"present: {sorted(present)}")
+
+    keep = ~np.isin(sl, excluded)
+    expmat = sp.csr_matrix(expmat)[keep] if sp.issparse(expmat) else np.asarray(expmat)[keep]
+    return expmat, keep
+
+
+def _slice_phrase(excluded):
+    return (f"slice{'s' if len(excluded) > 1 else ''} "
+            f"{', '.join(str(s) for s in excluded)}")
 
 
 def _load(path):
@@ -112,9 +162,13 @@ def _summary(expmat, hi, reads_thr, genes_thr):
     }
 
 
-def report_lab_filter(expmat, reads_thr, genes_thr, label, reported):
+def report_lab_filter(expmat, reads_thr, genes_thr, label, reported, excluded=()):
     print(f"\n=== reproducing the reported QC ({label}) ===")
     print(f"filter: reads >= {reads_thr} AND genes >= {genes_thr}")
+    if excluded:
+        print(f"{_slice_phrase(excluded)} excluded: these numbers cover part of the "
+              "brain, the reported ones cover all of it, so this is not a "
+              "reproduction check")
     print(f"{'columns':<20}{'pass':>9}{'pass %':>9}{'med reads':>11}{'med genes':>11}")
     out = {}
     for name, hi in (("all 114", None), (f"panel 0..{PANEL_END-1}", PANEL_END)):
@@ -131,7 +185,10 @@ def report_lab_filter(expmat, reads_thr, genes_thr, label, reported):
     d_g = abs(s["median_genes"] - reported["median_genes"])
     print(f"\nlab reported: {reported['pass_pct']}% pass, median "
           f"{reported['median_reads']} reads, {reported['median_genes']} genes")
-    if d_pass <= 0.1 and d_r <= 1 and d_g <= 1:
+    if excluded:
+        print(f"  -> no verdict: {_slice_phrase(excluded)} excluded, "
+              "the two do not cover the same cells")
+    elif d_pass <= 0.1 and d_r <= 1 and d_g <= 1:
         print("  -> all three reproduce; this is their filter")
     elif d_pass <= 0.1:
         print(f"  -> pass rate reproduces, medians differ by {d_r:.0f} reads / {d_g:.0f} genes")
@@ -201,7 +258,7 @@ def marker_distribution(expmat, marker_col, marker_name, reads_thr, genes_thr,
     return col, qc
 
 
-def plot_marker_histogram(col, qc, marker_name, out_path, log_scale=True):
+def plot_marker_histogram(col, qc, marker_name, out_path, log_scale=True, note=""):
     """Histogram: rolony count per cell on x, number of cells on y.
 
     Log y by default -- the distribution spans orders of magnitude, so on a
@@ -236,7 +293,10 @@ def plot_marker_histogram(col, qc, marker_name, out_path, log_scale=True):
                     ax.annotate(f"{n}", (v, n), textcoords="offset points",
                                 xytext=(0, 2), ha="center", fontsize=6)
 
-    fig.suptitle(f"{marker_name} counts per QC-passing cell", fontsize=11)
+    title = f"{marker_name} counts per QC-passing cell"
+    if note:
+        title += f"\n{note}"
+    fig.suptitle(title, fontsize=11)
     fig.tight_layout()
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -291,6 +351,9 @@ def main():
                     help="median reads/cell the lab reported for THIS brain")
     ap.add_argument("--reported-genes", type=float, default=20,
                     help="median genes/cell the lab reported for THIS brain")
+    ap.add_argument("--exclude-slices", type=int, nargs="+", metavar="N",
+                    help="drop every cell in these sections before counting; "
+                         "the numbers land in the output filename")
     ap.add_argument("--no-reported", action="store_true",
                     help="skip the reproduction check (new brain, no reported numbers yet)")
     ap.add_argument("--out", help="histogram path (default: <ANALYSIS_ROOT>/preprocessing/"
@@ -314,14 +377,23 @@ def main():
 
     p, fn = _load(path)
     expmat = fn["expmat"]
+    slice_ids = fn.get("slice")
     print(f"filt_neurons: {p}")
     print(f"cells: {expmat.shape[0]}   columns: {expmat.shape[1]}")
 
-    report_lab_filter(expmat, args.lab_reads, args.lab_genes, p.parent.name, reported)
+    excluded = sorted(set(args.exclude_slices or []))
+    if excluded:
+        expmat, keep = drop_slices(expmat, slice_ids, excluded)
+        slice_ids = np.asarray(slice_ids).ravel()[keep]
+        print(f"excluded {_slice_phrase(excluded)}: dropped {int((~keep).sum())} cells, "
+              f"{expmat.shape[0]} left")
+
+    report_lab_filter(expmat, args.lab_reads, args.lab_genes, p.parent.name, reported,
+                      excluded)
     report_distribution(expmat)
 
     col, qc = marker_distribution(expmat, args.marker_col, args.marker_name,
-                                  args.lab_reads, args.lab_genes, fn["slice"])
+                                  args.lab_reads, args.lab_genes, slice_ids)
 
     gcamp = _column(expmat, GCAMP_COLUMN_INDEX)
     if gcamp is not None and args.marker_col != GCAMP_COLUMN_INDEX:
@@ -330,15 +402,19 @@ def main():
               f"({_pct(int(g.sum()), gcamp.size):.1f}%)   max {gcamp.max():.0f}")
 
     if col is not None and qc is not None and qc.any() and not args.no_plot:
-        out = args.out or _default_out(args.marker_name)
-        plot_marker_histogram(col, qc, args.marker_name, out, log_scale=not args.linear)
+        out = args.out or _default_out(args.marker_name, excluded)
+        plot_marker_histogram(col, qc, args.marker_name, out, log_scale=not args.linear,
+                              note=f"excluding {_slice_phrase(excluded)}" if excluded else "")
 
-    report_sweep(expmat, None if col is None else (col > 0), fn["slice"], args.marker_name)
+    report_sweep(expmat, None if col is None else (col > 0), slice_ids, args.marker_name)
 
     if args.compare:
         p2, fn2 = _load(args.compare)
         print(f"\n\n########## comparison: {p2} ##########")
         print(f"cells: {fn2['expmat'].shape[0]}")
+        if excluded:
+            print(f"--exclude-slices applies to {p.parent.name} only; "
+                  f"{p2.parent.name} is whole")
         report_lab_filter(fn2["expmat"], args.lab_reads, args.lab_genes, p2.parent.name, None)
         print("\n=== side by side (all 114 columns) ===")
         a = _summary(expmat, None, args.lab_reads, args.lab_genes)
