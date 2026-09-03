@@ -3,47 +3,65 @@
 Is the slice numbering right? Everything filt_neurons.mat can say about it.
 
 Read-only, and it opens nothing but `filt_neurons.mat` -- no images, no FOV
-TIFFs, no cellmasks. Answers a question this pipeline cannot answer for itself:
-`slice` is assigned by the lab's upstream BARseq processing, and every script
-here only ever compares its VALUE (`slice_ids == slice_id`). Nothing indexes an
-array with it, so a MATLAB/Python off-by-one is impossible; what is possible is
-that the numbering does not follow the physical section order.
+TIFFs, no cellmasks.
 
-Four checks, each printed with the evidence rather than a verdict:
+WHAT THIS CAN AND CANNOT ANSWER
+    The code half needs no probe. Every script here compares the section
+    number's VALUE (`slice_ids == slice_id`) and nothing indexes an array with
+    it, so a MATLAB/Python off-by-one cannot arise. What is possible is that
+    the numbering, assigned by the lab's upstream BARseq processing, does not
+    follow the physical section order.
+
+    Note what that would and would not break. The cell-level checks
+    (check_cell_id_link.py, measure_lookup_disagreement.py) all work INSIDE one
+    section and never read the section number, so they pass identically under
+    any permutation of it -- correct cells and correct stitching are fully
+    consistent with a wrong order. Downstream, a section number is a label on a
+    graph node, not a z coordinate: each section is fitted to the 2P
+    independently, so a wrong order would not corrupt an alignment. It would
+    matter for assign_orientation.py's series walk, which asks the cutting
+    order once and propagates it, and for reading a montage as a progression.
+
+Seven reports, each printed with the evidence rather than a verdict:
 
 1. THE FIELD ITSELF
-   Range, NaN fraction, which numbers in 1..max are absent, how many cells
-   carry each. A gap in the sequence is worth knowing about before it shows up
-   as a missing tile in a montage.
+   Range, NaN fraction, gaps in 1..max, cells per section.
 
 2. slice VS orig_slice
-   filt_neurons carries BOTH. If they are identical the numbering was never
-   remapped and there is nothing more to say. If they differ, the remapping is
-   printed in full -- that is the single most likely place for the numbering to
-   have been changed out from under the images.
+   Both are in filt_neurons. A difference is NOT by itself a renumbering: on
+   BY95 orig_slice takes 8 values over 62 sections, one per section with no
+   splits, which is a SLIDE and not an original section number. Check 4 settles
+   that against the FOV names. A slice number drawing from several orig_slice
+   values would be a merge, and is flagged separately.
 
-3. THE 8-GROUP PARTITION
-   `uniq_slice` / `slice_boundaries` partition BY95's 62 sections into 8 sets
-   (the section-to-run grouping). Whether slice numbers run consecutively
-   within a group, or interleave across groups, says how the numbering was
-   assigned -- per run or globally.
+3. THE uniq_slice / slice_boundaries PARTITION
+   Read from the loaded struct, where it lives, rather than the file's top
+   level.
 
-4. STAGE LAYOUT (the real test)
-   Sections are cut in order and laid onto slides in order, so consecutive
-   section NUMBERS should be neighbours in stage coordinates. For each slice
-   this prints the centroid and bounding box of its cells' `pos`, the step to
-   the next slice number, and then flags any slice whose numeric neighbour is
-   NOT its nearest neighbour in space. A correct numbering makes a tidy raster;
-   a scrambled one puts slice 30 next to slice 7.
+4. SECTIONS PER SLIDE
+   Slide membership from the `MAX_Pos{N}_{row}_{col}` FOV names, cross-checked
+   against orig_slice. Then the blocks of consecutive section numbers per
+   slide, and the order the numbering visits slides in. Few long blocks means
+   the numbering follows the mounting; sections numbered independently of how
+   they were mounted would scatter.
 
-   Read the flags as questions, not errors. A section can legitimately sit far
-   from its predecessor at a slide break or a new run, which is exactly what
-   check 3 is there to cross-reference. What should NOT happen is many
-   scattered breaks with no group boundary behind them.
+5. DOES THE SERIES GROW MONOTONICALLY?
+   The strongest evidence available without an image, and the only check here
+   that no coordinate frame can spoil. A series cut from one end starts small
+   and grows, so cells per section should rise with the section number.
+   Reported as a rank correlation and an out-of-order pair count against the
+   ~50% a random permutation gives.
 
-Also reports FOVs shared between two slices. Two sections in one FOV is
-possible when they are mounted close together; it is also what a mis-assigned
-section looks like, so the count is printed either way.
+6. STAGE LAYOUT WITHIN EACH SLIDE
+   Consecutive section numbers should be neighbours in stage coordinates --
+   but `pos` is a WITHIN-SLIDE coordinate, so this runs one slide at a time.
+   Run globally on BY95 it flagged 45 of 62 sections, nearly all of them pairs
+   on different slides: an artefact of comparing two frames, not a finding.
+
+7. FOVs SHARED BETWEEN SECTIONS
+   Normal when two sections are mounted close enough to share a field. Which
+   section numbers share one is the informative part: adjacent numbers mean
+   adjacent mounting.
 
 Usage:
     python check_slice_indexing.py
@@ -52,6 +70,7 @@ Usage:
 """
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -63,7 +82,7 @@ for _p in (str(_ROOT), str(_HERE)):
 
 import numpy as np
 
-from utilities.mat_io import load_mat, load_filt_neurons
+from utilities.mat_io import load_filt_neurons
 
 
 def _flat(value):
@@ -117,7 +136,13 @@ def report_field(slice_ids):
 
 
 def report_orig_slice(fn, slice_ids, finite, max_report):
-    """Check 2: slice against orig_slice."""
+    """Check 2: slice against orig_slice. Returns {section: majority orig}.
+
+    A difference here is NOT by itself a renumbering. On BY95 orig_slice takes
+    8 values over 62 sections, one per section with no splits -- it is the
+    SLIDE, and comparing it against `slice` compares two different quantities.
+    Check 4 settles which it is against the FOV names.
+    """
     print("=" * 70)
     print("2. slice VS orig_slice")
     print("=" * 70)
@@ -126,30 +151,33 @@ def report_orig_slice(fn, slice_ids, finite, max_report):
     if orig is None:
         print("  orig_slice is absent from this filt_neurons -- nothing to "
               "compare.\n")
-        return
+        return None
     if orig.size != slice_ids.size:
         print(f"  orig_slice has {orig.size} rows against slice's "
               f"{slice_ids.size} -- not row-aligned, cannot compare.\n")
-        return
+        return None
 
     both = finite & ~np.isnan(orig)
     a = slice_ids[both].astype(int)
     b = orig[both].astype(int)
 
+    per_section = {}
+    for s, o in zip(a, b):
+        per_section.setdefault(int(s), {}).setdefault(int(o), 0)
+        per_section[int(s)][int(o)] += 1
+    majority = {s: max(d, key=d.get) for s, d in per_section.items()}
+
     if np.array_equal(a, b):
         print(f"  IDENTICAL on all {both.sum()} rows where both are set.")
         print("  The numbering was never remapped: slice IS orig_slice.\n")
-        return
+        return majority
 
     differ = int(np.count_nonzero(a != b))
     print(f"  THEY DIFFER on {differ} of {both.sum()} rows "
           f"({100 * differ / both.sum():.1f}%).")
     print("  So the section numbering WAS remapped upstream. The mapping:\n")
 
-    pairs = {}
-    for s, o in zip(a, b):
-        pairs.setdefault(int(s), {}).setdefault(int(o), 0)
-        pairs[int(s)][int(o)] += 1
+    pairs = per_section
 
     ambiguous = [s for s, o in pairs.items() if len(o) > 1]
     print(f"    {'slice':>6}  {'orig_slice':>28}")
@@ -166,17 +194,24 @@ def report_orig_slice(fn, slice_ids, finite, max_report):
               f"orig_slice: {sorted(ambiguous)[:20]}")
         print("  That is a merge, not a renumber -- worth understanding before "
               "trusting either field.")
+    else:
+        print("\n  Each slice number maps to exactly ONE orig_slice value, and "
+              "there are far fewer\n  of those than there are sections. That is "
+              "not a section renumbering -- check 4\n  tests whether "
+              "orig_slice is the SLIDE.")
     print()
+    return majority
 
 
-def report_groups(data_root, slice_ids, finite, max_report):
+def report_groups(fn, slice_ids, finite, max_report):
     """Check 3: the uniq_slice / slice_boundaries partition."""
     print("=" * 70)
     print("3. THE uniq_slice / slice_boundaries PARTITION")
     print("=" * 70)
 
-    raw = load_mat(data_root / "filt_neurons.mat")
-    groups = raw.get("uniq_slice")
+    # From the loaded struct, not the file's top level: uniq_slice is a field
+    # OF filt_neurons, and reading the top level found nothing on BY95.
+    groups = fn.get("uniq_slice")
     if groups is None:
         print("  uniq_slice is absent -- nothing to partition.\n")
         return None
@@ -226,102 +261,246 @@ def report_groups(data_root, slice_ids, finite, max_report):
     return members
 
 
-def report_layout(slice_ids, finite, pos, fov, groups, max_report):
-    """Check 4: stage layout, the one that can actually catch a scramble."""
+def slide_of(fov_names):
+    """{FOV name: slide number} from the `MAX_Pos{N}_{row}_{col}` convention."""
+    out = {}
+    for name in fov_names:
+        m = re.match(r"MAX_Pos(\d+)_", str(name))
+        if m:
+            out[str(name)] = int(m.group(1))
+    return out
+
+
+def report_slides(slice_ids, finite, fov, orig, max_report):
+    """Check 4: which slide is each section on, and is orig_slice that slide?
+
+    `pos` is a WITHIN-SLIDE coordinate -- `MAX_Pos7_003_016` is slide 7, grid
+    row 3, column 16 -- so comparing positions across slides compares two
+    different frames. Establishing slide membership is a prerequisite for
+    check 6, not a curiosity.
+    """
     print("=" * 70)
-    print("4. STAGE LAYOUT")
+    print("4. SECTIONS PER SLIDE")
+    print("=" * 70)
+
+    ints = np.full(slice_ids.shape, -1, dtype=int)
+    ints[finite] = slice_ids[finite].astype(int)
+
+    slides = slide_of(fov[finite]) if fov is not None else {}
+    if not slides:
+        print("  FOV names do not follow MAX_Pos{N}_{row}_{col}, so slide")
+        print("  membership is unknown and check 6 cannot run.\n")
+        return None
+
+    per_section = {}
+    for name, s in zip(fov[finite], ints[finite]):
+        sl = slides.get(str(name))
+        if sl is not None:
+            per_section.setdefault(int(s), {}).setdefault(sl, 0)
+            per_section[int(s)][sl] += 1
+
+    split = {s: d for s, d in per_section.items() if len(d) > 1}
+    section_slide = {s: max(d, key=d.get) for s, d in per_section.items()}
+
+    if orig:
+        agree = sum(1 for s, sl in section_slide.items()
+                    if orig.get(s) == sl)
+        print(f"  orig_slice equals the FOV's Pos number on {agree} of "
+              f"{len(section_slide)} sections.")
+        if agree == len(section_slide):
+            print("  So orig_slice IS THE SLIDE, not an original section number.")
+            print("  Check 2's '100% differ' therefore proves no renumbering --")
+            print("  it compared a section number against a slide number.")
+        print()
+
+    if split:
+        print(f"  {len(split)} section(s) draw FOVs from more than one slide: "
+              f"{sorted(split)[:20]}")
+        print("  A section cannot span two slides, so this would be a real "
+              "problem.\n")
+
+    order = sorted(section_slide)
+    blocks = []
+    for s in order:
+        sl = section_slide[s]
+        if blocks and blocks[-1][0] == sl and blocks[-1][2] + 1 == s:
+            blocks[-1][2] = s
+        else:
+            blocks.append([sl, s, s])
+
+    print(f"    {'slide':>6}  {'sections':>12}  {'count':>6}")
+    for sl, first, last in blocks[:max_report]:
+        print(f"    {sl:>6}  {f'{first}-{last}':>12}  {last - first + 1:>6}")
+    if len(blocks) > max_report:
+        print(f"    ... {len(blocks) - max_report} more")
+
+    n_slides = len(set(section_slide.values()))
+    print(f"\n  {len(blocks)} block(s) of consecutive section numbers over "
+          f"{n_slides} slide(s).")
+    print(f"  Slide visiting order: {', '.join(str(b[0]) for b in blocks)}")
+    print()
+    if len(blocks) == n_slides:
+        print("  One block per slide: the numbering runs through a slide before "
+              "moving on.")
+    elif len(blocks) <= 2 * n_slides:
+        print("  Some slides hold two blocks, so the series alternates between "
+              "a pair of slides --")
+        print("  what you get when consecutive sections are placed onto two "
+              "slides in turn, which")
+        print("  is how a series is split when two stains are wanted off it.")
+    else:
+        print("  Many short blocks. The numbering does not follow the mounting "
+              "in any simple way.")
+    print()
+    print("  What matters is that the blocks are FEW. Sections numbered "
+          "independently of how")
+    print("  they were mounted would scatter across slides, not fall into a "
+          "handful of runs.")
+    print()
+    return section_slide
+
+
+def report_series_trend(slice_ids, finite, max_report):
+    """Check 5: does the series grow the way a run through a brain grows?
+
+    The strongest evidence available without an image, and the only check here
+    independent of every coordinate frame: a series cut from one end starts
+    small and grows, so cells per section should rise with the section number.
+    A permuted numbering destroys that; nothing else in this probe would
+    notice, and neither would any of the cell-level checks -- those all work
+    inside one section and never read the section number at all.
+    """
+    print("=" * 70)
+    print("5. DOES THE SERIES GROW MONOTONICALLY?")
+    print("=" * 70)
+
+    ints = np.full(slice_ids.shape, -1, dtype=int)
+    ints[finite] = slice_ids[finite].astype(int)
+    order = sorted(set(ints[finite].tolist()))
+    counts = np.array([int(np.count_nonzero(ints == s)) for s in order], float)
+
+    if counts.size < 3:
+        print("  Too few sections to judge a trend.\n")
+        return
+
+    inversions = int(sum(1 for i in range(counts.size)
+                         for j in range(i + 1, counts.size)
+                         if counts[j] < counts[i]))
+    total = counts.size * (counts.size - 1) // 2
+    rank = np.argsort(np.argsort(counts)).astype(float)
+    spearman = float(np.corrcoef(rank, np.arange(counts.size, dtype=float))[0, 1])
+
+    print(f"  cells in section {order[0]:<3}          {int(counts[0])}")
+    print(f"  cells in section {order[-1]:<3}          {int(counts[-1])}")
+    print(f"  growth across the series    {counts[-1] / max(counts[0], 1):.0f}x")
+    print(f"  rank correlation with section number   {spearman:+.3f}")
+    print(f"  out-of-order pairs                     {inversions}/{total} "
+          f"({100 * inversions / total:.1f}%)")
+    print()
+    if spearman > 0.9:
+        print("  The series rises almost perfectly with the section number.")
+        print("  A permuted numbering cannot produce this: a random order sits "
+              "near 50%")
+        print("  out-of-order pairs and a rank correlation near 0. The "
+              "numbering follows")
+        print("  the anatomy.")
+    elif spearman > 0.5:
+        print("  A clear rise with local exceptions. Consistent with a correct "
+              "series in")
+        print("  which neighbouring sections vary; not with a scrambled one.")
+    else:
+        print("  NO trend. Either this series does not run from one end of the "
+              "brain, or")
+        print("  the numbering does not follow the cutting order. Only the "
+              "montage separates")
+        print("  those two.")
+    print()
+
+
+def report_layout(slice_ids, finite, pos, section_slide, max_report):
+    """Check 6: stage layout, WITHIN a slide only.
+
+    Restricted to one slide at a time because `pos` is a within-slide
+    coordinate. Run globally on BY95 it flagged 45 of 62 sections and nearly
+    every flagged pair was two sections on different slides -- an artefact of
+    comparing two frames, not a finding. That version of this check was wrong.
+    """
+    print("=" * 70)
+    print("6. STAGE LAYOUT WITHIN EACH SLIDE")
     print("=" * 70)
 
     if pos is None or pos.ndim != 2 or pos.shape[1] < 2:
         print("  pos is absent or not N x 2 -- cannot place sections.\n")
         return
-
-    ints = slice_ids.astype(int)
-    order = sorted(set(ints[finite].tolist()))
-
-    centroids = {}
-    print(f"    {'slice':>6} {'cells':>7} {'FOVs':>5}  "
-          f"{'centroid x':>11} {'centroid y':>11}  {'step to next':>12}")
-    rows = []
-    for s in order:
-        sel = finite & (ints == s)
-        p = pos[sel]
-        cx, cy = float(p[:, 0].mean()), float(p[:, 1].mean())
-        centroids[s] = (cx, cy)
-        n_fov = len({str(f) for f in fov[sel]}) if fov is not None else -1
-        rows.append((s, int(sel.sum()), n_fov, cx, cy))
-
-    steps = {}
-    for i, s in enumerate(order[:-1]):
-        nxt = order[i + 1]
-        steps[s] = float(np.hypot(centroids[nxt][0] - centroids[s][0],
-                                  centroids[nxt][1] - centroids[s][1]))
-
-    for s, n, n_fov, cx, cy in rows[:max_report]:
-        step = f"{steps[s]:>12.0f}" if s in steps else f"{'-':>12}"
-        print(f"    {s:>6} {n:>7} {n_fov if n_fov >= 0 else '?':>5}  "
-              f"{cx:>11.0f} {cy:>11.0f}  {step}")
-    if len(rows) > max_report:
-        print(f"    ... {len(rows) - max_report} more (--max-report to widen)")
-
-    if len(order) < 3:
-        print("\n  Too few sections to judge an ordering.\n")
+    if not section_slide:
+        print("  Slide membership unknown, so any position comparison would "
+              "span frames.")
+        print("  Skipped rather than reported as a finding.\n")
         return
 
-    # The test: is each section's numeric neighbour also its nearest neighbour?
-    print()
-    print("  Is each section's numeric neighbour its NEAREST neighbour in "
-          "stage space?")
-    coords = np.array([centroids[s] for s in order])
-    flagged = []
-    for i, s in enumerate(order):
-        d = np.hypot(coords[:, 0] - coords[i, 0], coords[:, 1] - coords[i, 1])
-        d[i] = np.inf
-        nearest = order[int(np.argmin(d))]
-        neighbours = {order[i - 1] if i else None,
-                      order[i + 1] if i + 1 < len(order) else None}
-        if nearest not in neighbours:
-            flagged.append((s, nearest, float(d.min()),
-                            min(steps.get(s, np.inf),
-                                steps.get(order[i - 1], np.inf) if i else np.inf)))
+    ints = np.full(slice_ids.shape, -1, dtype=int)
+    ints[finite] = slice_ids[finite].astype(int)
 
-    if not flagged:
-        print("    YES for every section. The numbering follows the physical "
-              "layout.")
+    by_slide = {}
+    for s, sl in section_slide.items():
+        by_slide.setdefault(sl, []).append(s)
+
+    total_flagged = 0
+    total_tested = 0
+    for sl in sorted(by_slide):
+        members = sorted(by_slide[sl])
+        if len(members) < 3:
+            print(f"  slide {sl}: {len(members)} section(s), too few to test")
+            continue
+        centroids = {}
+        for s in members:
+            p = pos[finite & (ints == s)]
+            centroids[s] = (float(p[:, 0].mean()), float(p[:, 1].mean()))
+
+        coords = np.array([centroids[s] for s in members])
+        flagged = []
+        for i, s in enumerate(members):
+            d = np.hypot(coords[:, 0] - coords[i, 0], coords[:, 1] - coords[i, 1])
+            d[i] = np.inf
+            nearest = members[int(np.argmin(d))]
+            nbrs = {members[i - 1] if i else None,
+                    members[i + 1] if i + 1 < len(members) else None}
+            if nearest not in nbrs:
+                flagged.append((s, nearest, float(d.min())))
+        total_flagged += len(flagged)
+        total_tested += len(members)
+
+        print(f"  slide {sl}: sections {members[0]}-{members[-1]} "
+              f"({len(members)}), {len(flagged)} flagged")
+        for s, nearest, dist in flagged[:max_report]:
+            print(f"      section {s} sits nearest {nearest} ({dist:.0f} away), "
+                  f"not its numeric neighbour")
+
+    print()
+    if not total_tested:
+        print("  No slide holds enough sections to test.")
+    elif not total_flagged:
+        print("  Within every slide, each section's numeric neighbour is also "
+              "its nearest")
+        print("  neighbour in space. The numbering follows the mounting.")
     else:
-        print(f"    NO for {len(flagged)} of {len(order)} sections:\n")
-        print(f"    {'slice':>6}  {'nearest':>8}  {'that far':>9}  "
-              f"{'numeric nbr':>12}")
-        for s, nearest, dist, own in flagged[:max_report]:
-            print(f"    {s:>6}  {nearest:>8}  {dist:>9.0f}  "
-                  f"{own if np.isfinite(own) else float('nan'):>12.0f}")
-        if len(flagged) > max_report:
-            print(f"    ... {len(flagged) - max_report} more")
-        if groups:
-            at_break = set()
-            for nums in groups.values():
-                if nums:
-                    at_break |= {nums[0], nums[-1]}
-            explained = [s for s, *_ in flagged if s in at_break]
-            print(f"\n    {len(explained)} of these sit at a "
-                  f"uniq_slice group boundary, where a jump is expected.")
-            print(f"    {len(flagged) - len(explained)} do not, and those are "
-                  f"the ones to look at.")
-        print("\n    A section mounted out of order, or two sections whose "
-              "cells were swapped,\n    looks exactly like this. So does a "
-              "slide break. The montage settles it.")
+        print(f"  {total_flagged} of {total_tested} sections flagged within "
+              f"their own slide.")
+        print("  Unlike a cross-slide comparison these share a coordinate "
+              "frame, so they are")
+        print("  worth looking at in the montage.")
     print()
-
 
 def report_shared_fovs(slice_ids, finite, fov, max_report):
     """FOVs claimed by more than one section."""
     if fov is None:
         return
     print("=" * 70)
-    print("5. FOVs SHARED BETWEEN SECTIONS")
+    print("7. FOVs SHARED BETWEEN SECTIONS")
     print("=" * 70)
 
-    ints = slice_ids.astype(int)
+    ints = np.full(slice_ids.shape, -1, dtype=int)
+    ints[finite] = slice_ids[finite].astype(int)
     owners = {}
     for name, s in zip(fov[finite], ints[finite]):
         owners.setdefault(str(name), set()).add(int(s))
