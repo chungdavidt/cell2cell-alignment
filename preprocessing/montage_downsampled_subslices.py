@@ -1,20 +1,32 @@
 #!/usr/bin/env python3
 """
-Tile the downsampled subslices into one image per ROW, per channel.
+Tile downsampled sections into one image per ROW, per channel.
 
-A contact sheet cut into strips. It stitches nothing: step 3 already wrote each
-section as a single image, and this reads those files and pastes them into a
-row. `filt_neurons.mat`, `subslice_definitions.mat` and the raw FOVs are never
-opened.
+A contact sheet cut into strips. It stitches nothing and resamples nothing: the
+sections are already single images at TARGET_XY_UM_PER_PX, and this reads them
+and pastes them into a row. `filt_neurons.mat`, `subslice_definitions.mat` and
+the raw FOVs are never opened.
 
-Input (written by downsample_subslices_cellmask.py, step 3, TARGET_XY_UM_PER_PX):
+TWO SOURCES, --source (default "slice")
+    slice     the WHOLE section -- every FOV that has a cell in it, no QC
+              filter, no marker filter, no connected components. From
+              `stitch_slices.py --downsample --no-scale-bars`, in
+              HYB_slice_stitched_tif_downsampled_micronwise/, named
+              slice{N}_{CHANNEL}.tif.
+    subslice  the marker-defined region the alignment is fitted on. Step 3's
+              output, in HYB_subslice_stitched_tif_downsampled_micronwise/,
+              named slice{N}_subslice_{CHANNEL}.tif.
 
-    <OUTPUT_ROOT>/HYB_subslice_stitched_tif_downsampled_micronwise/
-        slice{N}_subslice_{GCAMP,DAPI,MSCARLET}.tif
+    Different pictures, not two qualities of one. For eyeballing the sections
+    the whole slice is the right one; for seeing what the graph actually fits
+    on, it is not. Both are at the same pitch, which is the only reason one
+    script covers them -- the tiling is identical and only the input folder,
+    the filename shape and the output folder differ. They write to separate
+    output folders, so neither can overwrite the other.
 
 Output:
 
-    <OUTPUT_ROOT>/HYB_subslice_downsampled_montage/
+    <OUTPUT_ROOT>/HYB_{slice,subslice}_downsampled_montage/
         row{i}_slice{first}-{last}_montage_{CHANNEL}.tif
 
 The row number leads so a listing groups a row's three channels together, and it
@@ -31,11 +43,12 @@ ROWS ARE INDEPENDENT IMAGES, SO EACH SIZES ITS OWN CELLS
     same size and each has to be padded to fill its cell. Within one row every
     cell is the same size -- the widest tile in that row by the tallest -- but
     one row's cell has nothing to do with another's. That is the point of
-    splitting: BY95's sections run 931 px (a single FOV) in the first rows to
+    splitting: BY95's subslices run 931 px (a single FOV) in the first rows to
     4,515 px in the last, and on one sheet the small ones carried the large
     ones' padding, and the narrower the row the less of it there is. Measured on
-    BY95's own shapes: one sheet 1,248 Mpx, 10 per row 426, 5 per row 368, with
-    the largest single file falling from 2,496 MB to 349 to 174.
+    BY95's subslice shapes: one sheet 1,248 Mpx, 10 per row 426, 5 per row 368,
+    with the largest single file falling from 2,496 MB to 349 to 174. Whole
+    slices cover more tissue per section and so run larger.
 
     Within a row the three channels share one geometry, so a cell in the DAPI
     strip is the same cell in the MSCARLET strip. Across rows they do not, and
@@ -48,9 +61,11 @@ NOTHING IS BURNED IN
     and the reason is not that they landed on tissue. They were drawn at the
     image's own maximum, and every autoscaling viewer picks its display maximum
     by walking the histogram, so the ink pinned the display range and rendered
-    the tissue black. Every tile is the same pitch as every other and the order
-    is ascending slice number, which is what the labels were for; the filename
-    carries the slice range.
+    the tissue black. That is also why `--source slice` reads the `--downsample
+    --no-scale-bars` folder and not HYB_slice_stitched_tif/, whose TIFs have
+    stitch_slices.py's bars burned into their pixels and cannot have them taken
+    back out. Every tile is the same pitch as every other and the order is
+    ascending slice number; the filename carries the slice range.
 
 PIXELS
     Raw uint16 carried through with no per-tile normalization, so one contrast
@@ -62,24 +77,22 @@ PIXELS
     maximum with the slice holding it -- read those, then set the viewer's
     display range by hand (0-1000 works for BY95 DAPI). Do not press Auto.
 
-    The cellmask (slice{N}_subslice_CELLMASK.h5) is not tiled: it is a uint32
-    label array, not a picture.
+    The cellmask (slice{N}_..._CELLMASK.h5) is not tiled: it is a uint32 label
+    array, not a picture.
 
-The output folder is hardcoded below rather than added to preprocessing_config,
-because no pipeline step reads it. Nothing can pick these files up despite the
-`subslice` token in the folder name: every glob in the pipeline is a
-per-directory `Path(dir).glob`, and downsample_subslices_cellmask.py,
-assign_orientation.py and the graph builder all glob directories named in the
-config, which this folder is not. The filenames could not be picked up even if
-copied into one of those directories: every pipeline pattern is anchored at
-`slice*_subslice_` or `*_subslice_ALIGN`, and these start with `row` and contain
-no `_subslice_` at all.
+The output folders are hardcoded below rather than added to preprocessing_config,
+because no pipeline step reads them. Nothing can pick these files up: every glob
+in the pipeline is a per-directory `Path(dir).glob` over a folder named in the
+config, which neither of these is, and the filenames start with `row` and contain
+no `_subslice_` at all where every pipeline pattern is anchored at
+`slice*_subslice_` or `*_subslice_ALIGN`.
 
 Usage:
     python montage_downsampled_subslices.py --dry-run   # rows + sizes, writes nothing
-    python montage_downsampled_subslices.py
+    python montage_downsampled_subslices.py                      # whole slices
+    python montage_downsampled_subslices.py --source subslice
     python montage_downsampled_subslices.py --columns 10
-    python montage_downsampled_subslices.py --slices 10 22 30   # one short row
+    python montage_downsampled_subslices.py --slices 10 22 30    # one short row
     python montage_downsampled_subslices.py --channel DAPI
 """
 
@@ -98,6 +111,7 @@ import numpy as np
 
 from preprocessing_config import (
     HYB_DOWNSAMPLED_DIR,
+    HYB_SLICE_DOWNSAMPLED_DIR,
     OUTPUT_ROOT,
     TARGET_XY_UM_PER_PX,
 )
@@ -110,8 +124,6 @@ from utilities.image_io import (
 
 
 # Not in preprocessing_config: no pipeline step reads it.
-OUTPUT_DIR = Path(OUTPUT_ROOT) / "HYB_subslice_downsampled_montage"
-
 CHANNELS = ("GCAMP", "DAPI", "MSCARLET")
 
 # Step 3 resamples to the 2P in-plane pitch, so that -- not EXVIVO_UM_PER_PX --
@@ -124,10 +136,59 @@ DEFAULT_COLUMNS = 5
 # 1.1 um/px. Not drawn at either end of the row.
 MONTAGE_GUTTER_UM = 100.0
 
-SLICE_RE = re.compile(r'slice(\d+)_subslice')
+# What can be tiled. Both are already at TARGET_XY_UM_PER_PX, which is the only
+# reason one script covers them: the tiling is identical and only the input
+# folder, the filename shape and the output folder differ.
+#
+#   subslice  the marker-defined region the alignment is fitted on
+#   slice     the whole section, every FOV that has a cell in it -- no QC
+#             filter, no marker filter, no connected components
+#
+# They are different pictures, not two qualities of one. For eyeballing the
+# sections the whole slice is the right one; for seeing what the graph sees it
+# is not.
+SOURCES = {
+    'subslice': {
+        'input': HYB_DOWNSAMPLED_DIR,
+        'output': "HYB_subslice_downsampled_montage",
+        'name': "slice{slice}_subslice_{channel}.tif",
+        'made_by': "downsample_subslices_cellmask.py (pipeline step 3)",
+    },
+    'slice': {
+        'input': HYB_SLICE_DOWNSAMPLED_DIR,
+        'output': "HYB_slice_downsampled_montage",
+        'name': "slice{slice}_{channel}.tif",
+        'made_by': "stitch_slices.py --downsample --no-scale-bars",
+    },
+}
+DEFAULT_SOURCE = 'slice'
 
 
-def discover(input_dir, targets=None):
+def source_dirs(source):
+    """(input_dir, output_dir) for one source. Not in preprocessing_config:
+    no pipeline step reads either montage folder."""
+    spec = SOURCES[source]
+    return Path(spec['input']), Path(OUTPUT_ROOT) / spec['output']
+
+
+def _pattern(source, channel):
+    r"""(glob, compiled regex) for one channel of one source.
+
+    The regex is anchored, so the whole-slice form cannot also pick up a
+    subslice file: `slice*_DAPI.tif` as a glob would match
+    `slice22_subslice_DAPI.tif`, `^slice(\d+)_DAPI\.tif$` will not.
+    """
+    template = SOURCES[source]['name']
+    glob = template.format(slice="*", channel=channel)
+    regex = ("^"
+             + re.escape(template)
+                 .replace(re.escape("{slice}"), r"(\d+)")
+                 .replace(re.escape("{channel}"), re.escape(channel))
+             + "$")
+    return glob, re.compile(regex)
+
+
+def discover(input_dir, source, targets=None):
     """[(slice_id, {channel: path})], slice order ascending.
 
     A slice appears if at least one of its channel TIFs is present. A channel
@@ -137,8 +198,9 @@ def discover(input_dir, targets=None):
     """
     found = {}
     for channel in CHANNELS:
-        for path in input_dir.glob(f"slice*_subslice_{channel}.tif"):
-            match = SLICE_RE.search(path.name)
+        glob, pattern = _pattern(source, channel)
+        for path in input_dir.glob(glob):
+            match = pattern.match(path.name)
             if match:
                 found.setdefault(int(match.group(1)), {})[channel] = path
 
@@ -291,30 +353,33 @@ def build_row(channel, entries, shapes, row, dtype):
 
 
 def montage_subslices(targets=None, columns=DEFAULT_COLUMNS, channels=CHANNELS,
-                      dry_run=False):
-    input_dir = Path(HYB_DOWNSAMPLED_DIR)
+                      source=DEFAULT_SOURCE, dry_run=False):
+    spec = SOURCES[source]
+    input_dir, output_dir = source_dirs(source)
     if not input_dir.exists():
         raise FileNotFoundError(
-            f"Downsampled subslices not found: {input_dir}\n"
-            f"  Run downsample_subslices_cellmask.py (pipeline step 3) first."
+            f"No {source} images at: {input_dir}\n"
+            f"  Written by {spec['made_by']}."
         )
-    if OUTPUT_DIR.resolve() == input_dir.resolve():
+    if output_dir.resolve() == input_dir.resolve():
         raise ValueError(
-            f"Output directory is the input directory: {OUTPUT_DIR}\n"
-            f"  This script must never write over step 3's subslices."
+            f"Output directory is the input directory: {output_dir}\n"
+            f"  This script must never write over its own input."
         )
 
-    entries = discover(input_dir, targets)
+    entries = discover(input_dir, source, targets)
     if not entries:
         raise FileNotFoundError(
-            f"No slice*_subslice_{{{','.join(CHANNELS)}}}.tif in {input_dir}"
+            f"No {spec['name'].format(slice='*', channel='{' + ','.join(CHANNELS) + '}')} "
+            f"in {input_dir}\n  Written by {spec['made_by']}."
         )
 
     shapes, dtype = read_headers(entries)
     rows = plan_rows(shapes, columns)
 
+    print(f"Source: {source} ({spec['made_by']})")
     print(f"Input:  {input_dir}")
-    print(f"Output: {OUTPUT_DIR}")
+    print(f"Output: {output_dir}")
     print(f"Slices: {len(entries)}\n")
     report_rows(rows, dtype)
 
@@ -329,7 +394,7 @@ def montage_subslices(targets=None, columns=DEFAULT_COLUMNS, channels=CHANNELS,
         print("\nDry run: nothing written.")
         return
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     written = 0
     for channel in channels:
@@ -341,7 +406,7 @@ def montage_subslices(targets=None, columns=DEFAULT_COLUMNS, channels=CHANNELS,
             if not placed:
                 print(f"    no {channel} tifs in this row, not written")
                 continue
-            out_path = OUTPUT_DIR / f"{row_stem(channel, row)}.tif"
+            out_path = output_dir / f"{row_stem(channel, row)}.tif"
             imwrite_tiff(out_path, strip)
             written += 1
             print(f"    {placed} tiles -> {out_path.name}, "
@@ -349,7 +414,7 @@ def montage_subslices(targets=None, columns=DEFAULT_COLUMNS, channels=CHANNELS,
                   f"{get_file_size_mb(out_path):.0f} MB")
             del strip
 
-    print(f"\nWrote {written} files to {OUTPUT_DIR}")
+    print(f"\nWrote {written} files to {output_dir}")
 
 
 def main():
@@ -368,6 +433,11 @@ def main():
     parser.add_argument('--channel', action='append', choices=CHANNELS,
                         dest='channels',
                         help='Montage this channel only; repeatable')
+    parser.add_argument('--source', choices=sorted(SOURCES),
+                        default=DEFAULT_SOURCE,
+                        help=f'Which images to tile (default {DEFAULT_SOURCE}): '
+                             f'"slice" whole sections, "subslice" the '
+                             f'marker-defined regions the alignment fits on')
     parser.add_argument('--dry-run', action='store_true',
                         help='Report rows and sizes, write nothing')
     args = parser.parse_args()
@@ -384,6 +454,7 @@ def main():
     montage_subslices(targets=targets,
                       columns=args.columns,
                       channels=tuple(args.channels or CHANNELS),
+                      source=args.source,
                       dry_run=args.dry_run)
 
 

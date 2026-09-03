@@ -52,11 +52,23 @@ Four full-res canvases are allocated per slice at once -- three uint16 plus one
 uint32 -- over the whole section rather than a marker-defined crop. `--dry-run`
 prints the canvas each slice would need before anything is written.
 
+`--downsample` resamples each finished canvas to the 2P pitch -- step 3's own
+`imresize_bilinear` / `imresize_nearest`, imported, at `DOWNSAMPLE_XY` -- and
+writes to `HYB_slice_stitched_tif_downsampled_micronwise/` instead, leaving the
+full-resolution set untouched. `--no-scale-bars` writes the channels with nothing
+burned in. Together they produce whole sections at the same pitch and with the
+same absence of ink as step 3's subslices, which is what
+`montage_downsampled_subslices.py --source slice` tiles.
+
+A bar, when drawn, is drawn AFTER any resample and at the pitch the file is
+written at, so it measures the same microns either way and is not interpolated.
+
 Usage:
     python stitch_slices.py --dry-run          # FOV counts + canvas sizes, writes nothing
     python stitch_slices.py --slice 22
     python stitch_slices.py --slices 10 22 30
-    python stitch_slices.py                    # every slice
+    python stitch_slices.py                    # every slice, full res, with bars
+    python stitch_slices.py --downsample --no-scale-bars   # for the montage
 """
 
 import argparse
@@ -78,10 +90,16 @@ from preprocessing_config import (
     HYB_ROOT,
     HYB_CHANNELS_DIR,
     HYB_SLICE_STITCHED_DIR,
+    HYB_SLICE_DOWNSAMPLED_DIR,
     FOV_SIZE,
     EXVIVO_UM_PER_PX,
+    TARGET_XY_UM_PER_PX,
+    DOWNSAMPLE_XY,
 )
 from stitch_subslices import stitch_fov_channels
+# --downsample is step 3's resample applied to a whole section instead of a
+# subslice, so it is step 3's own two functions, imported not reimplemented.
+from downsample_subslices_cellmask import imresize_bilinear, imresize_nearest
 from utilities.mat_io import load_filt_neurons, save_cellmask_h5
 from utilities.image_io import imwrite_tiff, get_file_size_mb
 from utilities.regression import calculate_fov_offset
@@ -334,11 +352,17 @@ def plan_canvas(fov_list, slice_id, filt_neurons, row_counts):
     return height, width, len(offsets), n_pinned, slopes
 
 
-def stitch_slices(targets=None, dry_run=False):
+def stitch_slices(targets=None, dry_run=False, downsample=False, scale_bars=True):
     print("=" * 40)
     print("STITCH WHOLE SLICES")
     print("=" * 40)
-    print("Mode: DRY RUN (nothing written)" if dry_run else f"Output: {HYB_SLICE_STITCHED_DIR}")
+    print("Mode: DRY RUN (nothing written)" if dry_run else
+          f"Output: {HYB_SLICE_DOWNSAMPLED_DIR if downsample else HYB_SLICE_STITCHED_DIR}")
+    if not dry_run:
+        print(f"Resample: {DOWNSAMPLE_XY:.4f}x to {TARGET_XY_UM_PER_PX} um/px"
+              if downsample else
+              f"Resample: none, {EXVIVO_UM_PER_PX} um/px")
+        print(f"Scale bars: {'burned in' if scale_bars else 'none'}")
     print()
 
     print("Loading filt_neurons...")
@@ -359,6 +383,14 @@ def stitch_slices(targets=None, dry_run=False):
             ram_mb = height * width * (2 * 3 + 4) / 1e6
             print(f"{slice_id:>6}  {len(fov_list):>5}  {n_pinned:>6}  {n_placed:>6}  "
                   f"{height:>8} x {width:<8}  {ram_mb:>8.0f}")
+            if downsample and height:
+                # The canvas is still allocated at full resolution and resampled
+                # after, so RAM above is unchanged; this is only what lands on
+                # disk, which is what a montage of these will be built from.
+                out_h = int(round(height / DOWNSAMPLE_XY))
+                out_w = int(round(width / DOWNSAMPLE_XY))
+                print(f"          written at {out_h} x {out_w} "
+                      f"({out_h * out_w * 2 / 1e6:.0f} MB per channel)")
             if pinned:
                 detail = ', '.join(f"{f} ({counts[f]} row{'s' if counts[f] != 1 else ''})"
                                    for f in pinned)
@@ -378,8 +410,13 @@ def stitch_slices(targets=None, dry_run=False):
             print(f"  y: min {sy.min():.6f}  median {np.median(sy):.6f}  max {sy.max():.6f}")
         return
 
-    output_dir = Path(HYB_SLICE_STITCHED_DIR)
+    output_dir = Path(HYB_SLICE_DOWNSAMPLED_DIR if downsample
+                      else HYB_SLICE_STITCHED_DIR)
     output_dir.mkdir(parents=True, exist_ok=True)
+    # A bar is drawn at whatever pitch the image is finally written at, so it
+    # measures the same microns either way -- and drawing after the resample
+    # keeps it crisp instead of interpolating it.
+    out_um_per_px = TARGET_XY_UM_PER_PX if downsample else EXVIVO_UM_PER_PX
 
     hyb_root = Path(HYB_ROOT)
     channels_root = Path(HYB_CHANNELS_DIR)
@@ -399,21 +436,40 @@ def stitch_slices(targets=None, dry_run=False):
         )
         print(f"  Stitching completed in {time.time() - stitch_start:.1f} seconds\n")
 
+        if downsample:
+            # Exactly step 3's resample, imported rather than reimplemented:
+            # bilinear for the fluorescence channels, nearest for the label
+            # array so cell ids survive.
+            target = (int(round(gcamp.shape[0] / DOWNSAMPLE_XY)),
+                      int(round(gcamp.shape[1] / DOWNSAMPLE_XY)))
+            print(f"  Downsampling {gcamp.shape[1]} x {gcamp.shape[0]} -> "
+                  f"{target[1]} x {target[0]} ({DOWNSAMPLE_XY:.4f}x, "
+                  f"{EXVIVO_UM_PER_PX} -> {TARGET_XY_UM_PER_PX} um/px)")
+            gcamp = imresize_bilinear(gcamp, target)
+            dapi = imresize_bilinear(dapi, target)
+            mscarlet = imresize_bilinear(mscarlet, target)
+            cellmask = imresize_nearest(cellmask, target)
+
         print("  Saving stitched channels...")
         prefix = f"slice{slice_id}"
 
         for channel, image in (("GCAMP", gcamp), ("DAPI", dapi), ("MSCARLET", mscarlet)):
-            occluded, painted = draw_scale_bars(image, EXVIVO_UM_PER_PX)
+            if scale_bars:
+                occluded, painted = draw_scale_bars(image, out_um_per_px)
+                bars = f"   scale bars covered {occluded}/{painted} nonzero px"
+            else:
+                bars = "   no scale bars"
             path = output_dir / f"{prefix}_{channel}.tif"
             imwrite_tiff(path, image)
-            print(f"    {channel}: {get_file_size_mb(path):.1f} MB"
-                  f"   scale bars covered {occluded}/{painted} nonzero px")
+            print(f"    {channel}: {get_file_size_mb(path):.1f} MB{bars}")
 
         cellmask_file = output_dir / f"{prefix}_CELLMASK.h5"
         save_cellmask_h5(cellmask_file, cellmask, metadata={
             'fov_offsets': fov_offsets,
             'min_x': min_x,
             'min_y': min_y,
+            'downsample_xy': float(DOWNSAMPLE_XY) if downsample else 1.0,
+            'um_per_px': float(out_um_per_px),
         })
         print(f"    CELLMASK: {get_file_size_mb(cellmask_file):.1f} MB\n")
 
@@ -436,6 +492,12 @@ def main():
                         help='Process these slices only')
     parser.add_argument('--dry-run', action='store_true',
                         help='Report FOV counts and canvas sizes, write nothing')
+    parser.add_argument('--downsample', action='store_true',
+                        help='Resample to the 2P pitch and write to '
+                             'HYB_slice_stitched_tif_downsampled_micronwise/ '
+                             'instead (leaves the full-resolution set alone)')
+    parser.add_argument('--no-scale-bars', action='store_false', dest='scale_bars',
+                        help='Do not burn scale bars into the channel TIFs')
     args = parser.parse_args()
 
     targets = None
@@ -444,7 +506,8 @@ def main():
         if args.slice is not None:
             targets.add(args.slice)
 
-    stitch_slices(targets=targets, dry_run=args.dry_run)
+    stitch_slices(targets=targets, dry_run=args.dry_run,
+                  downsample=args.downsample, scale_bars=args.scale_bars)
 
 
 if __name__ == '__main__':

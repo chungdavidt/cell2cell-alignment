@@ -103,6 +103,11 @@ HYB_DOWNSAMPLED_DIR = os.path.join(OUTPUT_ROOT, "HYB_subslice_stitched_tif_downs
 # stitch_slices.py, outside the 7-step run. The name carries no "subslice"
 # token so the step 3 and graph-builder globs cannot pick these up.
 HYB_SLICE_STITCHED_DIR = os.path.join(OUTPUT_ROOT, "HYB_slice_stitched_tif")
+# The same whole sections resampled to the 2P pitch, written by
+# stitch_slices.py --downsample. The whole-slice analogue of HYB_DOWNSAMPLED_DIR,
+# and like it, named without a "subslice" token so no pipeline glob can see it.
+HYB_SLICE_DOWNSAMPLED_DIR = os.path.join(
+    OUTPUT_ROOT, "HYB_slice_stitched_tif_downsampled_micronwise")
 MSCARLET_CELLMASK_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_cellmask_subslice")
 # Binary marker-only images the graph aligns on. One subdirectory per gate
 # combination, named by generate_alignment_tif.py.
