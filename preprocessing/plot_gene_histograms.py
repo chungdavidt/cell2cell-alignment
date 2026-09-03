@@ -27,15 +27,23 @@ QC defaults to QC_MIN_READS / QC_MIN_GENES; --min-reads / --min-genes override,
 and are required when preprocessing_config will not import (no local_config, or
 a blank SCOPE) -- the gates are per-brain with no safe default.
 
+--exclude-slices drops every cell in those sections before anything is counted,
+for a section whose data is bad. It is local to this script: nothing else reads
+it, no config name holds it, and the pipeline's own outputs still contain the
+section. Cells with a NaN slice (assigned to no section) are never dropped by
+it. A number with no cells in the dataset is an error, so a typo cannot write a
+file whose name claims an exclusion that did not happen.
+
 Outputs land in <ANALYSIS_ROOT>/preprocessing/, else the working directory:
-    gene_histograms_qc{reads}_{genes}.pdf
-    gene_histograms_qc{reads}_{genes}.csv
+    gene_histograms_qc{reads}_{genes}[_ex{slices}].pdf
+    gene_histograms_qc{reads}_{genes}[_ex{slices}].csv
 
 Usage:
     python preprocessing/plot_gene_histograms.py
     python preprocessing/plot_gene_histograms.py <DATA_ROOT_or_filt_neurons.mat>
     python preprocessing/plot_gene_histograms.py --max-count 60 --per-page 9
     python preprocessing/plot_gene_histograms.py --genes 113 111 Slc17a7
+    python preprocessing/plot_gene_histograms.py --exclude-slices 58
     python preprocessing/plot_gene_histograms.py --linear --no-csv
 """
 
@@ -178,7 +186,35 @@ def gene_pages(pdf, expmat, columns, genes, qc, max_count, per_page, pairs_per_r
         plt.close(fig)
 
 
-def aggregate_page(pdf, n_genes_all, n_genes_qc, min_genes, hi, log_scale, source):
+def drop_slices(expmat, slice_field, excluded):
+    """expmat without the rows in `excluded`, and how many rows that was.
+
+    Cells whose slice is NaN belong to no section and are always kept -- NaN
+    equals nothing, so the mask never sees them.
+    """
+    import scipy.sparse as sp
+
+    if slice_field is None:
+        raise SystemExit("--exclude-slices: filt_neurons.mat has no `slice` field")
+    sl = np.asarray(slice_field).ravel().astype(float)
+    if sl.size != expmat.shape[0]:
+        raise SystemExit(f"--exclude-slices: `slice` is {sl.size} rows against "
+                         f"expmat's {expmat.shape[0]}")
+
+    present = set(np.unique(sl[~np.isnan(sl)]).astype(int).tolist())
+    missing = [s for s in excluded if s not in present]
+    if missing:
+        raise SystemExit(f"--exclude-slices {missing}: no cells in this dataset. "
+                         f"present: {sorted(present)}")
+
+    drop = np.isin(sl, excluded)
+    keep = ~drop
+    expmat = sp.csr_matrix(expmat)[keep] if sp.issparse(expmat) else np.asarray(expmat)[keep]
+    return expmat, int(drop.sum())
+
+
+def aggregate_page(pdf, n_genes_all, n_genes_qc, min_genes, hi, log_scale, source,
+                   note=""):
     """x = number of different genes detected in a cell, y = cells."""
     import matplotlib.pyplot as plt
 
@@ -197,7 +233,9 @@ def aggregate_page(pdf, n_genes_all, n_genes_qc, min_genes, hi, log_scale, sourc
         med = int(np.median(vals)) if vals.size else 0
         ax.set_title(f"{tag}: {vals.size} cells, median {med}", fontsize=9)
         ax.legend(fontsize=7)
-    fig.tight_layout()
+    if note:
+        fig.suptitle(note, fontsize=9)
+    fig.tight_layout(rect=(0, 0, 1, 0.94) if note else None)
     pdf.savefig(fig)
     plt.close(fig)
 
@@ -249,6 +287,9 @@ def main():
                          "(default panel; 'all' matches the QC gate)")
     ap.add_argument("--genes", nargs="+", metavar="COL_OR_NAME",
                     help="restrict the per-gene pages to these columns")
+    ap.add_argument("--exclude-slices", type=int, nargs="+", metavar="N",
+                    help="drop every cell in these sections before counting; "
+                         "the numbers land in the output filename")
     ap.add_argument("--linear", action="store_true", help="linear cell-count axis")
     ap.add_argument("--pdf", help="PDF path (default: <ANALYSIS_ROOT>/preprocessing/)")
     ap.add_argument("--csv", help="per-gene summary CSV path")
@@ -271,6 +312,16 @@ def main():
     p, fn = _load(path)
     expmat = fn["expmat"]
     genes = fn.get("genes")
+
+    excluded = sorted(set(args.exclude_slices or []))
+    excluded_note = ""
+    if excluded:
+        before = expmat.shape[0]
+        expmat, n_dropped = drop_slices(expmat, fn.get("slice"), excluded)
+        excluded_note = (f"excluding slice{'s' if len(excluded) > 1 else ''} "
+                         f"{', '.join(str(s) for s in excluded)}: "
+                         f"{n_dropped} of {before} cells dropped")
+
     n_cells, n_cols = expmat.shape
     panel_end = min(args.panel_end, n_cols)
 
@@ -291,6 +342,8 @@ def main():
         source = f"all {n_cols} columns"
 
     print(f"filt_neurons: {p}")
+    if excluded_note:
+        print(excluded_note)
     print(f"cells: {n_cells}   columns: {n_cols}   panel: 0..{panel_end - 1}")
     src = lambda v: "CLI" if v is not None else "local_config"
     print(f"QC: reads >= {min_reads} ({src(args.min_reads)}) AND "
@@ -304,11 +357,13 @@ def main():
     from matplotlib.backends.backend_pdf import PdfPages
 
     stem = f"gene_histograms_qc{min_reads}_{min_genes}"
+    if excluded:
+        stem += "_ex" + "_".join(str(s) for s in excluded)
     pdf_path = Path(args.pdf) if args.pdf else _default_out(f"{stem}.pdf")
     summary = []
     with PdfPages(pdf_path) as pdf:
         aggregate_page(pdf, counted, counted[qc], min_genes, int(counted.max()),
-                       not args.linear, source)
+                       not args.linear, source, excluded_note)
         gene_pages(pdf, expmat, columns, genes, qc, args.max_count, args.per_page,
                    args.pairs_per_row, not args.linear, panel_end, summary)
     n_pages = 1 + int(np.ceil(len(columns) / args.per_page))
