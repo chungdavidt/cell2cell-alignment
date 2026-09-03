@@ -74,6 +74,8 @@ def main():
                                                 "one beside the other preprocessing output)")
     ap.add_argument("--column", "-c", default="rolonies", help="column to plot (default: rolonies)")
     ap.add_argument("--out", help="output PNG (default: beside the CSV)")
+    ap.add_argument("--no-labels", action="store_true",
+                    help="omit the value printed above each bar")
     ap.add_argument("--dpi", type=int, default=150)
     args = ap.parse_args()
 
@@ -99,6 +101,14 @@ def main():
     ax.set_ylabel(LABELS.get(args.column, args.column), fontsize=12)
     ax.set_title(f"{LABELS.get(args.column, args.column)} per slice  ({path.name})",
                  fontsize=13)
+    if not args.no_labels:
+        # Rotated and small: 62 slices side by side leave no room for horizontal
+        # text. Headroom is opened below so the tallest bar's label still fits.
+        for i, v in enumerate(values):
+            ax.text(i, v, f"{v:,.0f}" if v == int(v) else f"{v:,.1f}",
+                    ha="center", va="bottom", rotation=90, fontsize=6)
+        ax.set_ylim(0, max(values) * 1.30)
+
     ax.set_xlim(-0.7, len(slices) - 0.3)
     ax.grid(axis="y", alpha=0.3, linewidth=0.6)
     ax.set_axisbelow(True)
