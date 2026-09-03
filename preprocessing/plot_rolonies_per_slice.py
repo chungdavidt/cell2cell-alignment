@@ -9,10 +9,17 @@ The CSV is a per-slice summary, so this is a bar per slice, not a distribution.
 For the distribution of rolony counts ACROSS CELLS, re-run
 count_rolonies_per_slice.py with --cells-csv and histogram its `rolonies` column.
 
+--exclude-slices drops those sections' rows before anything is drawn or summed,
+for a section whose data is bad. It is local to this script: nothing else reads
+it, no config name holds it, and the CSV still contains the section. A number
+with no row in the CSV is an error, so a typo cannot write a file whose name
+claims an exclusion that did not happen.
+
 Usage:
     python preprocessing/plot_rolonies_per_slice.py
     python preprocessing/plot_rolonies_per_slice.py <path to the per-slice CSV>
     python preprocessing/plot_rolonies_per_slice.py --column marker_cells
+    python preprocessing/plot_rolonies_per_slice.py --exclude-slices 58
     python preprocessing/plot_rolonies_per_slice.py --out figure.png
 
 Columns available: cells, qc, marker_cells, rolonies, max, median_pos, mean_pos,
@@ -82,6 +89,9 @@ def main():
     ap.add_argument("csv_path", nargs="?", help="per-slice CSV (default: the newest "
                                                 "one beside the other preprocessing output)")
     ap.add_argument("--column", "-c", default="rolonies", help="column to plot (default: rolonies)")
+    ap.add_argument("--exclude-slices", type=int, nargs="+", metavar="N",
+                    help="drop these sections' rows before plotting; "
+                         "the numbers land in the output filename")
     ap.add_argument("--out", help="output PNG (default: beside the CSV)")
     ap.add_argument("--no-labels", action="store_true",
                     help="omit the value printed above each bar")
@@ -97,6 +107,15 @@ def main():
         raise ValueError(f"No column {args.column!r} in {path.name}. "
                          f"Columns: {', '.join(rows[0])}. "
                          f"Derived: {', '.join(DERIVED)}")
+
+    excluded = sorted(set(args.exclude_slices or []))
+    if excluded:
+        present = {int(r["slice"]) for r in rows}
+        missing = [s for s in excluded if s not in present]
+        if missing:
+            raise SystemExit(f"--exclude-slices {missing}: no row in {path.name}. "
+                             f"present: {sorted(present)}")
+        rows = [r for r in rows if int(r["slice"]) not in excluded]
 
     rows.sort(key=lambda r: int(r["slice"]))
     slices = [int(r["slice"]) for r in rows]
@@ -132,11 +151,17 @@ def main():
         ax.spines[side].set_visible(False)
 
     fig.tight_layout()
-    out = Path(args.out) if args.out else path.with_name(f"{path.stem}_{args.column}.png")
+    stem = f"{path.stem}_{args.column}"
+    if excluded:
+        stem += "_ex" + "_".join(str(s) for s in excluded)
+    out = Path(args.out) if args.out else path.with_name(f"{stem}.png")
     fig.savefig(out, dpi=args.dpi)
     plt.close(fig)
 
     total = sum(values)
+    if excluded:
+        print(f"excluded slice{'s' if len(excluded) > 1 else ''} "
+              f"{', '.join(str(s) for s in excluded)}")
     print(f"{len(slices)} slices, {args.column} total {total:,.0f}, "
           f"max {max(values):,.0f} (slice {slices[values.index(max(values))]})")
     print(f"wrote {out}")
