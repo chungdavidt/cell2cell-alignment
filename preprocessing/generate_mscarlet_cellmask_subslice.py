@@ -49,6 +49,10 @@ Output:
     - mScarlet_cellmask_subslice/rolony_{FLOOR}_{CEILING}/
         * slice{N}_subslice_mScarlet_cellmask.tif
         * slice{N}_subslice_comparison.png
+        * rolony_ramp_legend.png -- one per folder, not per slice. The domain
+          is absolute, so a count maps to the same colour in every image
+          written here; a different FLOOR/CEILING is a different folder with
+          its own legend.
 
       The folder name records the ramp only. QC_MIN_READS / QC_MIN_GENES also
       decide which cells are eligible to be drawn; they live in local_config.py
@@ -98,6 +102,44 @@ def ramp_rgb(count):
     return _RAMP(frac)[:3]
 
 
+def write_ramp_legend(output_dir):
+    """One legend per output folder: every colour the ramp can produce.
+
+    Discrete swatches, not a gradient. Counts are integers, so the ramp has
+    exactly ROLONY_CEILING - ROLONY_FLOOR + 1 reachable colours and a swatch
+    per count is a lookup -- read a cell's colour off the image, read its
+    rolony count off the legend. Written as its own file, never burned into
+    the overlay TIF, which shares a pixel grid with the ALIGN tif and with
+    export_subslice_cells.py's y_node/x_node.
+    """
+    import matplotlib.pyplot as plt
+
+    counts = list(range(ROLONY_FLOOR, ROLONY_CEILING + 1))
+    fig, ax = plt.subplots(figsize=(2.6, 0.34 * (len(counts) + 2) + 0.6))
+
+    for row, count in enumerate(counts):
+        ax.add_patch(plt.Rectangle((0, row), 1, 0.86, color=ramp_rgb(count)))
+        label = f"{count}+" if count == ROLONY_CEILING else str(count)
+        ax.text(1.15, row + 0.43, label, va="center", fontsize=9)
+
+    # The floor is a cutoff as well as the ramp's bottom: below it a cell is
+    # drawn in the mask field's grey, indistinguishable from marker-negative.
+    grey = CELLMASK_BRIGHTNESS * CELLMASK_SCALE
+    ax.add_patch(plt.Rectangle((0, -1.4), 1, 0.86, color=(grey, grey, grey)))
+    ax.text(1.15, -0.97, f"< {ROLONY_FLOOR}", va="center", fontsize=9)
+
+    ax.set_xlim(-0.1, 2.6)
+    ax.set_ylim(-1.9, len(counts) + 0.4)
+    ax.axis("off")
+    ax.set_title("mScarlet rolonies", fontsize=10, pad=8)
+    fig.text(0.5, 0.015, "fixed ramp, absolute counts", ha="center", fontsize=7)
+
+    out_path = Path(output_dir) / "rolony_ramp_legend.png"
+    fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return out_path
+
+
 def generate_mscarlet_cellmask_subslice(
     target_slice: int = None,
     test_mode: bool = False,
@@ -130,6 +172,8 @@ def generate_mscarlet_cellmask_subslice(
           f"dark red -> orange -> yellow (fixed, absolute)")
     print(f"  below {ROLONY_FLOOR} rolonies: not drawn")
     print(f"Cell mask brightness: {CELLMASK_BRIGHTNESS * CELLMASK_SCALE:.3f}")
+    legend_path = write_ramp_legend(output_dir)
+    print(f"Legend: {legend_path.name}")
     print()
     print("Resolution matching:")
     print(f"  Ex vivo original: {EXVIVO_UM_PER_PX:.4f} um/px")
