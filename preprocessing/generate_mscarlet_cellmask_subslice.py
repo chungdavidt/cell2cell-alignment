@@ -32,9 +32,16 @@ and read as flat. The three anchor colours are check_rolony_cutoff.py's. Note
 the DOMAINS still differ -- that tool ramps over [1, --saturate-at] by design --
 so a given count matches across the two only when the bounds are set to match.
 
-ROLONY_FLOOR / ROLONY_CEILING are BY95 numbers, hardcoded while the bounds are
-being tried out. They are per-brain like every other rolony gate: re-pick them
-with check_rolony_cutoff.py before running another dataset.
+ROLONY_FLOOR / ROLONY_CEILING are BY95 numbers, the defaults while the bounds
+are being tried out. They are per-brain like every other rolony gate: re-pick
+them with check_rolony_cutoff.py before running another dataset. --min-rolonies
+overrides the floor for one run; the ceiling is still a constant edit. The floor
+names the output folder, so two floors never overwrite each other -- but two
+runs at the SAME floor do, and the second one wins.
+
+run_pipeline.py does not forward its own --min-rolonies here: that flag sets the
+ALIGN tifs' cutoff, a registration parameter, and this floor is a display
+choice. Two questions, two numbers.
 
 --exclude-slices drops those sections from the whole run, for a section whose
 data is bad: no overlay TIF, no comparison PNG, no bar in the histogram. It is
@@ -46,6 +53,7 @@ whose name claims an exclusion that did not happen.
 Usage:
     python generate_mscarlet_cellmask_subslice.py
     python generate_mscarlet_cellmask_subslice.py --slice 22
+    python generate_mscarlet_cellmask_subslice.py --min-rolonies 3
     python generate_mscarlet_cellmask_subslice.py --exclude-slices 58
     python generate_mscarlet_cellmask_subslice.py --test
 
@@ -98,7 +106,7 @@ from utilities.image_io import imwrite_tiff
 from utilities.visualization import create_comparison_figure, create_histogram
 
 # Rolony count -> colour, fixed domain. BY95 numbers; re-pick per brain.
-ROLONY_FLOOR = 5        # below this a cell is left as grey mask, not drawn
+ROLONY_FLOOR = 5        # default floor; --min-rolonies overrides it
 ROLONY_CEILING = 15     # at or above this the colour saturates
 CELLMASK_SCALE = 0.5    # scales CELLMASK_BRIGHTNESS -> 0.125, uint8 32
 
@@ -108,18 +116,18 @@ RAMP_COLORS = [(0.45, 0.0, 0.0), (1.0, 0.35, 0.0), (1.0, 0.95, 0.25)]
 _RAMP = LinearSegmentedColormap.from_list("rolony", RAMP_COLORS)
 
 
-def ramp_rgb(count):
-    """One rolony count -> RGB on the fixed [ROLONY_FLOOR, ROLONY_CEILING] ramp."""
+def ramp_rgb(count, floor=ROLONY_FLOOR):
+    """One rolony count -> RGB on the fixed [floor, ROLONY_CEILING] ramp."""
     frac = np.clip(
-        (count - ROLONY_FLOOR) / (ROLONY_CEILING - ROLONY_FLOOR), 0.0, 1.0)
+        (count - floor) / (ROLONY_CEILING - floor), 0.0, 1.0)
     return _RAMP(frac)[:3]
 
 
-def write_ramp_legend(output_dir):
+def write_ramp_legend(output_dir, floor=ROLONY_FLOOR):
     """One legend per output folder: every colour the ramp can produce.
 
     Discrete swatches, not a gradient. Counts are integers, so the ramp has
-    exactly ROLONY_CEILING - ROLONY_FLOOR + 1 reachable colours and a swatch
+    exactly ROLONY_CEILING - floor + 1 reachable colours and a swatch
     per count is a lookup -- read a cell's colour off the image, read its
     rolony count off the legend. Written as its own file, never burned into
     the overlay TIF, which shares a pixel grid with the ALIGN tif and with
@@ -127,11 +135,11 @@ def write_ramp_legend(output_dir):
     """
     import matplotlib.pyplot as plt
 
-    counts = list(range(ROLONY_FLOOR, ROLONY_CEILING + 1))
+    counts = list(range(floor, ROLONY_CEILING + 1))
     fig, ax = plt.subplots(figsize=(2.6, 0.34 * (len(counts) + 2) + 0.6))
 
     for row, count in enumerate(counts):
-        ax.add_patch(plt.Rectangle((0, row), 1, 0.86, color=ramp_rgb(count)))
+        ax.add_patch(plt.Rectangle((0, row), 1, 0.86, color=ramp_rgb(count, floor)))
         label = f"{count}+" if count == ROLONY_CEILING else str(count)
         ax.text(1.15, row + 0.43, label, va="center", fontsize=9)
 
@@ -139,7 +147,7 @@ def write_ramp_legend(output_dir):
     # drawn in the mask field's grey, indistinguishable from marker-negative.
     grey = CELLMASK_BRIGHTNESS * CELLMASK_SCALE
     ax.add_patch(plt.Rectangle((0, -1.4), 1, 0.86, color=(grey, grey, grey)))
-    ax.text(1.15, -0.97, f"< {ROLONY_FLOOR}", va="center", fontsize=9)
+    ax.text(1.15, -0.97, f"< {floor}", va="center", fontsize=9)
 
     ax.set_xlim(-0.1, 2.6)
     ax.set_ylim(-1.9, len(counts) + 0.4)
@@ -186,6 +194,7 @@ def generate_mscarlet_cellmask_subslice(
     target_slice: int = None,
     test_mode: bool = False,
     exclude_slices=None,
+    min_rolonies: int = None,
 ):
     """
     Generate mScarlet cell mask overlays.
@@ -194,7 +203,14 @@ def generate_mscarlet_cellmask_subslice(
         target_slice: Process specific slice only
         test_mode: Process first subslice only
         exclude_slices: Section numbers to drop from the whole run
+        min_rolonies: Ramp floor for this run (default: ROLONY_FLOOR)
     """
+    floor = ROLONY_FLOOR if min_rolonies is None else int(min_rolonies)
+    if floor >= ROLONY_CEILING:
+        raise ValueError(
+            f"--min-rolonies {floor} is at or above ROLONY_CEILING "
+            f"{ROLONY_CEILING}: the ramp would have no width")
+
     input_dir = Path(HYB_DOWNSAMPLED_DIR)
 
     if not input_dir.exists():
@@ -206,17 +222,17 @@ def generate_mscarlet_cellmask_subslice(
 
     # One folder per ramp, so changing the bounds writes beside the last run
     # instead of overwriting it.
-    output_dir = Path(MSCARLET_CELLMASK_DIR) / f"rolony_{ROLONY_FLOOR}_{ROLONY_CEILING}"
+    output_dir = Path(MSCARLET_CELLMASK_DIR) / f"rolony_{floor}_{ROLONY_CEILING}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 40)
     print("GENERATE mSCARLET CELL MASK OVERLAYS")
     print("=" * 40)
-    print(f"Rolony ramp: {ROLONY_FLOOR} -> {ROLONY_CEILING}+ rolonies, "
+    print(f"Rolony ramp: {floor} -> {ROLONY_CEILING}+ rolonies, "
           f"dark red -> orange -> yellow (fixed, absolute)")
-    print(f"  below {ROLONY_FLOOR} rolonies: not drawn")
+    print(f"  below {floor} rolonies: not drawn")
     print(f"Cell mask brightness: {CELLMASK_BRIGHTNESS * CELLMASK_SCALE:.3f}")
-    legend_path = write_ramp_legend(output_dir)
+    legend_path = write_ramp_legend(output_dir, floor)
     print(f"Legend: {legend_path.name}")
     print()
     print("Resolution matching:")
@@ -267,8 +283,8 @@ def generate_mscarlet_cellmask_subslice(
     # Combined filter (QC-passed AND mScarlet+)
     mscarlet_qc_pass = pass_qc & mscarlet_positive
     print(f"  mScarlet+ QC-passing: {np.sum(mscarlet_qc_pass)}")
-    print(f"  at >= {ROLONY_FLOOR} rolonies (drawn): "
-          f"{np.sum(mscarlet_qc_pass & (mscarlet_expression >= ROLONY_FLOOR))}")
+    print(f"  at >= {floor} rolonies (drawn): "
+          f"{np.sum(mscarlet_qc_pass & (mscarlet_expression >= floor))}")
     print(f"  at >= {ROLONY_CEILING} rolonies (saturated): "
           f"{np.sum(mscarlet_qc_pass & (mscarlet_expression >= ROLONY_CEILING))}\n")
 
@@ -381,21 +397,21 @@ def generate_mscarlet_cellmask_subslice(
         in_slice = slice_ids == slice_id
         slice_mscarlet_qc = in_slice & mscarlet_qc_pass
 
-        drawn = slice_mscarlet_qc & (mscarlet_expression >= ROLONY_FLOOR)
+        drawn = slice_mscarlet_qc & (mscarlet_expression >= floor)
         total_cells = np.sum(in_slice)
         mscarlet_cells = np.sum(slice_mscarlet_qc)
         cells_drawn = np.sum(drawn)
 
         print(f"  Cells in slice: {total_cells}")
         print(f"  mScarlet+ QC-passing: {mscarlet_cells}")
-        print(f"  Drawn (>= {ROLONY_FLOOR} rolonies): {cells_drawn}")
+        print(f"  Drawn (>= {floor} rolonies): {cells_drawn}")
         print(f"  At ceiling (>= {ROLONY_CEILING}): "
               f"{np.sum(drawn & (mscarlet_expression >= ROLONY_CEILING))}")
 
         slice_cell_indices = np.where(drawn)[0]
 
         if cells_drawn == 0:
-            print(f"  WARNING: No cells at >= {ROLONY_FLOOR} rolonies, "
+            print(f"  WARNING: No cells at >= {floor} rolonies, "
                   f"saving cell mask only")
 
         # Create overlay
@@ -448,7 +464,7 @@ def generate_mscarlet_cellmask_subslice(
                 # Absolute rolony count -> colour. The domain is fixed, so a
                 # given count is the same colour in every section and every run,
                 # and moving the bounds never re-shades the cells between them.
-                rgb = ramp_rgb(mscarlet_expression[cell_idx])
+                rgb = ramp_rgb(mscarlet_expression[cell_idx], floor)
 
                 overlay_rgb[cell_mask] = rgb
 
@@ -492,13 +508,13 @@ def generate_mscarlet_cellmask_subslice(
         print("Histogram: skipped, partial run (the figure covers every section)\n")
     elif hist_rows:
         hist_rows.sort()
-        stem = f"cell_count_histogram_ge{ROLONY_FLOOR}_rolonies"
+        stem = f"cell_count_histogram_ge{floor}_rolonies"
         if excluded:
             stem += "_ex" + "_".join(str(s) for s in excluded)
         hist_path = create_histogram(
             [r[0] for r in hist_rows], [r[2] for r in hist_rows],
-            [r[1] for r in hist_rows], float(ROLONY_FLOOR), output_dir,
-            criterion_label=f">= {ROLONY_FLOOR} rolonies",
+            [r[1] for r in hist_rows], float(floor), output_dir,
+            criterion_label=f">= {floor} rolonies",
             filename=f"{stem}.png",
             note=excluded_note or None,
         )
@@ -514,7 +530,7 @@ def generate_mscarlet_cellmask_subslice(
     print("\nNext steps:")
     print("  1. Review overlays in output directory")
     print("  2. Add overlays to LineStuffUp graph for alignment")
-    print("  3. (Optional) Adjust ROLONY_FLOOR / ROLONY_CEILING and regenerate")
+    print("  3. (Optional) Re-run at another --min-rolonies; its own folder")
     print()
 
 
@@ -536,6 +552,13 @@ def main():
         help='Test mode: process first subslice only'
     )
     parser.add_argument(
+        '--min-rolonies', '-n',
+        type=int,
+        default=None,
+        help=f'Ramp floor: below this a cell is not drawn (default: '
+             f'{ROLONY_FLOOR}). Names the output folder.'
+    )
+    parser.add_argument(
         '--exclude-slices',
         type=int,
         nargs='+',
@@ -550,6 +573,7 @@ def main():
         target_slice=args.slice,
         test_mode=args.test,
         exclude_slices=args.exclude_slices,
+        min_rolonies=args.min_rolonies,
     )
 
 
