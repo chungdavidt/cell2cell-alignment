@@ -49,9 +49,10 @@ STEPS = [
     },
     {
         'name': 'Generate Overlays',
+        # No --threshold: its ramp is a fixed rolony domain, not a normalized
+        # cutoff. ROLONY_FLOOR / ROLONY_CEILING are constants in that script.
         'script': 'generate_mscarlet_cellmask_subslice.py',
         'description': 'Create mScarlet cell overlays on cellmask',
-        'takes_threshold': True,
     },
     {
         'name': 'Generate Figures',
@@ -167,7 +168,7 @@ Examples:
     parser.add_argument('--stop-after', type=int, default=len(STEPS),
                         help=f'Stop after step N (1-{len(STEPS)})')
     parser.add_argument('--dry-run', action='store_true', help='Show commands without executing')
-    parser.add_argument('--threshold', type=float, default=0.0, help='mScarlet threshold (for steps 4-5)')
+    parser.add_argument('--threshold', type=float, default=0.0, help='mScarlet threshold (for step 5)')
     parser.add_argument('--min-rolonies', type=int, default=None,
                         help='mScarlet rolony floor for the alignment TIFs '
                              '(default: config ALIGN_MIN_ROLONIES)')

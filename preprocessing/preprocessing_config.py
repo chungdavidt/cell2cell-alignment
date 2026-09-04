@@ -322,10 +322,12 @@ def mscarlet_subslice_dir(threshold, cellmask_intensity=None):
     """
     Full path to the overlay output for one threshold pair.
 
-    The one place this composition lives. Step 4 writes here, and a relative
-    SUBSLICE_DIR in local_config.py resolves against MSCARLET_CELLMASK_DIR
-    (analysis_paths.resolve_subslice_dir), so the graph builder inherits the
-    layout instead of repeating it as a hand-typed absolute path.
+    Composes the pre-2026-09-03 layout. NO CALLERS: step 4 swapped its
+    normalized threshold for a fixed rolony ramp and writes
+    MSCARLET_CELLMASK_DIR/rolony_{floor}_{ceiling}/ instead. Kept because that
+    tree still exists on disk and a relative SUBSLICE_DIR naming one of its
+    folders still resolves against MSCARLET_CELLMASK_DIR
+    (analysis_paths.resolve_subslice_dir).
     """
     return os.path.join(
         MSCARLET_CELLMASK_DIR, get_threshold_folder(threshold, cellmask_intensity)

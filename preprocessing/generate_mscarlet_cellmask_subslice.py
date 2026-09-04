@@ -13,15 +13,25 @@ DOWNSAMPLE_XY, the same factor downsample_subslices_cellmask.py used
 to resample it. The two MUST agree or every cell lands off its mask.
 
 This pipeline:
-    - Shows cell masks in grayscale (adjustable brightness)
-    - Highlights mScarlet+ cells in red
+    - Shows cell masks in flat grey
+    - Paints cells at >= ROLONY_FLOOR mScarlet rolonies red, brightness linear
+      in rolony count over the FIXED domain [ROLONY_FLOOR, ROLONY_CEILING]
     - No DAPI background
+
+The ramp is absolute, not normalized. A 9-rolony cell is the same red in every
+section and every run, so two runs compare directly. The count / max_expr *
+MSCARLET_BOOST form this replaces tied every cell's brightness to the single
+brightest cell in the dataset -- a value that moves with the QC gates -- and
+rendered BY95's median marker cell (1 rolony) darker than the grey mask behind
+it. Both config constants stay defined for the two scripts still using them.
+
+ROLONY_FLOOR / ROLONY_CEILING are BY95 numbers, hardcoded while the bounds are
+being tried out. They are per-brain like every other rolony gate: re-pick them
+with check_rolony_cutoff.py before running another dataset.
 
 Usage:
     python generate_mscarlet_cellmask_subslice.py
-    python generate_mscarlet_cellmask_subslice.py --threshold 0.3
-    python generate_mscarlet_cellmask_subslice.py --threshold 0.3 --cellmask 0.5
-    python generate_mscarlet_cellmask_subslice.py --threshold 0.3 --slice 22
+    python generate_mscarlet_cellmask_subslice.py --slice 22
     python generate_mscarlet_cellmask_subslice.py --test
 
 Input:
@@ -29,9 +39,13 @@ Input:
     - filt_neurons.mat (for cell positions and expression)
 
 Output:
-    - mScarlet_cellmask_subslice/threshold_X.XX_cellmask_X.XX/
+    - mScarlet_cellmask_subslice/rolony_{FLOOR}_{CEILING}/
         * slice{N}_subslice_mScarlet_cellmask.tif
         * slice{N}_subslice_comparison.png
+
+      The folder name records the ramp only. QC_MIN_READS / QC_MIN_GENES also
+      decide which cells are eligible to be drawn; they live in local_config.py
+      and the run prints them.
 """
 
 import argparse
@@ -45,7 +59,6 @@ from preprocessing_config import (
     FILT_NEURONS_PATH,
     HYB_DOWNSAMPLED_DIR,
     MSCARLET_CELLMASK_DIR,
-    mscarlet_subslice_dir,
     MSCARLET_COLUMN_INDEX,
     MSCARLET_GENE_NAME,
     QC_MIN_READS,
@@ -54,18 +67,20 @@ from preprocessing_config import (
     TARGET_XY_UM_PER_PX,
     DOWNSAMPLE_XY,
     CELLMASK_BRIGHTNESS,
-    RED_OPACITY,
-    MSCARLET_BOOST,
-    get_threshold_folder,
 )
 from utilities.mat_io import load_filt_neurons, load_mat, load_cellmask_h5, get_expression_column, resolve_marker_column
 from utilities.image_io import imwrite_tiff
 from utilities.visualization import create_comparison_figure
 
+# Rolony count -> red, fixed domain. BY95 numbers; re-pick per brain.
+ROLONY_FLOOR = 3        # below this a cell is left as grey mask, not drawn
+ROLONY_CEILING = 15     # at or above this the red saturates
+RED_MIN = 0.35          # floor colour -> uint8 89, above the grey field at 32
+RED_MAX = 0.95          # ceiling colour -> uint8 242
+CELLMASK_SCALE = 0.5    # scales CELLMASK_BRIGHTNESS -> 0.125, uint8 32
+
 
 def generate_mscarlet_cellmask_subslice(
-    min_mscarlet_intensity: float = 0.0,
-    cellmask_intensity: float = 0.5,
     target_slice: int = None,
     test_mode: bool = False,
 ):
@@ -73,8 +88,6 @@ def generate_mscarlet_cellmask_subslice(
     Generate mScarlet cell mask overlays.
 
     Args:
-        min_mscarlet_intensity: Normalized mScarlet threshold (0-1)
-        cellmask_intensity: Cell mask background brightness multiplier (0-1)
         target_slice: Process specific slice only
         test_mode: Process first subslice only
     """
@@ -87,16 +100,18 @@ def generate_mscarlet_cellmask_subslice(
             f"Expected: {input_dir}"
         )
 
-    # Create output directory with threshold info
-    threshold_folder = get_threshold_folder(min_mscarlet_intensity, cellmask_intensity)
-    output_dir = Path(mscarlet_subslice_dir(min_mscarlet_intensity, cellmask_intensity))
+    # One folder per ramp, so changing the bounds writes beside the last run
+    # instead of overwriting it.
+    output_dir = Path(MSCARLET_CELLMASK_DIR) / f"rolony_{ROLONY_FLOOR}_{ROLONY_CEILING}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 40)
     print("GENERATE mSCARLET CELL MASK OVERLAYS")
     print("=" * 40)
-    print(f"mScarlet threshold: {min_mscarlet_intensity:.2f}")
-    print(f"Cell mask brightness: {cellmask_intensity:.2f} ({cellmask_intensity*100:.0f}% of base)")
+    print(f"Rolony ramp: {ROLONY_FLOOR} -> {ROLONY_CEILING}+ rolonies, "
+          f"red {RED_MIN:.2f} -> {RED_MAX:.2f} (fixed, absolute)")
+    print(f"  below {ROLONY_FLOOR} rolonies: not drawn")
+    print(f"Cell mask brightness: {CELLMASK_BRIGHTNESS * CELLMASK_SCALE:.3f}")
     print()
     print("Resolution matching:")
     print(f"  Ex vivo original: {EXVIVO_UM_PER_PX:.4f} um/px")
@@ -139,16 +154,17 @@ def generate_mscarlet_cellmask_subslice(
     max_expr = np.max(mscarlet_expression[pass_qc])
     print(f"Global max mScarlet (QC-passed): {max_expr} transcripts")
 
-    # Normalize ALL cells using this global max
-    mscarlet_normalized = mscarlet_expression / max_expr
-
-    # mScarlet+ cells
+    # Reported only. The ramp is absolute, so nothing divides by this.
     mscarlet_positive = mscarlet_expression > 0
     print(f"  mScarlet+ cells: {np.sum(mscarlet_positive)}")
 
     # Combined filter (QC-passed AND mScarlet+)
     mscarlet_qc_pass = pass_qc & mscarlet_positive
-    print(f"  mScarlet+ QC-passing: {np.sum(mscarlet_qc_pass)}\n")
+    print(f"  mScarlet+ QC-passing: {np.sum(mscarlet_qc_pass)}")
+    print(f"  at >= {ROLONY_FLOOR} rolonies (drawn): "
+          f"{np.sum(mscarlet_qc_pass & (mscarlet_expression >= ROLONY_FLOOR))}")
+    print(f"  at >= {ROLONY_CEILING} rolonies (saturated): "
+          f"{np.sum(mscarlet_qc_pass & (mscarlet_expression >= ROLONY_CEILING))}\n")
 
     print("Position scale factor (from full-res):")
     print(f"  {1/DOWNSAMPLE_XY:.6f} on both axes (x2 for canvas, then scale)\n")
@@ -239,19 +255,22 @@ def generate_mscarlet_cellmask_subslice(
         in_slice = slice_ids == slice_id
         slice_mscarlet_qc = in_slice & mscarlet_qc_pass
 
+        drawn = slice_mscarlet_qc & (mscarlet_expression >= ROLONY_FLOOR)
         total_cells = np.sum(in_slice)
         mscarlet_cells = np.sum(slice_mscarlet_qc)
-        cells_above_thresh = np.sum(slice_mscarlet_qc & (mscarlet_normalized >= min_mscarlet_intensity))
+        cells_drawn = np.sum(drawn)
 
         print(f"  Cells in slice: {total_cells}")
         print(f"  mScarlet+ QC-passing: {mscarlet_cells}")
-        print(f"  Above threshold ({min_mscarlet_intensity:.2f}): {cells_above_thresh}")
+        print(f"  Drawn (>= {ROLONY_FLOOR} rolonies): {cells_drawn}")
+        print(f"  At ceiling (>= {ROLONY_CEILING}): "
+              f"{np.sum(drawn & (mscarlet_expression >= ROLONY_CEILING))}")
 
-        # Get cells above threshold
-        slice_cell_indices = np.where(slice_mscarlet_qc & (mscarlet_normalized >= min_mscarlet_intensity))[0]
+        slice_cell_indices = np.where(drawn)[0]
 
-        if cells_above_thresh == 0:
-            print("  WARNING: No cells above threshold, saving cell mask only")
+        if cells_drawn == 0:
+            print(f"  WARNING: No cells at >= {ROLONY_FLOOR} rolonies, "
+                  f"saving cell mask only")
 
         # Create overlay
         print("  Creating overlay...")
@@ -259,7 +278,7 @@ def generate_mscarlet_cellmask_subslice(
 
         # Initialize RGB overlay with cell mask background
         cell_exists_mask = stitched_cellmask > 0
-        cellmask_gray = cell_exists_mask.astype(float) * CELLMASK_BRIGHTNESS * cellmask_intensity
+        cellmask_gray = cell_exists_mask.astype(float) * CELLMASK_BRIGHTNESS * CELLMASK_SCALE
         overlay_rgb = np.stack([cellmask_gray, cellmask_gray, cellmask_gray], axis=2)
 
         # For comparison figure
@@ -269,7 +288,7 @@ def generate_mscarlet_cellmask_subslice(
         cells_mapped = 0
         cells_not_found = 0
 
-        if cells_above_thresh > 0:
+        if cells_drawn > 0:
             for cell_idx in slice_cell_indices:
                 # Full-res position -> canvas space (x2) -> downsampled image
                 pos_x_fullres = pos[cell_idx, 0]
@@ -300,9 +319,13 @@ def generate_mscarlet_cellmask_subslice(
                 # Find all pixels belonging to this cell
                 cell_mask = stitched_cellmask == cell_id
 
-                # Color intensity based on normalized expression (with boost)
-                intensity = min(mscarlet_normalized[cell_idx] * MSCARLET_BOOST, 1.0)
-                red_value = intensity * RED_OPACITY
+                # Absolute rolony count -> red. The domain is fixed, so a given
+                # count is the same red in every section and every run, and
+                # moving the bounds never re-shades the cells between them.
+                frac = np.clip(
+                    (mscarlet_expression[cell_idx] - ROLONY_FLOOR)
+                    / (ROLONY_CEILING - ROLONY_FLOOR), 0.0, 1.0)
+                red_value = RED_MIN + frac * (RED_MAX - RED_MIN)
 
                 # Apply red color to cell region
                 overlay_rgb[cell_mask, 0] = red_value  # Red channel
@@ -349,7 +372,7 @@ def generate_mscarlet_cellmask_subslice(
     print("\nNext steps:")
     print("  1. Review overlays in output directory")
     print("  2. Add overlays to LineStuffUp graph for alignment")
-    print("  3. (Optional) Adjust threshold and regenerate")
+    print("  3. (Optional) Adjust ROLONY_FLOOR / ROLONY_CEILING and regenerate")
     print()
 
 
@@ -358,18 +381,6 @@ def main():
         description="Generate mScarlet cell mask overlays",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
-    )
-    parser.add_argument(
-        '--threshold', '-th',
-        type=float,
-        default=0.0,
-        help='Normalized mScarlet threshold (0-1), default: 0'
-    )
-    parser.add_argument(
-        '--cellmask', '-cm',
-        type=float,
-        default=0.5,
-        help='Cell mask brightness multiplier (0-1), default: 0.5'
     )
     parser.add_argument(
         '--slice', '-s',
@@ -386,8 +397,6 @@ def main():
     args = parser.parse_args()
 
     generate_mscarlet_cellmask_subslice(
-        min_mscarlet_intensity=args.threshold,
-        cellmask_intensity=args.cellmask,
         target_slice=args.slice,
         test_mode=args.test,
     )
