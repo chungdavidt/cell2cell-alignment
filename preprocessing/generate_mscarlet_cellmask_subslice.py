@@ -85,7 +85,7 @@ from utilities.image_io import imwrite_tiff
 from utilities.visualization import create_comparison_figure
 
 # Rolony count -> colour, fixed domain. BY95 numbers; re-pick per brain.
-ROLONY_FLOOR = 3        # below this a cell is left as grey mask, not drawn
+ROLONY_FLOOR = 5        # below this a cell is left as grey mask, not drawn
 ROLONY_CEILING = 15     # at or above this the colour saturates
 CELLMASK_SCALE = 0.5    # scales CELLMASK_BRIGHTNESS -> 0.125, uint8 32
 
