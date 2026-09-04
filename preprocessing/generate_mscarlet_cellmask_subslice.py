@@ -14,8 +14,9 @@ to resample it. The two MUST agree or every cell lands off its mask.
 
 This pipeline:
     - Shows cell masks in flat grey
-    - Paints cells at >= ROLONY_FLOOR mScarlet rolonies red, brightness linear
-      in rolony count over the FIXED domain [ROLONY_FLOOR, ROLONY_CEILING]
+    - Paints cells at >= ROLONY_FLOOR mScarlet rolonies on a dark red -> orange
+      -> yellow ramp, linear in rolony count over the FIXED domain
+      [ROLONY_FLOOR, ROLONY_CEILING]
     - No DAPI background
 
 The ramp is absolute, not normalized. A 9-rolony cell is the same red in every
@@ -24,6 +25,12 @@ MSCARLET_BOOST form this replaces tied every cell's brightness to the single
 brightest cell in the dataset -- a value that moves with the QC gates -- and
 rendered BY95's median marker cell (1 rolony) darker than the grey mask behind
 it. Both config constants stay defined for the two scripts still using them.
+
+The ramp is a hue ramp, not a red one. Counts are integers, so a 3-to-15 domain
+has 13 levels; on a red-only ramp those differ in ONE channel 12.75 uint8 apart
+and read as flat. The three anchor colours are check_rolony_cutoff.py's. Note
+the DOMAINS still differ -- that tool ramps over [1, --saturate-at] by design --
+so a given count matches across the two only when the bounds are set to match.
 
 ROLONY_FLOOR / ROLONY_CEILING are BY95 numbers, hardcoded while the bounds are
 being tried out. They are per-brain like every other rolony gate: re-pick them
@@ -50,6 +57,7 @@ Output:
 
 import argparse
 import numpy as np
+from matplotlib.colors import LinearSegmentedColormap
 from pathlib import Path
 from scipy import sparse
 import re
@@ -72,12 +80,22 @@ from utilities.mat_io import load_filt_neurons, load_mat, load_cellmask_h5, get_
 from utilities.image_io import imwrite_tiff
 from utilities.visualization import create_comparison_figure
 
-# Rolony count -> red, fixed domain. BY95 numbers; re-pick per brain.
+# Rolony count -> colour, fixed domain. BY95 numbers; re-pick per brain.
 ROLONY_FLOOR = 3        # below this a cell is left as grey mask, not drawn
-ROLONY_CEILING = 15     # at or above this the red saturates
-RED_MIN = 0.35          # floor colour -> uint8 89, above the grey field at 32
-RED_MAX = 0.95          # ceiling colour -> uint8 242
+ROLONY_CEILING = 15     # at or above this the colour saturates
 CELLMASK_SCALE = 0.5    # scales CELLMASK_BRIGHTNESS -> 0.125, uint8 32
+
+# dark red -> orange -> yellow, check_rolony_cutoff.py's anchors. The floor at
+# uint8 (115, 0, 0) clears the grey field at 32.
+RAMP_COLORS = [(0.45, 0.0, 0.0), (1.0, 0.35, 0.0), (1.0, 0.95, 0.25)]
+_RAMP = LinearSegmentedColormap.from_list("rolony", RAMP_COLORS)
+
+
+def ramp_rgb(count):
+    """One rolony count -> RGB on the fixed [ROLONY_FLOOR, ROLONY_CEILING] ramp."""
+    frac = np.clip(
+        (count - ROLONY_FLOOR) / (ROLONY_CEILING - ROLONY_FLOOR), 0.0, 1.0)
+    return _RAMP(frac)[:3]
 
 
 def generate_mscarlet_cellmask_subslice(
@@ -109,7 +127,7 @@ def generate_mscarlet_cellmask_subslice(
     print("GENERATE mSCARLET CELL MASK OVERLAYS")
     print("=" * 40)
     print(f"Rolony ramp: {ROLONY_FLOOR} -> {ROLONY_CEILING}+ rolonies, "
-          f"red {RED_MIN:.2f} -> {RED_MAX:.2f} (fixed, absolute)")
+          f"dark red -> orange -> yellow (fixed, absolute)")
     print(f"  below {ROLONY_FLOOR} rolonies: not drawn")
     print(f"Cell mask brightness: {CELLMASK_BRIGHTNESS * CELLMASK_SCALE:.3f}")
     print()
@@ -319,21 +337,15 @@ def generate_mscarlet_cellmask_subslice(
                 # Find all pixels belonging to this cell
                 cell_mask = stitched_cellmask == cell_id
 
-                # Absolute rolony count -> red. The domain is fixed, so a given
-                # count is the same red in every section and every run, and
-                # moving the bounds never re-shades the cells between them.
-                frac = np.clip(
-                    (mscarlet_expression[cell_idx] - ROLONY_FLOOR)
-                    / (ROLONY_CEILING - ROLONY_FLOOR), 0.0, 1.0)
-                red_value = RED_MIN + frac * (RED_MAX - RED_MIN)
+                # Absolute rolony count -> colour. The domain is fixed, so a
+                # given count is the same colour in every section and every run,
+                # and moving the bounds never re-shades the cells between them.
+                rgb = ramp_rgb(mscarlet_expression[cell_idx])
 
-                # Apply red color to cell region
-                overlay_rgb[cell_mask, 0] = red_value  # Red channel
-                overlay_rgb[cell_mask, 1] = 0          # Green channel
-                overlay_rgb[cell_mask, 2] = 0          # Blue channel
+                overlay_rgb[cell_mask] = rgb
 
                 # Also update mscarlet_only for comparison
-                mscarlet_only[cell_mask, 0] = red_value
+                mscarlet_only[cell_mask] = rgb
 
                 cells_mapped += 1
 
