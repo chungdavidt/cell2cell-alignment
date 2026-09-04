@@ -324,7 +324,7 @@ def mscarlet_subslice_dir(threshold, cellmask_intensity=None):
 
     Composes the pre-2026-09-03 layout. NO CALLERS: step 4 swapped its
     normalized threshold for a fixed rolony ramp and writes
-    MSCARLET_CELLMASK_DIR/rolony_{floor}_{ceiling}/ instead. Kept because that
+    MSCARLET_CELLMASK_DIR/rolony_ge{cutoff}_sat{cap}/ instead. Kept because that
     tree still exists on disk and a relative SUBSLICE_DIR naming one of its
     folders still resolves against MSCARLET_CELLMASK_DIR
     (analysis_paths.resolve_subslice_dir).

@@ -14,34 +14,42 @@ to resample it. The two MUST agree or every cell lands off its mask.
 
 This pipeline:
     - Shows cell masks in flat grey
-    - Paints cells at >= ROLONY_FLOOR mScarlet rolonies on a dark red -> orange
-      -> yellow ramp, linear in rolony count over the FIXED domain
-      [ROLONY_FLOOR, ROLONY_CEILING]
+    - Paints cells at >= the draw cutoff on a dark red -> orange -> yellow
+      ramp, linear in rolony count over the FIXED domain
+      [ROLONY_RAMP_MIN, ROLONY_CEILING]
     - No DAPI background
 
-The ramp is absolute, not normalized. A 9-rolony cell is the same red in every
-section and every run, so two runs compare directly. The count / max_expr *
-MSCARLET_BOOST form this replaces tied every cell's brightness to the single
-brightest cell in the dataset -- a value that moves with the QC gates -- and
-rendered BY95's median marker cell (1 rolony) darker than the grey mask behind
-it. Both config constants stay defined for the two scripts still using them.
+The ramp domain is a constant and the cutoff does not touch it. A cell's rolony
+count does not change when the cutoff moves, so its colour must not either:
+--min-rolonies decides which cells are DRAWN and nothing else. Raising it
+deletes cells off the bottom of the ramp and leaves every survivor the colour it
+already was, so two runs compare pixel for pixel. Anchoring the ramp on the
+cutoff instead -- (count - cutoff) / (CEILING - cutoff), which this code did
+until 2026-09-04 -- re-shaded every surviving cell: at a cutoff of 3 a 9-rolony
+cell was (255, 90, 0) and at a cutoff of 5 it was (227, 71, 0), so a colour read
+off one image meant a different count in the next. Do not re-couple them. The
+count / max_expr * MSCARLET_BOOST form both replace tied every cell's brightness
+to the single brightest cell in the dataset -- a value that moves with the QC
+gates -- and rendered BY95's median marker cell (1 rolony) darker than the grey
+mask behind it. Both config constants stay defined for the two scripts still
+using them.
 
-The ramp is a hue ramp, not a red one. Counts are integers, so a 3-to-15 domain
-has 13 levels; on a red-only ramp those differ in ONE channel 12.75 uint8 apart
-and read as flat. The three anchor colours are check_rolony_cutoff.py's. Note
-the DOMAINS still differ -- that tool ramps over [1, --saturate-at] by design --
-so a given count matches across the two only when the bounds are set to match.
+The ramp is a hue ramp, not a red one. Counts are integers, so a 1-to-15 domain
+has 15 levels; on a red-only ramp those differ in ONE channel 12.75 uint8 apart
+and read as flat. The three anchor colours are check_rolony_cutoff.py's, and so
+is the [1, cap] domain, so a count renders identically in both tools whenever
+that tool's --saturate-at equals ROLONY_CEILING.
 
-ROLONY_FLOOR / ROLONY_CEILING are BY95 numbers, the defaults while the bounds
-are being tried out. They are per-brain like every other rolony gate: re-pick
-them with check_rolony_cutoff.py before running another dataset. --min-rolonies
-overrides the floor for one run; the ceiling is still a constant edit. The floor
-names the output folder, so two floors never overwrite each other -- but two
-runs at the SAME floor do, and the second one wins.
+ROLONY_CEILING is a BY95 number, the default while the cap is being tried out.
+It is per-brain like every other rolony gate: re-pick it with
+check_rolony_cutoff.py before running another dataset. Moving it DOES re-shade
+every cell -- it is the one bound that sets the mapping -- so it is a constant
+edit, not a flag, and it names the output folder alongside the cutoff. Two runs
+at the same cutoff and cap overwrite each other, and the second one wins.
 
 run_pipeline.py does not forward its own --min-rolonies here: that flag sets the
-ALIGN tifs' cutoff, a registration parameter, and this floor is a display
-choice. Two questions, two numbers.
+ALIGN tifs' cutoff, a registration parameter, and this one is a display choice.
+Two questions, two numbers.
 
 --exclude-slices drops those sections from the whole run, for a section whose
 data is bad: no overlay TIF, no comparison PNG, no bar in the histogram. It is
@@ -105,8 +113,11 @@ from utilities.mat_io import load_filt_neurons, load_mat, load_cellmask_h5, get_
 from utilities.image_io import imwrite_tiff
 from utilities.visualization import create_comparison_figure, create_histogram
 
-# Rolony count -> colour, fixed domain. BY95 numbers; re-pick per brain.
-ROLONY_FLOOR = 5        # default floor; --min-rolonies overrides it
+# Rolony count -> colour. The domain is [ROLONY_RAMP_MIN, ROLONY_CEILING] and
+# the draw cutoff is NOT part of it: these two names alone decide what colour a
+# count gets. BY95 numbers; re-pick the ceiling per brain.
+ROLONY_RAMP_MIN = 1     # count that maps to the darkest colour; never the cutoff
+ROLONY_FLOOR = 5        # default DRAW CUTOFF; --min-rolonies overrides it
 ROLONY_CEILING = 15     # at or above this the colour saturates
 CELLMASK_SCALE = 0.5    # scales CELLMASK_BRIGHTNESS -> 0.125, uint8 32
 
@@ -116,21 +127,24 @@ RAMP_COLORS = [(0.45, 0.0, 0.0), (1.0, 0.35, 0.0), (1.0, 0.95, 0.25)]
 _RAMP = LinearSegmentedColormap.from_list("rolony", RAMP_COLORS)
 
 
-def ramp_rgb(count, floor=ROLONY_FLOOR):
-    """One rolony count -> RGB on the fixed [floor, ROLONY_CEILING] ramp."""
+def ramp_rgb(count):
+    """One rolony count -> RGB on the fixed [ROLONY_RAMP_MIN, ROLONY_CEILING]
+    ramp. Takes no cutoff: the same count is the same colour in every run."""
     frac = np.clip(
-        (count - floor) / (ROLONY_CEILING - floor), 0.0, 1.0)
+        (count - ROLONY_RAMP_MIN) / (ROLONY_CEILING - ROLONY_RAMP_MIN), 0.0, 1.0)
     return _RAMP(frac)[:3]
 
 
 def write_ramp_legend(output_dir, floor=ROLONY_FLOOR):
-    """One legend per output folder: every colour the ramp can produce.
+    """One legend per output folder: every colour that run can produce.
 
-    Discrete swatches, not a gradient. Counts are integers, so the ramp has
-    exactly ROLONY_CEILING - floor + 1 reachable colours and a swatch
-    per count is a lookup -- read a cell's colour off the image, read its
-    rolony count off the legend. Written as its own file, never burned into
-    the overlay TIF, which shares a pixel grid with the ALIGN tif and with
+    Discrete swatches, not a gradient. Counts are integers, so a swatch per
+    count is a lookup -- read a cell's colour off the image, read its rolony
+    count off the legend. It runs `floor` to ROLONY_CEILING because those are
+    the counts that get drawn, but every swatch is `ramp_rgb`'s absolute
+    colour: raising the cutoff shortens this legend from the bottom and leaves
+    the remaining swatches untouched. Written as its own file, never burned
+    into the overlay TIF, which shares a pixel grid with the ALIGN tif and with
     export_subslice_cells.py's y_node/x_node.
     """
     import matplotlib.pyplot as plt
@@ -139,12 +153,12 @@ def write_ramp_legend(output_dir, floor=ROLONY_FLOOR):
     fig, ax = plt.subplots(figsize=(2.6, 0.34 * (len(counts) + 2) + 0.6))
 
     for row, count in enumerate(counts):
-        ax.add_patch(plt.Rectangle((0, row), 1, 0.86, color=ramp_rgb(count, floor)))
+        ax.add_patch(plt.Rectangle((0, row), 1, 0.86, color=ramp_rgb(count)))
         label = f"{count}+" if count == ROLONY_CEILING else str(count)
         ax.text(1.15, row + 0.43, label, va="center", fontsize=9)
 
-    # The floor is a cutoff as well as the ramp's bottom: below it a cell is
-    # drawn in the mask field's grey, indistinguishable from marker-negative.
+    # Below the cutoff a cell is drawn in the mask field's grey,
+    # indistinguishable from marker-negative.
     grey = CELLMASK_BRIGHTNESS * CELLMASK_SCALE
     ax.add_patch(plt.Rectangle((0, -1.4), 1, 0.86, color=(grey, grey, grey)))
     ax.text(1.15, -0.97, f"< {floor}", va="center", fontsize=9)
@@ -153,7 +167,9 @@ def write_ramp_legend(output_dir, floor=ROLONY_FLOOR):
     ax.set_ylim(-1.9, len(counts) + 0.4)
     ax.axis("off")
     ax.set_title("mScarlet rolonies", fontsize=10, pad=8)
-    fig.text(0.5, 0.015, "fixed ramp, absolute counts", ha="center", fontsize=7)
+    fig.text(0.5, 0.015,
+             f"fixed ramp {ROLONY_RAMP_MIN}-{ROLONY_CEILING}+, absolute counts",
+             ha="center", fontsize=7)
 
     out_path = Path(output_dir) / "rolony_ramp_legend.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
@@ -203,13 +219,13 @@ def generate_mscarlet_cellmask_subslice(
         target_slice: Process specific slice only
         test_mode: Process first subslice only
         exclude_slices: Section numbers to drop from the whole run
-        min_rolonies: Ramp floor for this run (default: ROLONY_FLOOR)
+        min_rolonies: Draw cutoff for this run (default: ROLONY_FLOOR).
+            Gates which cells are drawn; never the ramp.
     """
     floor = ROLONY_FLOOR if min_rolonies is None else int(min_rolonies)
-    if floor >= ROLONY_CEILING:
-        raise ValueError(
-            f"--min-rolonies {floor} is at or above ROLONY_CEILING "
-            f"{ROLONY_CEILING}: the ramp would have no width")
+    if floor < 1:
+        raise ValueError(f"--min-rolonies {floor} is below 1: a drawn cell has "
+                         f"at least one rolony")
 
     input_dir = Path(HYB_DOWNSAMPLED_DIR)
 
@@ -220,17 +236,24 @@ def generate_mscarlet_cellmask_subslice(
             f"Expected: {input_dir}"
         )
 
-    # One folder per ramp, so changing the bounds writes beside the last run
-    # instead of overwriting it.
-    output_dir = Path(MSCARLET_CELLMASK_DIR) / f"rolony_{floor}_{ROLONY_CEILING}"
+    # One folder per (cutoff, ramp cap), so changing either writes beside the
+    # last run instead of overwriting it. The name is ge{cutoff}_sat{cap},
+    # check_rolony_cutoff.py's vocabulary -- the old rolony_{floor}_{ceiling}
+    # folders read as a ramp range and were one, which is the bug this pair of
+    # names retires.
+    output_dir = (Path(MSCARLET_CELLMASK_DIR)
+                  / f"rolony_ge{floor}_sat{ROLONY_CEILING}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 40)
     print("GENERATE mSCARLET CELL MASK OVERLAYS")
     print("=" * 40)
-    print(f"Rolony ramp: {floor} -> {ROLONY_CEILING}+ rolonies, "
-          f"dark red -> orange -> yellow (fixed, absolute)")
-    print(f"  below {floor} rolonies: not drawn")
+    print(f"Rolony ramp: {ROLONY_RAMP_MIN} -> {ROLONY_CEILING}+ rolonies, "
+          f"dark red -> orange -> yellow (fixed, absolute, cutoff-independent)")
+    print(f"Draw cutoff: >= {floor} rolonies; below it, not drawn")
+    if floor >= ROLONY_CEILING:
+        print(f"  WARNING: cutoff {floor} is at or above the ramp cap "
+              f"{ROLONY_CEILING}, so every drawn cell saturates to one colour")
     print(f"Cell mask brightness: {CELLMASK_BRIGHTNESS * CELLMASK_SCALE:.3f}")
     legend_path = write_ramp_legend(output_dir, floor)
     print(f"Legend: {legend_path.name}")
@@ -461,10 +484,10 @@ def generate_mscarlet_cellmask_subslice(
                 # Find all pixels belonging to this cell
                 cell_mask = stitched_cellmask == cell_id
 
-                # Absolute rolony count -> colour. The domain is fixed, so a
-                # given count is the same colour in every section and every run,
-                # and moving the bounds never re-shades the cells between them.
-                rgb = ramp_rgb(mscarlet_expression[cell_idx], floor)
+                # Absolute rolony count -> colour. The domain is a constant and
+                # `floor` is not in it, so a given count is the same colour in
+                # every section and at every cutoff.
+                rgb = ramp_rgb(mscarlet_expression[cell_idx])
 
                 overlay_rgb[cell_mask] = rgb
 
@@ -555,8 +578,9 @@ def main():
         '--min-rolonies', '-n',
         type=int,
         default=None,
-        help=f'Ramp floor: below this a cell is not drawn (default: '
-             f'{ROLONY_FLOOR}). Names the output folder.'
+        help=f'Draw cutoff: below this a cell is not drawn (default: '
+             f'{ROLONY_FLOOR}). Names the output folder. Does not move the '
+             f'colour ramp -- a survivor keeps its colour at every cutoff.'
     )
     parser.add_argument(
         '--exclude-slices',

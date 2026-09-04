@@ -50,10 +50,11 @@ STEPS = [
     {
         'name': 'Generate Overlays',
         # No --threshold: its ramp is a fixed rolony domain, not a normalized
-        # cutoff. That script's own --min-rolonies sets the ramp floor and is
-        # deliberately NOT forwarded from here -- this runner's --min-rolonies
-        # is the ALIGN tifs' cutoff, a registration parameter, while the ramp
-        # floor is a display choice. Two questions, two numbers.
+        # cutoff, and its own --min-rolonies only decides which cells are drawn
+        # on that ramp. It is deliberately NOT forwarded from here -- this
+        # runner's --min-rolonies is the ALIGN tifs' cutoff, a registration
+        # parameter, while that one is a display choice. Two questions, two
+        # numbers.
         'script': 'generate_mscarlet_cellmask_subslice.py',
         'description': 'Create mScarlet cell overlays on cellmask',
     },

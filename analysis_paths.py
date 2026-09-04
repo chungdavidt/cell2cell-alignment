@@ -141,7 +141,7 @@ def resolve_subslice_dir(value: Optional[str] = None) -> Optional[Path]:
     against BOTH output roots::
 
         SUBSLICE_DIR = "qc20_5_ge1"                    # alignment TIFs
-        SUBSLICE_DIR = "rolony_3_15"                   # step 4 overlays
+        SUBSLICE_DIR = "rolony_ge5_sat15"              # step 4 overlays
 
     which survives any later rename of the directories above it. Resolving an
     overlay folder is not the same as the graph builder accepting one: it
