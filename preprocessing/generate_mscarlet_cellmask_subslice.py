@@ -36,9 +36,17 @@ ROLONY_FLOOR / ROLONY_CEILING are BY95 numbers, hardcoded while the bounds are
 being tried out. They are per-brain like every other rolony gate: re-pick them
 with check_rolony_cutoff.py before running another dataset.
 
+--exclude-slices drops those sections from the whole run, for a section whose
+data is bad: no overlay TIF, no comparison PNG, no bar in the histogram. It is
+local to this script -- nothing else reads it, no config name holds it, and
+run_pipeline.py does not forward it, so the pipeline still renders the section.
+A number with no subslice on disk is an error, so a typo cannot write a figure
+whose name claims an exclusion that did not happen.
+
 Usage:
     python generate_mscarlet_cellmask_subslice.py
     python generate_mscarlet_cellmask_subslice.py --slice 22
+    python generate_mscarlet_cellmask_subslice.py --exclude-slices 58
     python generate_mscarlet_cellmask_subslice.py --test
 
 Input:
@@ -53,6 +61,11 @@ Output:
           is absolute, so a count maps to the same colour in every image
           written here; a different FLOOR/CEILING is a different folder with
           its own legend.
+        * cell_count_histogram_ge{FLOOR}_rolonies[_ex{slices}].png -- cells
+          painted per section against that section's QC-passing mScarlet+
+          total. Whole runs only: --slice and --test would write one bar over
+          it. The excluded numbers land in the filename, so an excluded run
+          cannot overwrite a full one.
 
       The folder name records the ramp only. QC_MIN_READS / QC_MIN_GENES also
       decide which cells are eligible to be drawn; they live in local_config.py
@@ -82,7 +95,7 @@ from preprocessing_config import (
 )
 from utilities.mat_io import load_filt_neurons, load_mat, load_cellmask_h5, get_expression_column, resolve_marker_column
 from utilities.image_io import imwrite_tiff
-from utilities.visualization import create_comparison_figure
+from utilities.visualization import create_comparison_figure, create_histogram
 
 # Rolony count -> colour, fixed domain. BY95 numbers; re-pick per brain.
 ROLONY_FLOOR = 5        # below this a cell is left as grey mask, not drawn
@@ -140,9 +153,39 @@ def write_ramp_legend(output_dir):
     return out_path
 
 
+def drop_excluded_slices(cellmask_files, excluded):
+    """`cellmask_files` without those sections, and how many files that was.
+
+    Copied into this script rather than shared: the exclusion is one run's
+    argument, not a property of the brain. A section with no subslice on disk
+    is an error -- excluding a number that was never there would put a claim in
+    the filename that the run did not honour.
+    """
+    present = set()
+    for f in cellmask_files:
+        m = re.search(r'slice(\d+)_subslice', f.stem)
+        if m:
+            present.add(int(m.group(1)))
+
+    missing = [s for s in excluded if s not in present]
+    if missing:
+        raise ValueError(
+            f"--exclude-slices {missing}: no subslice on disk. "
+            f"present: {sorted(present)}")
+
+    kept = []
+    for f in cellmask_files:
+        m = re.search(r'slice(\d+)_subslice', f.stem)
+        if m and int(m.group(1)) in excluded:
+            continue
+        kept.append(f)
+    return kept, len(cellmask_files) - len(kept)
+
+
 def generate_mscarlet_cellmask_subslice(
     target_slice: int = None,
     test_mode: bool = False,
+    exclude_slices=None,
 ):
     """
     Generate mScarlet cell mask overlays.
@@ -150,6 +193,7 @@ def generate_mscarlet_cellmask_subslice(
     Args:
         target_slice: Process specific slice only
         test_mode: Process first subslice only
+        exclude_slices: Section numbers to drop from the whole run
     """
     input_dir = Path(HYB_DOWNSAMPLED_DIR)
 
@@ -244,6 +288,23 @@ def generate_mscarlet_cellmask_subslice(
 
     print(f"Found {len(cellmask_files)} subslices ({'H5' if use_h5_format else 'MAT'} format)\n")
 
+    # Before --slice / --test narrow the set, so a typo is caught against every
+    # section on disk rather than against one run's subset.
+    excluded = sorted(set(exclude_slices or []))
+    excluded_note = ""
+    if excluded:
+        if target_slice in excluded:
+            raise ValueError(
+                f"--slice {target_slice} is also in --exclude-slices {excluded}")
+        cellmask_files, n_dropped = drop_excluded_slices(cellmask_files, excluded)
+        excluded_note = (f"excluding slice{'s' if len(excluded) > 1 else ''} "
+                         f"{', '.join(str(s) for s in excluded)}: "
+                         f"{n_dropped} subslices dropped")
+        print(excluded_note)
+        print("  (the dataset totals printed above count every section)\n")
+        if not cellmask_files:
+            raise ValueError("--exclude-slices dropped every subslice")
+
     # Filter by target slice
     if target_slice is not None:
         ext = '.h5' if use_h5_format else '.mat'
@@ -261,6 +322,9 @@ def generate_mscarlet_cellmask_subslice(
     # Get arrays for position lookup
     slice_ids = np.asarray(filt_neurons['slice']).flatten()
     pos = np.asarray(filt_neurons['pos'])
+
+    # (slice_id, QC-passing mScarlet+ cells, cells painted) per section
+    hist_rows = []
 
     # Process each subslice
     for i, cellmask_file in enumerate(cellmask_files):
@@ -403,6 +467,8 @@ def generate_mscarlet_cellmask_subslice(
             overlay_time = time.time() - overlay_start
             print(f"    Cell mask only (no overlay) in {overlay_time:.2f} sec")
 
+        hist_rows.append((slice_id, mscarlet_cells, cells_mapped))
+
         # Save overlay
         output_name = f"{base_name}_mScarlet_cellmask.tif"
         output_path = output_dir / output_name
@@ -417,6 +483,26 @@ def generate_mscarlet_cellmask_subslice(
             slice_id, cells_mapped, output_dir, base_name
         )
         print(f"    Saved comparison: {Path(fig_path).name}\n")
+
+    # Painted vs. eligible, per section. A bar short of its dashed total is
+    # the floor cut plus whatever the centroid lookup missed; the per-section
+    # prints above separate the two. Sorted numerically -- cellmask_files is
+    # sorted lexicographically, which puts slice10 before slice9.
+    if test_mode or target_slice is not None:
+        print("Histogram: skipped, partial run (the figure covers every section)\n")
+    elif hist_rows:
+        hist_rows.sort()
+        stem = f"cell_count_histogram_ge{ROLONY_FLOOR}_rolonies"
+        if excluded:
+            stem += "_ex" + "_".join(str(s) for s in excluded)
+        hist_path = create_histogram(
+            [r[0] for r in hist_rows], [r[2] for r in hist_rows],
+            [r[1] for r in hist_rows], float(ROLONY_FLOOR), output_dir,
+            criterion_label=f">= {ROLONY_FLOOR} rolonies",
+            filename=f"{stem}.png",
+            note=excluded_note or None,
+        )
+        print(f"Histogram: {Path(hist_path).name}\n")
 
     # Summary
     print("=" * 40)
@@ -449,12 +535,21 @@ def main():
         action='store_true',
         help='Test mode: process first subslice only'
     )
+    parser.add_argument(
+        '--exclude-slices',
+        type=int,
+        nargs='+',
+        metavar='N',
+        help='Drop these sections from the whole run; the numbers land in the '
+             'histogram filename'
+    )
 
     args = parser.parse_args()
 
     generate_mscarlet_cellmask_subslice(
         target_slice=args.slice,
         test_mode=args.test,
+        exclude_slices=args.exclude_slices,
     )
 
 

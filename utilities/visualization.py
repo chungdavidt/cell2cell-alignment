@@ -189,6 +189,7 @@ def create_histogram(
     output_dir: Union[str, Path],
     criterion_label: str = None,
     filename: str = None,
+    note: str = None,
 ) -> str:
     """
     Create cell count histogram per subslice.
@@ -203,6 +204,8 @@ def create_histogram(
             legend. check_rolony_cutoff.py passes a rolony-count criterion, where
             a 0-1 threshold label would misread as a normalized value.
         filename: Overrides the default output filename, for the same reason.
+        note: One line under the title, for what the bars cannot show -- a
+            caller dropping sections says so here.
 
     Returns:
         Path to saved figure
@@ -231,6 +234,9 @@ def create_histogram(
     ax.set_ylabel('Number of Cells Displayed', fontsize=14, fontweight='bold')
     ax.set_title(f'mScarlet+ Cell Counts per Subslice ({criterion_label})',
                  fontsize=16, fontweight='bold')
+    if note:
+        ax.text(0.5, 1.005, note, transform=ax.transAxes, ha='center',
+                va='bottom', fontsize=10)
 
     ax.set_xticks(x)
     ax.set_xticklabels([str(s) for s in slice_ids])
