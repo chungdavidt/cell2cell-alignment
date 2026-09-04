@@ -19,10 +19,17 @@ pipeline selects on. --min-reads / --min-genes override, and are required when
 preprocessing_config will not import (no local_config, or a blank SCOPE) -- the
 gates are per-brain and there is no safe default to fall back to.
 
+ROLONY_FLOOR is the per-cell floor: a cell joins the marker+ count and the
+rolony total only at >= that many rolonies. --min-rolonies overrides it, and 1
+counts every cell carrying the marker. The ge{c} columns ignore the floor, so
+what another floor would keep stays visible. A floor other than 1 lands in the
+CSV name as _ge{N}.
+
 Usage:
     python preprocessing/count_rolonies_per_slice.py
     python preprocessing/count_rolonies_per_slice.py <DATA_ROOT_or_filt_neurons.mat>
     python preprocessing/count_rolonies_per_slice.py --distribution
+    python preprocessing/count_rolonies_per_slice.py --min-rolonies 1
     python preprocessing/count_rolonies_per_slice.py --marker gcamp
     python preprocessing/count_rolonies_per_slice.py --cutoffs 1 3 5 10
     python preprocessing/count_rolonies_per_slice.py --cells-csv
@@ -56,6 +63,9 @@ MARKERS = {
     "gcamp": ("GCaMP", 111),
 }
 DEFAULT_CUTOFFS = (1, 2, 3, 5)
+# Cells below this carry no rolonies into the census. Matches step 4's
+# ROLONY_FLOOR. BY95 number; re-pick per brain.
+ROLONY_FLOOR = 5
 
 
 def _config_gates():
@@ -97,7 +107,8 @@ def _column(expmat, idx):
     return np.asarray(col.todense()).ravel() if sp.issparse(col) else np.asarray(col).ravel()
 
 
-def census(expmat, slice_ids, col, min_reads, min_genes, cutoffs):
+def census(expmat, slice_ids, col, min_reads, min_genes, cutoffs,
+           min_rolonies=ROLONY_FLOOR):
     """One row per slice, plus the QC mask and float slice ids."""
     reads = np.asarray(expmat.sum(axis=1)).ravel()
     genes = np.asarray((expmat > 0).sum(axis=1)).ravel()
@@ -108,28 +119,29 @@ def census(expmat, slice_ids, col, min_reads, min_genes, cutoffs):
     for s in np.unique(sl[~np.isnan(sl)]):
         in_slice = sl == s
         counts = col[in_slice & qc].astype(np.int64)
-        pos = counts[counts > 0]
+        pos = counts[counts >= min_rolonies]
         row = {
             "slice": int(s),
             "cells": int(in_slice.sum()),
             "qc": int((in_slice & qc).sum()),
             "marker_cells": int(pos.size),
-            "rolonies": int(counts.sum()),
-            "max": int(counts.max()) if counts.size else 0,
+            "rolonies": int(pos.sum()),
+            "max": int(pos.max()) if pos.size else 0,
             "median_pos": float(np.median(pos)) if pos.size else 0.0,
             "mean_pos": float(pos.mean()) if pos.size else 0.0,
         }
-        for c in cutoffs:
+        for c in cutoffs:   # on every QC cell, floor or no floor
             row[f"ge{c}"] = int((counts >= c).sum())
         rows.append(row)
     return rows, qc, sl
 
 
-def print_table(rows, cutoffs, marker_name):
+def print_table(rows, cutoffs, marker_name, min_rolonies=ROLONY_FLOOR):
     head = (f"{'slice':>6}{'cells':>8}{'QC':>8}{marker_name + '+':>10}"
             f"{'% of QC':>9}{'rolonies':>10}{'max':>6}{'median+':>9}{'mean+':>8}"
             + "".join(f"{'>=' + str(c):>8}" for c in cutoffs))
-    print(f"\n=== {marker_name} rolonies per slice ===")
+    print(f"\n=== {marker_name} rolonies per slice "
+          f"(cells with >= {min_rolonies}) ===")
     print(head)
     print("-" * len(head))
     for r in rows:
@@ -171,13 +183,13 @@ def write_csv(path, rows, cutoffs):
     print(f"\nwrote {path}")
 
 
-def write_cells_csv(path, fn, col, qc, sl, expmat):
+def write_cells_csv(path, fn, col, qc, sl, expmat, min_rolonies=ROLONY_FLOOR):
     """One row per marker+ QC-passing cell, so the table can be re-grouped."""
     reads = np.asarray(expmat.sum(axis=1)).ravel()
     genes = np.asarray((expmat > 0).sum(axis=1)).ravel()
     fov = np.asarray(fn["fov"]).ravel()
     ids = np.asarray(fn["id"]).ravel() if "id" in fn else None
-    keep = np.where(qc & (col > 0) & ~np.isnan(sl))[0]
+    keep = np.where(qc & (col >= min_rolonies) & ~np.isnan(sl))[0]
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["row_index", "id", "slice", "fov", "rolonies", "total_reads", "n_genes"])
@@ -197,6 +209,10 @@ def main():
     ap.add_argument("--marker-col", type=int, help="column index, overrides --marker")
     ap.add_argument("--min-reads", type=int, help="default: QC_MIN_READS")
     ap.add_argument("--min-genes", type=int, help="default: QC_MIN_GENES")
+    ap.add_argument("--min-rolonies", type=int, default=ROLONY_FLOOR, metavar="N",
+                    help=f"count only cells with >= N rolonies (default "
+                         f"{ROLONY_FLOOR}); a floor other than 1 lands in the "
+                         "CSV name as _geN")
     ap.add_argument("--cutoffs", type=int, nargs="+",
                     help=f"cumulative cells >= n columns (default: {' '.join(map(str, DEFAULT_CUTOFFS))} "
                          "plus ALIGN_MIN_ROLONIES)")
@@ -248,13 +264,15 @@ def main():
     print(f"QC: reads >= {min_reads} ({src(args.min_reads)}) AND "
           f"genes >= {min_genes} ({src(args.min_genes)}), over all "
           f"{expmat.shape[1]} columns")
+    print(f"floor: >= {args.min_rolonies} {marker_name} rolonies per cell")
 
-    rows, qc, sl = census(expmat, fn["slice"], col, min_reads, min_genes, cutoffs)
+    rows, qc, sl = census(expmat, fn["slice"], col, min_reads, min_genes, cutoffs,
+                          args.min_rolonies)
     if not rows:
         sys.exit("no cell carries a slice id")
-    print_table(rows, cutoffs, marker_name)
+    print_table(rows, cutoffs, marker_name, args.min_rolonies)
 
-    n_nan = int((np.isnan(sl) & qc & (col > 0)).sum())
+    n_nan = int((np.isnan(sl) & qc & (col >= args.min_rolonies)).sum())
     if n_nan:
         print(f"\n{n_nan} QC-passing {marker_name}+ cells have no slice id and are "
               "in no row above")
@@ -264,11 +282,13 @@ def main():
                            args.max_count, marker_name)
 
     stem = f"rolonies_per_slice_{marker_name.lower()}_qc{min_reads}_{min_genes}"
+    if args.min_rolonies != 1:
+        stem += f"_ge{args.min_rolonies}"
     if not args.no_csv:
         write_csv(args.csv or _default_out(f"{stem}.csv"), rows, cutoffs)
     if args.cells_csv is not None:
         write_cells_csv(args.cells_csv or _default_out(f"{stem}_cells.csv"),
-                        fn, col, qc, sl, expmat)
+                        fn, col, qc, sl, expmat, args.min_rolonies)
 
 
 if __name__ == "__main__":
