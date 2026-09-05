@@ -70,22 +70,22 @@ Input:
     - filt_neurons.mat (for cell positions and expression)
 
 Output:
-    - mScarlet_cellmask_subslice/rolony_{FLOOR}_{CEILING}/
+    - mScarlet_cellmask_subslice/rolony_ge{CUTOFF}_sat{CEILING}/
         * slice{N}_subslice_mScarlet_cellmask.tif
         * slice{N}_subslice_comparison.png
         * rolony_ramp_legend.png -- one per folder, not per slice. The domain
-          is absolute, so a count maps to the same colour in every image
-          written here; a different FLOOR/CEILING is a different folder with
-          its own legend.
-        * cell_count_histogram_ge{FLOOR}_rolonies[_ex{slices}].png -- cells
+          is absolute and cutoff-independent, so a count maps to the same
+          colour in every folder too; a higher cutoff just starts the legend
+          higher. Only ROLONY_CEILING changes the colours.
+        * cell_count_histogram_ge{CUTOFF}_rolonies[_ex{slices}].png -- cells
           painted per section against that section's QC-passing mScarlet+
           total. Whole runs only: --slice and --test would write one bar over
           it. The excluded numbers land in the filename, so an excluded run
           cannot overwrite a full one.
 
-      The folder name records the ramp only. QC_MIN_READS / QC_MIN_GENES also
-      decide which cells are eligible to be drawn; they live in local_config.py
-      and the run prints them.
+      The folder name records the draw cutoff and the ramp cap.
+      QC_MIN_READS / QC_MIN_GENES also decide which cells are eligible to be
+      drawn; they live in local_config.py and the run prints them.
 """
 
 import argparse
