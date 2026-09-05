@@ -163,8 +163,14 @@ MARKERS = {
         "out_dir": GCAMP_CELLMASK_DIR,
         # dark green -> green -> pale yellow-green; the floor at uint8 (0, 107, 26)
         "ramp": [(0.0, 0.42, 0.10), (0.15, 0.85, 0.20), (0.80, 1.0, 0.40)],
-        "floor": None,    # UNMEASURED -- set from the census above
-        "ceiling": None,  # UNMEASURED -- set from the census above
+        # BY95, measured 2026-09-05 with the census above. Of 88,782 QC-passing
+        # GCaMP+ cells: 39,594 at >=2, 17,298 at >=3, 4,521 at >=5, 375 above
+        # 10, max 57. 60% of QC-passing cells carry >=1 rolony, so 1 and 2 are
+        # not worth painting; 3 keeps the 12,777 cells that a cutoff of 5 drops.
+        # The cap is 10 because the tail past it is 0.42% of the population --
+        # at mScarlet's 15 the drawn cells bunch in the bottom third of the ramp.
+        "floor": 3,
+        "ceiling": 10,
     },
 }
 
