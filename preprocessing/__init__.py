@@ -11,7 +11,7 @@ Pipeline execution order:
     1. identify_mscarlet_subslices.py -> subslice_definitions.mat
     2. stitch_subslices.py -> HYB_subslice_stitched_tif/
     3. downsample_subslices_cellmask.py -> downsampled cellmasks
-    4. generate_mscarlet_cellmask_subslice.py -> mScarlet overlays
+    4. generate_marker_cellmask_subslice.py -> mScarlet overlays
     5. interactive_mscarlet_threshold_cellmask_subslice.py -> batch figures (Agg,
        not interactive despite the name)
     6. generate_alignment_tif.py -> binary marker-only tifs the graph builder fits on

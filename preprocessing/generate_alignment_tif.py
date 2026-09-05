@@ -228,7 +228,7 @@ def main():
             print(f"  WARNING: no cellmask in {f.name}, skipped")
             continue
 
-        # Round THEN subtract 1, matching generate_mscarlet_cellmask_subslice.py,
+        # Round THEN subtract 1, matching generate_marker_cellmask_subslice.py,
         # check_rolony_cutoff.py and export_subslice_cells.py exactly.
         idx = np.where(in_slice)[0]
         x_img = np.rint((pos[idx, 0] * 2 - (min_x_offset - 1)) / DOWNSAMPLE_XY).astype(np.int64) - 1

@@ -109,6 +109,11 @@ HYB_SLICE_STITCHED_DIR = os.path.join(OUTPUT_ROOT, "HYB_slice_stitched_tif")
 HYB_SLICE_DOWNSAMPLED_DIR = os.path.join(
     OUTPUT_ROOT, "HYB_slice_stitched_tif_downsampled_micronwise")
 MSCARLET_CELLMASK_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_cellmask_subslice")
+# The GCaMP sibling. Same script writes both — generate_marker_cellmask_subslice.py
+# picks the root off --marker — and both hold one rolony_ge{cutoff}_sat{cap}
+# subfolder per run. Only the mScarlet root feeds a relative SUBSLICE_DIR lookup
+# (analysis_paths._preprocessing_roots); these overlays are display products.
+GCAMP_CELLMASK_DIR = os.path.join(OUTPUT_ROOT, "GCaMP_cellmask_subslice")
 # Binary marker-only images the graph aligns on. One subdirectory per gate
 # combination, named by generate_alignment_tif.py.
 SUBSLICE_ALIGN_DIR = os.path.join(OUTPUT_ROOT, "subslice_align")
@@ -268,6 +273,7 @@ def ensure_output_dirs():
         HYB_STITCHED_DIR,
         HYB_DOWNSAMPLED_DIR,
         MSCARLET_CELLMASK_DIR,
+        GCAMP_CELLMASK_DIR,
         MSCARLET_INTERACTIVE_DIR,
         MSCARLET_LABELLED_DIR,
     ]

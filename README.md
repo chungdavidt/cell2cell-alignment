@@ -164,7 +164,7 @@ python run_pipeline.py --test         # slice 22 only, quick sanity check
 python run_pipeline.py --start-from 3 # resume from step N
 ```
 
-The outputs land under `OUTPUT_ROOT`. Point `SUBSLICE_DIR` in `local_config.py` at the resulting `mScarlet_cellmask_subslice/threshold_*/` folder.
+The outputs land under `OUTPUT_ROOT`. Point `SUBSLICE_DIR` in `local_config.py` at the resulting `subslice_align/qc*_ge*/` folder.
 
 ---
 

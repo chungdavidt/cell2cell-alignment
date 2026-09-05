@@ -133,6 +133,7 @@ def create_comparison_figure(
     cells_mapped: int,
     output_dir: Union[str, Path],
     base_name: str,
+    marker_label: str = "mScarlet",
 ) -> str:
     """
     Generate 3-panel comparison figure.
@@ -145,6 +146,8 @@ def create_comparison_figure(
         cells_mapped: Number of cells successfully mapped
         output_dir: Output directory
         base_name: Base filename for output
+        marker_label: Which marker the panels show. Defaults to mScarlet so the
+            callers that only ever draw it need no argument.
 
     Returns:
         Path to saved figure
@@ -162,14 +165,14 @@ def create_comparison_figure(
     # Panel 2: Overlay
     axes[1].imshow(np.clip(overlay_rgb, 0, 1))
     if cells_mapped > 0:
-        axes[1].set_title(f'mScarlet+ Overlay ({cells_mapped} cells)')
+        axes[1].set_title(f'{marker_label}+ Overlay ({cells_mapped} cells)')
     else:
         axes[1].set_title('Cell Mask Only (No cells above threshold)')
     axes[1].axis('off')
 
-    # Panel 3: mScarlet only
+    # Panel 3: marker only
     axes[2].imshow(np.clip(mscarlet_only, 0, 1))
-    axes[2].set_title('mScarlet Only')
+    axes[2].set_title(f'{marker_label} Only')
     axes[2].axis('off')
 
     plt.tight_layout()
@@ -190,6 +193,7 @@ def create_histogram(
     criterion_label: str = None,
     filename: str = None,
     note: str = None,
+    marker_label: str = "mScarlet",
 ) -> str:
     """
     Create cell count histogram per subslice.
@@ -206,6 +210,8 @@ def create_histogram(
         filename: Overrides the default output filename, for the same reason.
         note: One line under the title, for what the bars cannot show -- a
             caller dropping sections says so here.
+        marker_label: Which marker the bars count. Defaults to mScarlet so the
+            callers that only ever draw it need no argument.
 
     Returns:
         Path to saved figure
@@ -232,7 +238,7 @@ def create_histogram(
 
     ax.set_xlabel('Slice ID', fontsize=14, fontweight='bold')
     ax.set_ylabel('Number of Cells Displayed', fontsize=14, fontweight='bold')
-    ax.set_title(f'mScarlet+ Cell Counts per Subslice ({criterion_label})',
+    ax.set_title(f'{marker_label}+ Cell Counts per Subslice ({criterion_label})',
                  fontsize=16, fontweight='bold')
     if note:
         ax.text(0.5, 1.005, note, transform=ax.transAxes, ha='center',
@@ -247,7 +253,7 @@ def create_histogram(
         Rectangle((0, 0), 1, 1, facecolor='#CC3333', edgecolor='black',
                   label=f'Cells kept ({criterion_label})'),
         Line2D([0], [0], linestyle='--', color='black',
-               label='Total mScarlet+ cells'),
+               label=f'Total {marker_label}+ cells'),
     ]
     ax.legend(handles=legend_elements, loc='best', fontsize=12)
 

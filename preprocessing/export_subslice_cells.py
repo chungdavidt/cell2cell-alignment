@@ -214,7 +214,7 @@ def main():
         areas = np.bincount(labels.ravel())          # label -> pixel count, one pass
 
         # Full-res position -> canvas (x2) -> downsampled image, 0-indexed.
-        # Same formula as generate_mscarlet_cellmask_subslice.py:297-305 and
+        # Same formula as generate_marker_cellmask_subslice.py's paint loop and
         # check_rolony_cutoff.py; all three must agree or cells land off their masks.
         #
         # Kept twice on purpose. The rounded form is an ARRAY INDEX -- it exists

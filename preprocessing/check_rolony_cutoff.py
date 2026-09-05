@@ -232,7 +232,7 @@ def load_subslices(input_dir, filt_neurons, mscarlet, pass_qc, slice_selection):
             continue
 
         # Full-res position -> canvas (x2) -> downsampled image, 0-indexed.
-        # Must match generate_mscarlet_cellmask_subslice.py exactly.
+        # Must match generate_marker_cellmask_subslice.py exactly.
         idx = np.where(keep)[0]
         x_img = np.rint((pos[idx, 0] * 2 - (min_x_offset - 1)) / DOWNSAMPLE_XY).astype(np.int64) - 1
         y_img = np.rint((pos[idx, 1] * 2 - (min_y_offset - 1)) / DOWNSAMPLE_XY).astype(np.int64) - 1

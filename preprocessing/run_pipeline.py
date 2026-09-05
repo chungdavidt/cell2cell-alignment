@@ -6,7 +6,7 @@ Runs the complete mScarlet preprocessing pipeline:
 1. identify_mscarlet_subslices.py - Find FOV clusters with mScarlet+ cells
 2. stitch_subslices.py - Stitch FOVs into composite images
 3. downsample_subslices_cellmask.py - Downsample to match in-vivo resolution
-4. generate_mscarlet_cellmask_subslice.py - Create mScarlet overlays
+4. generate_marker_cellmask_subslice.py - Create mScarlet overlays (its default marker)
 5. interactive_mscarlet_threshold_cellmask_subslice.py - Generate figures
 6. generate_alignment_tif.py - Binary marker-only images the graph builder aligns on
 7. export_subslice_cells.py - Cell <-> cellmask-label link table, the join back to genes
@@ -55,7 +55,11 @@ STEPS = [
         # runner's --min-rolonies is the ALIGN tifs' cutoff, a registration
         # parameter, while that one is a display choice. Two questions, two
         # numbers.
-        'script': 'generate_mscarlet_cellmask_subslice.py',
+        #
+        # No --marker either: the runner is the mScarlet chain, and that script
+        # defaults to mScarlet. A GCaMP render is a display product run by hand
+        # (--marker gcamp), into its own output root.
+        'script': 'generate_marker_cellmask_subslice.py',
         'description': 'Create mScarlet cell overlays on cellmask',
     },
     {

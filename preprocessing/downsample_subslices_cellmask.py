@@ -342,7 +342,7 @@ def downsample_subslices_cellmask(target_slice: int = None, cellmask_only: bool 
           f"({EXVIVO_UM_PER_PX:.4f} -> {TARGET_XY_UM_PER_PX:.4f} um/px)")
     print("  Method: Nearest-neighbor (preserves cell IDs)")
     print("\nNext step:")
-    print("  Run generate_mscarlet_cellmask_subslice.py to create overlays")
+    print("  Run generate_marker_cellmask_subslice.py to create overlays")
     print("  Or run interactive_mscarlet_threshold_cellmask_subslice.py for interactive viewer")
     print()
 
