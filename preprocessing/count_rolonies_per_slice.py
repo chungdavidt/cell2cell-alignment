@@ -55,16 +55,18 @@ for _p in (str(_ROOT), str(_HERE)):
 
 import numpy as np
 
-# Mirrors preprocessing_config; kept local so a bare filt_neurons.mat path works
-# without local_config. Marker slots are index-only -- the panel's gene names for
-# these columns are stale.
-MARKERS = {
-    "mscarlet": ("mScarlet", 113),
-    "gcamp": ("GCaMP", 111),
-}
+# marker_profiles is stdlib-only and at the project root, so importing it keeps
+# a bare filt_neurons.mat path working without local_config. Marker slots are
+# index-only -- the panel's gene names for these columns are stale.
+from marker_profiles import MARKERS, marker_names
+
 DEFAULT_CUTOFFS = (1, 2, 3, 5)
-# Cells below this carry no rolonies into the census. Matches step 4's
-# ROLONY_FLOOR. BY95 number; re-pick per brain.
+# Cells below this carry no rolonies into the census: it gates the `rolonies`,
+# `max`, `median_pos`, `mean_pos` columns and --cells-csv, and lands in the CSV
+# name as _ge{N}. Deliberately ONE number for every marker rather than each
+# marker's own draw cutoff from marker_profiles -- this is the census's own gate,
+# and per-marker defaults would silently rename the CSV and change its columns
+# between markers. BY95 number; re-pick per brain, or pass --min-rolonies.
 ROLONY_FLOOR = 5
 
 
@@ -205,7 +207,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("path", nargs="?", help="DATA_ROOT or filt_neurons.mat "
                                             "(default: local_config.DATA_ROOT)")
-    ap.add_argument("--marker", choices=sorted(MARKERS), default="mscarlet")
+    ap.add_argument("--marker", choices=marker_names(), default="mscarlet")
     ap.add_argument("--marker-col", type=int, help="column index, overrides --marker")
     ap.add_argument("--min-reads", type=int, help="default: QC_MIN_READS")
     ap.add_argument("--min-genes", type=int, help="default: QC_MIN_GENES")
@@ -245,7 +247,8 @@ def main():
 
         path = local_config.DATA_ROOT
 
-    marker_name, marker_col = MARKERS[args.marker]
+    profile = MARKERS[args.marker]
+    marker_name, marker_col = profile["label"], profile["column"]
     if args.marker_col is not None:
         marker_col = args.marker_col
         marker_name = f"col{marker_col}"

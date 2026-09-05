@@ -5,8 +5,9 @@ Generate Marker Cell Mask Overlays for Subslices.
 Creates marker overlays on CELL MASK background, on the downsampled subslices.
 --marker picks which readout column is painted: mScarlet (113) or GCaMP (111),
 index-only, since the panel labels these slots with stale gene names. Each marker
-carries its own colour ramp, draw cutoff, saturation cap and output root in
-MARKERS below; nothing else in the run differs between them.
+carries its own colour ramp, draw cutoff, saturation cap and output root --
+the first three in marker_profiles.py at the project root, the last in
+MARKER_OUTPUT_DIRS below; nothing else in the run differs between them.
 
 Ported from the lab's generate_mscarlet_cellmask_subslice_anisotropic.m -- their filename, from the era of the
 two-factor resample. This port is ISOTROPIC: one DOWNSAMPLE_XY covers both
@@ -120,6 +121,7 @@ from preprocessing_config import (
     DOWNSAMPLE_XY,
     CELLMASK_BRIGHTNESS,
 )
+from marker_profiles import get_marker, marker_names
 from utilities.mat_io import load_filt_neurons, load_mat, load_cellmask_h5, get_expression_column, resolve_marker_column
 from utilities.image_io import imwrite_tiff
 from utilities.visualization import create_comparison_figure, create_histogram
@@ -131,82 +133,13 @@ from utilities.visualization import create_comparison_figure, create_histogram
 ROLONY_RAMP_MIN = 1     # count that maps to the darkest colour; never the cutoff
 CELLMASK_SCALE = 0.5    # scales CELLMASK_BRIGHTNESS -> 0.125, uint8 32
 
-# Per-marker settings. The column indices are index-only by design: this panel
-# labels its readout slots with stale gene names, so gene_name stays blank and
-# resolve_marker_column falls through to the index (see MSCARLET_GENE_NAME in
-# preprocessing_config.py).
-#
-# floor and ceiling are per marker AND per brain, the same rule as
-# QC_MIN_READS / QC_MIN_GENES. A blank one raises rather than borrowing the
-# other marker's: GCaMP counts distribute differently from mScarlet's, so
-# mScarlet's 5 / 15 would paint them on a domain nobody measured. Measure with
-#     python preprocessing/count_rolonies_per_slice.py --marker gcamp --distribution
-# and write the numbers in below.
-#
-# Ramps are hue ramps, three anchors each, darkest anchor bright enough to clear
-# the grey mask field at uint8 32. mScarlet's are check_rolony_cutoff.py's.
-MARKERS = {
-    "mscarlet": {
-        "label": "mScarlet",
-        "column": MSCARLET_COLUMN_INDEX,
-        "gene_name": MSCARLET_GENE_NAME,
-        "out_dir": MSCARLET_CELLMASK_DIR,
-        # dark red -> orange -> yellow; the floor at uint8 (115, 0, 0)
-        "ramp": [(0.45, 0.0, 0.0), (1.0, 0.35, 0.0), (1.0, 0.95, 0.25)],
-        "floor": 5,       # BY95
-        "ceiling": 15,    # BY95
-    },
-    "gcamp": {
-        "label": "GCaMP",
-        "column": GCAMP_COLUMN_INDEX,
-        "gene_name": "",
-        "out_dir": GCAMP_CELLMASK_DIR,
-        # dark green -> green -> pale yellow-green; the floor at uint8 (0, 107, 26)
-        "ramp": [(0.0, 0.42, 0.10), (0.15, 0.85, 0.20), (0.80, 1.0, 0.40)],
-        # BY95, measured 2026-09-05 with the census above. Of 88,782 QC-passing
-        # GCaMP+ cells: 39,594 at >=2, 17,298 at >=3, 4,521 at >=5, 375 above
-        # 10, max 57. 60% of QC-passing cells carry >=1 rolony, so 1 and 2 are
-        # not worth painting; 3 keeps the 12,777 cells that a cutoff of 5 drops.
-        # The cap is 10 because the tail past it is 0.42% of the population --
-        # at mScarlet's 15 the drawn cells bunch in the bottom third of the ramp.
-        "floor": 3,
-        "ceiling": 10,
-    },
+# Where each marker's overlays land. Paths need OUTPUT_ROOT, so they stay in
+# preprocessing_config while the rest of the marker's facts -- column, ramp,
+# floor, ceiling -- live in the stdlib-only marker_profiles at the project root.
+MARKER_OUTPUT_DIRS = {
+    "mscarlet": MSCARLET_CELLMASK_DIR,
+    "gcamp": GCAMP_CELLMASK_DIR,
 }
-
-
-def get_marker(name, min_rolonies=None):
-    """The MARKERS entry for `name`, with its per-brain numbers checked.
-
-    An unset ceiling is a hard error, never a fallback to the other marker's:
-    the ceiling is the one bound that sets count -> colour, so a borrowed one
-    silently renders a domain nobody measured. An unset floor is an error too
-    unless --min-rolonies supplied it on this run.
-    """
-    try:
-        marker = dict(MARKERS[name])
-    except KeyError:
-        raise ValueError(
-            f"--marker {name}: not one of {sorted(MARKERS)}") from None
-
-    if marker["ceiling"] is None:
-        raise ValueError(
-            f"{marker['label']} has no ramp ceiling set in MARKERS "
-            f"({__file__}).\n"
-            f"Measure it for this brain, then write it in:\n"
-            f"    python preprocessing/count_rolonies_per_slice.py "
-            f"--marker {name} --distribution")
-
-    if min_rolonies is None and marker["floor"] is None:
-        raise ValueError(
-            f"{marker['label']} has no draw cutoff set in MARKERS "
-            f"({__file__}).\n"
-            f"Pass --min-rolonies N for this run, or measure it once and write "
-            f"it in:\n"
-            f"    python preprocessing/count_rolonies_per_slice.py "
-            f"--marker {name} --distribution")
-
-    return marker
 
 
 def make_ramp(colors):
@@ -310,10 +243,11 @@ def generate_marker_cellmask_subslice(
         exclude_slices: Section numbers to drop from the whole run
         min_rolonies: Draw cutoff for this run (default: the marker's floor).
             Gates which cells are drawn; never the ramp.
-        marker: Which MARKERS entry to paint -- 'mscarlet' or 'gcamp'. Decides
+        marker: Which marker_profiles entry to paint -- 'mscarlet' or 'gcamp'. Decides
             the column, the ramp, the cutoff/cap defaults and the output root.
     """
     settings = get_marker(marker, min_rolonies)
+    settings["out_dir"] = MARKER_OUTPUT_DIRS[marker]
     marker_label = settings["label"]
     ceiling = settings["ceiling"]
     cmap = make_ramp(settings["ramp"])
@@ -665,7 +599,7 @@ def main():
     )
     parser.add_argument(
         '--marker', '-m',
-        choices=sorted(MARKERS),
+        choices=marker_names(),
         default='mscarlet',
         help='Which readout column to paint (default: mscarlet). Selects the '
              'colour ramp, the cutoff/cap defaults and the output root, so the '
@@ -687,7 +621,7 @@ def main():
         type=int,
         default=None,
         help='Draw cutoff: below this a cell is not drawn (default: the '
-             "marker's floor in MARKERS). Names the output folder. Does not "
+             "marker's floor in marker_profiles). Names the output folder. Does not "
              'move the colour ramp -- a survivor keeps its colour at every '
              'cutoff.'
     )

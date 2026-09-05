@@ -5,6 +5,12 @@ Bar chart of the per-slice rolony census written by count_rolonies_per_slice.py.
 Reads that script's per-slice CSV -- one row per slice -- and draws one bar per
 slice. Default column is `rolonies`, the total marker rolonies in the slice.
 
+Which marker the bars describe is read off the CSV filename, which carries it
+(`rolonies_per_slice_{marker}_qc{r}_{g}.csv`), so the axis and title name it
+without anything being passed in. `--marker gcamp` picks that CSV without
+naming the path; the bare default is name-sorted, so it keeps landing on
+mScarlet's.
+
 The CSV is a per-slice summary, so this is a bar per slice, not a distribution.
 For the distribution of rolony counts ACROSS CELLS, re-run
 count_rolonies_per_slice.py with --cells-csv and histogram its `rolonies` column.
@@ -18,6 +24,7 @@ claims an exclusion that did not happen.
 Usage:
     python preprocessing/plot_rolonies_per_slice.py
     python preprocessing/plot_rolonies_per_slice.py <path to the per-slice CSV>
+    python preprocessing/plot_rolonies_per_slice.py --marker gcamp
     python preprocessing/plot_rolonies_per_slice.py --column marker_cells
     python preprocessing/plot_rolonies_per_slice.py --exclude-slices 58
     python preprocessing/plot_rolonies_per_slice.py --out figure.png
@@ -41,18 +48,39 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from marker_profiles import MARKERS, marker_names
+
 BAR_COLOR = "#CC3333"      # same red the other per-slice figures use
 
+# {} is the marker's label, filled from the CSV filename -- see marker_from_csv.
+# The CSV columns are marker-neutral (`marker_cells`, `rolonies`), so the marker
+# is only ever a label here; nothing about the numbers changes with it.
 LABELS = {
     "cells": "Cells",
     "qc": "QC-passing cells",
-    "marker_cells": "mScarlet+ cells",
-    "rolonies": "mScarlet rolonies",
+    "marker_cells": "{}+ cells",
+    "rolonies": "{} rolonies",
     "max": "Max rolonies in one cell",
-    "median_pos": "Median rolonies per mScarlet+ cell",
-    "mean_pos": "Mean rolonies per mScarlet+ cell",
+    "median_pos": "Median rolonies per {}+ cell",
+    "mean_pos": "Mean rolonies per {}+ cell",
     "rolonies_per_qc_cell": "Mean rolonies per QC-passing cell",
 }
+
+
+def marker_from_csv(path):
+    """The marker label count_rolonies_per_slice.py wrote into the filename.
+
+    It names the file `rolonies_per_slice_{marker}_qc{r}_{g}[_ge{n}].csv`, so the
+    label is already on disk and nothing has to be re-derived or passed in. An
+    unrecognised name falls back to "marker": a mislabelled axis is worth less
+    than a crash on someone's hand-named CSV.
+    """
+    parts = path.stem.split("_")
+    if len(parts) >= 4 and parts[:3] == ["rolonies", "per", "slice"]:
+        profile = MARKERS.get(parts[3])
+        if profile is not None:
+            return profile["label"]
+    return "marker"
 
 # Not in the CSV; computed from columns that are. `mean_pos` already divides by
 # the marker+ cells, so the open question is only the other denominator -- every
@@ -63,8 +91,13 @@ DERIVED = {
 }
 
 
-def default_csv():
-    """The per-slice CSV count_rolonies_per_slice.py writes, if there is one."""
+def default_csv(marker=None):
+    """The per-slice CSV count_rolonies_per_slice.py writes, if there is one.
+
+    With two markers on disk the bare default is name-sorted, not newest --
+    "mscarlet" sorts after "gcamp", so it keeps picking the mScarlet CSV.
+    `marker` narrows the glob instead of making the caller type the path.
+    """
     try:
         from analysis_paths import analysis_subdir
 
@@ -73,12 +106,14 @@ def default_csv():
         d = None
     if d is None:
         d = Path.cwd()
-    found = sorted(Path(d).glob("rolonies_per_slice_*_qc*.csv"))
+    pattern = f"rolonies_per_slice_{marker or '*'}_qc*.csv"
+    found = sorted(Path(d).glob(pattern))
     found = [f for f in found if not f.name.endswith("_cells.csv")]
     if not found:
         raise FileNotFoundError(
-            f"No per-slice rolony CSV in {d}.\n"
+            f"No per-slice rolony CSV matching {pattern} in {d}.\n"
             f"Run: python preprocessing/count_rolonies_per_slice.py"
+            + (f" --marker {marker}" if marker else "")
         )
     return found[-1]
 
@@ -88,6 +123,9 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csv_path", nargs="?", help="per-slice CSV (default: the newest "
                                                 "one beside the other preprocessing output)")
+    ap.add_argument("--marker", "-m", choices=marker_names(), default=None,
+                    help="pick that marker's CSV instead of naming the path; "
+                         "ignored when csv_path is given")
     ap.add_argument("--column", "-c", default="rolonies", help="column to plot (default: rolonies)")
     ap.add_argument("--exclude-slices", type=int, nargs="+", metavar="N",
                     help="drop these sections' rows before plotting; "
@@ -98,7 +136,8 @@ def main():
     ap.add_argument("--dpi", type=int, default=150)
     args = ap.parse_args()
 
-    path = Path(args.csv_path) if args.csv_path else default_csv()
+    path = Path(args.csv_path) if args.csv_path else default_csv(args.marker)
+    label_of = lambda col: LABELS.get(col, col).format(marker_from_csv(path))
     with open(path, newline="") as fh:
         rows = list(csv.DictReader(fh))
     if not rows:
@@ -130,8 +169,8 @@ def main():
     ax.set_xticks(range(len(slices)))
     ax.set_xticklabels([str(s) for s in slices], fontsize=7, rotation=90)
     ax.set_xlabel("Slice", fontsize=12)
-    ax.set_ylabel(LABELS.get(args.column, args.column), fontsize=12)
-    ax.set_title(f"{LABELS.get(args.column, args.column)} per slice  ({path.name})",
+    ax.set_ylabel(label_of(args.column), fontsize=12)
+    ax.set_title(f"{label_of(args.column)} per slice  ({path.name})",
                  fontsize=13)
     if not args.no_labels:
         # Rotated and small: 62 slices side by side leave no room for horizontal

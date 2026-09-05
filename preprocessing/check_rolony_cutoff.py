@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-Sniff-test viewer for picking an mScarlet rolony cutoff. Writes PNG figures only.
+Sniff-test viewer for picking a marker's rolony cutoff. Writes PNG figures only.
 
-Each subslice appears twice, side by side: the raw downsampled mScarlet TIF, and
+Each subslice appears twice, side by side: the raw downsampled marker TIF, and
 the same subslice's cell masks with kept cells painted by rolony count. Raising
-`--min-rolonies` removes cells; where the remaining red stops tracking real
+`--min-rolonies` removes cells; where the remaining paint stops tracking real
 signal in the raw panel is the cutoff.
+
+`--marker {mscarlet,gcamp}` picks the readout column (113 / 111, index-only),
+the ramp anchors and the output folder, all from marker_profiles.py at the
+project root -- the same table generate_marker_cellmask_subslice.py paints from.
+Each marker writes its own `<label>_rolony_cutoff/` tree, so the two never
+collide.
 
 Two things this does differently from
 `interactive_mscarlet_threshold_cellmask_subslice.py` (step 5):
@@ -20,6 +26,11 @@ A 12-rolony cell is the same color in every image; raising the cutoff deletes
 cells but never re-shades the survivors, so runs at different cutoffs are
 directly comparable. Step 5's `count / max_expr * BOOST` renders a 1-rolony cell
 darker than the grey mask on BY95, where the median mScarlet+ cell has 1 count.
+
+The two tools' DOMAINS stay independent on purpose: `--saturate-at` defaults to
+25 here for every marker, while step 4's cap is the marker's `ceiling` (15
+mScarlet, 10 GCaMP). Pass `--saturate-at 15` (or 10) for colours that match that
+render exactly.
 
 Gates default to `preprocessing_config` -- QC_MIN_READS / QC_MIN_GENES (the
 lab's cell-typing filter, `reads >= 20 AND genes >= 5`; BY95: 147,185 cells,
@@ -36,6 +47,7 @@ Usage:
     python preprocessing/check_rolony_cutoff.py --min-rolonies 3
     python preprocessing/check_rolony_cutoff.py --first 3 --min-rolonies 1
     python preprocessing/check_rolony_cutoff.py --slices 22 24 --saturate-at 25
+    python preprocessing/check_rolony_cutoff.py --marker gcamp --saturate-at 10
 """
 
 import argparse
@@ -61,8 +73,6 @@ from preprocessing_config import (
     FILT_NEURONS_PATH,
     HYB_DOWNSAMPLED_DIR,
     OUTPUT_ROOT,
-    MSCARLET_COLUMN_INDEX,
-    MSCARLET_GENE_NAME,
     DOWNSAMPLE_XY,
     QC_MIN_READS,
     QC_MIN_GENES,
@@ -75,18 +85,22 @@ from utilities.mat_io import (
     get_expression_column,
     resolve_marker_column,
 )
+from marker_profiles import get_marker, marker_names
 from utilities.image_io import imread_tiff
 from utilities.visualization import create_histogram
 
 CELLMASK_BRIGHTNESS = 0.3          # grey background, before --cellmask scales it
 SUBSLICES_PER_FIGURE = 3           # one row each: raw | painted
-RAMP_COLORS = [(0.45, 0.0, 0.0), (1.0, 0.35, 0.0), (1.0, 0.95, 0.25)]
 RAW_PERCENTILES = (1.0, 99.5)      # per-subslice contrast stretch for the raw panel
 MAX_DISPLAY_PX = 2000              # long side; see block_max()
 
 
-def build_ramp():
-    return LinearSegmentedColormap.from_list("rolony", RAMP_COLORS)
+def build_ramp(colors):
+    """The marker's anchor colours as one colormap. They come from
+    marker_profiles, the same anchors generate_marker_cellmask_subslice.py
+    paints with, so a count renders identically in both tools whenever
+    --saturate-at equals that marker's ceiling."""
+    return LinearSegmentedColormap.from_list("rolony", colors)
 
 
 def ramp_rgb(counts, saturate_at, cmap):
@@ -183,8 +197,9 @@ def stretch(raw, k=1):
     return np.clip((raw.astype(np.float32) - lo) / max(float(hi - lo), 1e-9), 0.0, 1.0)
 
 
-def load_subslices(input_dir, filt_neurons, mscarlet, pass_qc, slice_selection):
-    """One entry per subslice with a QC-passing mScarlet+ cell, in slice order."""
+def load_subslices(input_dir, filt_neurons, counts, pass_qc, slice_selection,
+                   marker_label, raw_channel):
+    """One entry per subslice with a QC-passing marker+ cell, in slice order."""
     files = sorted(
         input_dir.glob("slice*_subslice_CELLMASK.h5"),
         key=lambda f: int(re.search(r"slice(\d+)_subslice", f.name).group(1)),
@@ -202,7 +217,7 @@ def load_subslices(input_dir, filt_neurons, mscarlet, pass_qc, slice_selection):
 
     slice_ids = np.asarray(filt_neurons["slice"]).ravel()
     pos = np.asarray(filt_neurons["pos"])
-    marker_positive = pass_qc & (mscarlet > 0)
+    marker_positive = pass_qc & (counts > 0)
 
     out = []
     for f in files:
@@ -212,7 +227,7 @@ def load_subslices(input_dir, filt_neurons, mscarlet, pass_qc, slice_selection):
 
         keep = (slice_ids == slice_id) & marker_positive
         if not keep.any():
-            print(f"  slice {slice_id}: no QC-passing mScarlet+ cells, skipped")
+            print(f"  slice {slice_id}: no QC-passing {marker_label}+ cells, skipped")
             continue
 
         if use_h5:
@@ -237,24 +252,25 @@ def load_subslices(input_dir, filt_neurons, mscarlet, pass_qc, slice_selection):
         x_img = np.rint((pos[idx, 0] * 2 - (min_x_offset - 1)) / DOWNSAMPLE_XY).astype(np.int64) - 1
         y_img = np.rint((pos[idx, 1] * 2 - (min_y_offset - 1)) / DOWNSAMPLE_XY).astype(np.int64) - 1
 
-        raw_path = f.parent / f"{f.stem.replace('_CELLMASK', '')}_MSCARLET.tif"
+        raw_path = f.parent / f"{f.stem.replace('_CELLMASK', '')}_{raw_channel}.tif"
         out.append({
             "slice_id": slice_id,
             "cellmask": cellmask,
             "x_img": x_img,
             "y_img": y_img,
-            "counts": mscarlet[idx],
+            "counts": counts[idx],
             "raw_path": raw_path if raw_path.exists() else None,
         })
-        print(f"  slice {slice_id}: {idx.size} QC-passing mScarlet+ cells"
-              f"{'' if raw_path.exists() else '   (no MSCARLET.tif)'}")
+        print(f"  slice {slice_id}: {idx.size} QC-passing {marker_label}+ cells"
+              f"{'' if raw_path.exists() else f'   (no {raw_channel}.tif)'}")
 
     if not out:
         raise ValueError("No subslices to draw.")
     return out
 
 
-def rolony_distribution(counts, min_rolonies, saturate_at, cmap, out_dir):
+def rolony_distribution(counts, min_rolonies, saturate_at, cmap, out_dir,
+                        marker_label):
     """Cells per rolony count across the subslices drawn, with the cutoff marked.
 
     check_qc_metrics.py prints this over the whole brain; here it is restricted
@@ -272,14 +288,14 @@ def rolony_distribution(counts, min_rolonies, saturate_at, cmap, out_dir):
            edgecolor="black", linewidth=0.4)
     ax.set_ylabel("cells with exactly n rolonies", fontsize=11)
     ax.set_yscale("log")
-    ax.set_title("mScarlet rolonies per cell, subslices drawn "
-                 f"({counts.size} QC-passing mScarlet+ cells)",
+    ax.set_title(f"{marker_label} rolonies per cell, subslices drawn "
+                 f"({counts.size} QC-passing {marker_label}+ cells)",
                  fontsize=13, fontweight="bold")
 
     ax2.plot(values, 100 * at_or_above / counts.size, color="#333333", marker="o",
              markersize=3)
     ax2.set_ylabel("% of marker+ cells kept\nat cutoff >= n", fontsize=11)
-    ax2.set_xlabel("mScarlet rolonies per cell", fontsize=12, fontweight="bold")
+    ax2.set_xlabel(f"{marker_label} rolonies per cell", fontsize=12, fontweight="bold")
     ax2.set_ylim(0, 105)
 
     kept = 100 * float((counts >= min_rolonies).sum()) / counts.size
@@ -300,7 +316,7 @@ def rolony_distribution(counts, min_rolonies, saturate_at, cmap, out_dir):
     return path
 
 
-def draw_legend(ax, saturate_at, cmap):
+def draw_legend(ax, saturate_at, cmap, marker_label):
     strip = ramp_rgb(np.arange(1, saturate_at + 1), saturate_at, cmap)[None, :, :]
     ax.imshow(strip, aspect="auto", extent=[0.5, saturate_at + 0.5, 0, 1],
               interpolation="nearest")
@@ -310,15 +326,19 @@ def draw_legend(ax, saturate_at, cmap):
     ax.set_xticks(ticks)
     ax.set_xticklabels([f"{t}+" if t == saturate_at else str(t) for t in ticks], fontsize=8)
     ax.set_yticks([])
-    ax.set_xlabel("mScarlet rolonies per cell", fontsize=9)
+    ax.set_xlabel(f"{marker_label} rolonies per cell", fontsize=9)
 
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Rolony-cutoff sniff test: raw mScarlet TIF beside painted cell masks",
+        description="Rolony-cutoff sniff test: raw marker TIF beside painted cell masks",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
+    ap.add_argument("--marker", "-m", choices=marker_names(), default="mscarlet",
+                    help="which readout column to draw (default: mscarlet). "
+                         "Selects the column, the ramp and the output folder; "
+                         "--saturate-at is NOT set from it, see --saturate-at")
     ap.add_argument("--min-rolonies", "-n", type=int, default=ALIGN_MIN_ROLONIES,
                     help="cells below this rolony count are not drawn (default: 1)")
     ap.add_argument("--min-reads", type=int, default=QC_MIN_READS,
@@ -326,7 +346,9 @@ def main():
     ap.add_argument("--min-genes", type=int, default=QC_MIN_GENES,
                     help="QC distinct genes floor; the lab's value, per-brain (default: 5)")
     ap.add_argument("--saturate-at", type=int, default=25,
-                    help="rolony count where the ramp caps (default: 25)")
+                    help="rolony count where the ramp caps (default: 25). Set it "
+                         "to the marker's step-4 ceiling -- 15 mScarlet, 10 GCaMP "
+                         "-- for colours that match that render exactly")
     ap.add_argument("--cellmask", "-cm", type=float, default=0.5,
                     help="grey cellmask brightness 0-1 (default: 0.5)")
     ap.add_argument("--slices", "-s", type=int, nargs="+", default=None,
@@ -345,6 +367,12 @@ def main():
     if args.saturate_at < 2:
         ap.error("--saturate-at must be >= 2")
 
+    # --min-rolonies is this run's cutoff, so the profile's own floor is never
+    # needed; passing it keeps get_marker from raising on a marker whose floor
+    # has not been measured, since the ceiling is what it really guards.
+    profile = get_marker(args.marker, args.min_rolonies)
+    marker_label = profile["label"]
+
     input_dir = Path(HYB_DOWNSAMPLED_DIR)
     if not input_dir.exists():
         raise FileNotFoundError(
@@ -353,7 +381,7 @@ def main():
         )
 
     out_dir = Path(args.out) if args.out else (
-        Path(OUTPUT_ROOT) / "mScarlet_rolony_cutoff"
+        Path(OUTPUT_ROOT) / f"{marker_label}_rolony_cutoff"
         / f"qc{args.min_reads}_{args.min_genes}_ge{args.min_rolonies}_sat{args.saturate_at}"
     )
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -361,7 +389,8 @@ def main():
     print("=" * 60)
     print("ROLONY CUTOFF SNIFF TEST")
     print("=" * 60)
-    print(f"cutoff:     >= {args.min_rolonies} mScarlet rolonies")
+    print(f"marker:     {marker_label}, column {profile['column']}")
+    print(f"cutoff:     >= {args.min_rolonies} {marker_label} rolonies")
     print(f"QC:         reads >= {args.min_reads} AND genes >= {args.min_genes}"
           f"  (the lab's filter, not preprocessing_config's)")
     print(f"ramp:       1 .. {args.saturate_at}+, fixed (independent of the cutoff)")
@@ -383,21 +412,23 @@ def main():
     print(f"  cells: {n_cells}")
     print(f"  QC-passing: {int(pass_qc.sum())} ({100 * pass_qc.sum() / n_cells:.1f}%)")
 
-    mscarlet_col = resolve_marker_column(filt_neurons, MSCARLET_GENE_NAME, MSCARLET_COLUMN_INDEX)
-    mscarlet = np.asarray(get_expression_column(expmat, mscarlet_col)).ravel()
-    marker_qc = pass_qc & (mscarlet > 0)
-    print(f"  mScarlet+ and QC-passing: {int(marker_qc.sum())}")
+    marker_col = resolve_marker_column(filt_neurons, profile["gene_name"],
+                                       profile["column"])
+    counts_all = np.asarray(get_expression_column(expmat, marker_col)).ravel()
+    marker_qc = pass_qc & (counts_all > 0)
+    print(f"  {marker_label}+ and QC-passing: {int(marker_qc.sum())}")
     if marker_qc.any():
-        print(f"  their counts: max {mscarlet[marker_qc].max():.0f}, "
-              f"median {np.median(mscarlet[marker_qc]):.0f}, "
-              f"at or above cutoff {int((mscarlet[marker_qc] >= args.min_rolonies).sum())}\n")
+        print(f"  their counts: max {counts_all[marker_qc].max():.0f}, "
+              f"median {np.median(counts_all[marker_qc]):.0f}, "
+              f"at or above cutoff {int((counts_all[marker_qc] >= args.min_rolonies).sum())}\n")
 
-    subslices = load_subslices(input_dir, filt_neurons, mscarlet, pass_qc,
-                               set(args.slices) if args.slices else None)
+    subslices = load_subslices(input_dir, filt_neurons, counts_all, pass_qc,
+                               set(args.slices) if args.slices else None,
+                               marker_label, profile["raw_channel"])
     if args.first is not None:
         subslices = subslices[: args.first]
 
-    cmap = build_ramp()
+    cmap = build_ramp(profile["ramp"])
     n_fig = (len(subslices) + SUBSLICES_PER_FIGURE - 1) // SUBSLICES_PER_FIGURE
     print(f"\nDrawing {len(subslices)} subslices into {n_fig} figures "
           f"({SUBSLICES_PER_FIGURE} per figure)...\n")
@@ -409,7 +440,7 @@ def main():
         fig = plt.figure(figsize=(12, 4.6 * rows + 1.2))
         gs = fig.add_gridspec(rows + 1, 2, height_ratios=[4.6] * rows + [0.45])
         fig.suptitle(
-            f"mScarlet >= {args.min_rolonies} rolonies  |  QC reads>={args.min_reads} "
+            f"{marker_label} >= {args.min_rolonies} rolonies  |  QC reads>={args.min_reads} "
             f"genes>={args.min_genes}  |  ramp 1-{args.saturate_at}+  |  "
             f"figure {fig_i + 1}/{n_fig}",
             fontsize=12,
@@ -433,13 +464,16 @@ def main():
             if data["raw_path"] is not None:
                 ax_raw.imshow(stretch(imread_tiff(data["raw_path"]), k), cmap="gray",
                               vmin=0, vmax=1, interpolation="antialiased")
-                ax_raw.set_title(f"slice {data['slice_id']} - raw mScarlet "
+                ax_raw.set_title(f"slice {data['slice_id']} - raw {marker_label} "
                                  f"(p{RAW_PERCENTILES[0]}-p{RAW_PERCENTILES[1]}, per image)",
                                  fontsize=10)
             else:
-                ax_raw.text(0.5, 0.5, "no MSCARLET.tif\n(step 3 ran --cellmask-only?)",
+                ax_raw.text(0.5, 0.5,
+                            f"no {profile['raw_channel']}.tif\n"
+                            f"(step 3 ran --cellmask-only?)",
                             ha="center", va="center", fontsize=10)
-                ax_raw.set_title(f"slice {data['slice_id']} - raw mScarlet missing", fontsize=10)
+                ax_raw.set_title(f"slice {data['slice_id']} - raw {marker_label} missing",
+                                 fontsize=10)
             ax_raw.axis("off")
 
             ax_paint = fig.add_subplot(gs[row, 1])
@@ -457,7 +491,8 @@ def main():
             print(f"  slice {data['slice_id']}: {n_filled}/{n_marker} filled, "
                   f"{n_below} below cutoff, {n_unmapped} unmapped{extra}")
 
-        draw_legend(fig.add_subplot(gs[rows, :]), args.saturate_at, cmap)
+        draw_legend(fig.add_subplot(gs[rows, :]), args.saturate_at, cmap,
+                    marker_label)
         fig.tight_layout(rect=[0, 0, 1, 0.97])
         path = out_dir / f"figure_{fig_i + 1}_of_{n_fig}.png"
         fig.savefig(path, dpi=args.dpi)
@@ -479,7 +514,7 @@ def main():
     pct = lambda v: 100 * v / max(tot_marker, 1)
 
     print(f"\nAt cutoff >= {args.min_rolonies} rolonies, of {tot_marker} QC-passing "
-          f"mScarlet+ cells in these subslices:")
+          f"{marker_label}+ cells in these subslices:")
     print(f"  filled       {tot_filled:>8}  {pct(tot_filled):5.1f}%")
     print(f"  NOT filled   {tot_below + tot_unmapped:>8}  "
           f"{pct(tot_below + tot_unmapped):5.1f}%")
@@ -492,10 +527,11 @@ def main():
         float(args.min_rolonies), out_dir,
         criterion_label=f">= {args.min_rolonies} rolonies",
         filename=f"cell_count_histogram_ge{args.min_rolonies}_rolonies.png",
+        marker_label=marker_label,
     )
     dist = rolony_distribution(
         np.concatenate([d["counts"] for d in subslices]),
-        args.min_rolonies, args.saturate_at, cmap, out_dir)
+        args.min_rolonies, args.saturate_at, cmap, out_dir, marker_label)
 
     print("\n  Unmapped is a cellmask/centroid-mapping check, not a cutoff result -")
     print("  it is identical at every --min-rolonies. On background: cellmask holes,")
