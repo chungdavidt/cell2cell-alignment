@@ -1,4 +1,14 @@
 # cellpose env — for 3D cell segmentation and alignment validation (see README)
-# No segmentation code exists yet; this file documents intended env contents.
+# A roster of what the env holds, NOT an install command.
+#
+# The installed env is Python 3.12.10, cellpose 4.1.1, numpy 1.26.4, and
+# torch 2.11.0+cu128 — a CUDA build that comes only from PyTorch's own index.
+# `pip install cellpose[gui]` gives CPU-only torch and loses GPU segmentation
+# with no error. numpy<2 also has no wheels past cp312, so a 3.13/3.14
+# interpreter falls back to a source build and fails for want of MSVC.
+#
+# MOVING THE VENV: repair, don't rebuild — see requirements-castalign.txt.
+# Nothing here is installed editable, so a moved env needs no repair at all;
+# invoke it as `.cellpose-venv\Scripts\python.exe <script>`.
 cellpose[gui]
 numpy<2  # defensive pin: cellpose 3.x install failed with numpy 2 (reason this env exists)

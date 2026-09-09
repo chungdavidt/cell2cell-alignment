@@ -9,8 +9,19 @@
 #   ~/.claude/projects/-home-ai-agent-agent-work-projects-cell-type-code-cell2cell-alignment/memory/project_castalign_v0_3_qapplication_bug.md
 #
 # `pip install -r` on this file resolves the line below from PyPI, which is
-# v0.3+. Install every other line first, then the clone:
-#   pip install -e D:\lab_local\programs\castalign
+# v0.3+, and every other line is unpinned — a fresh resolve jumps napari 0.7.0
+# -> 0.9.1 and drops the cupy/CUDA stack this env carries. Use it as a roster,
+# not an install command.
+#
+# MOVING THE VENV: repair it, do not rebuild it. Built on Python 3.12.10 at
+# C:\Users\David\AppData\Local\Python\pythoncore-3.12-64, which is outside
+# lab_local and did not move; the venv's python.exe finds its own pyvenv.cfg by
+# relative path, so it still runs from a new drive. Only two things break:
+# castalign's editable finder (absolute path to the old programs\castalign) and
+# the Scripts\*.exe launchers (stale shebangs — use `python.exe -m pip`,
+# `python.exe -m jupyter lab`). Verified 2026-09-09 on the C: -> D: move:
+#   .castalign-venv\Scripts\python.exe -m pip install -e <clone> --no-deps
+# --no-deps is what keeps pip from re-resolving napari, numpy and CUDA.
 castalign
 numpy
 scipy
