@@ -20,7 +20,7 @@ SUBSLICE_DIR's cutoff. Nothing in the notebook or the graph builder changes.
 # One root for every derived output — preprocessing/, alignment/, cellpose/,
 # plus orientation.json at its top level. Its folder name is the subject label
 # ("BY95"), which is what names the graph .db.
-ANALYSIS_ROOT = r"C:\Users\David\lab_local\projects\cell_type\analysis\BY95"
+ANALYSIS_ROOT = r"D:\lab_local\projects\cell_type\analysis\BY95"
 
 # Microscope that acquired this subject's data; profiles in scope_profiles.py.
 # Source of truth for every pixel size — the BARseq resample factor, node
@@ -65,11 +65,11 @@ ALIGN_MIN_ROLONIES = 3
 # Raw input (read-only)
 # ---------------------------------------------------------------------
 
-DATA_ROOT = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\allen_transcriptomics\BY95"
+DATA_ROOT = r"D:\lab_local\projects\cell_type\data\050526 BY95\allen_transcriptomics\BY95"
 
 # Per-FOV raw directory (the MAX_Pos*_*_* folders).
 # Blank -> auto-detect; BY95 resolves to <DATA_ROOT>/hyb_raw_files.
-HYB_ROOT = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\allen_transcriptomics\BY95\hyb_raw_files"
+HYB_ROOT = r""
 
 # ---------------------------------------------------------------------
 # Derived output
@@ -134,9 +134,9 @@ SUBSLICE_RAW_CHANNELS = ["MSCARLET"]
 
 
 # Ex-vivo block, 2P volume of the tissue before slicing.
-BLOCK_STACK_PATH_RED = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo red.tif"
-BLOCK_STACK_PATH_GREEN = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo green.tif"
+BLOCK_STACK_PATH_RED = r"D:\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo red.tif"
+BLOCK_STACK_PATH_GREEN = r"D:\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo green.tif"
 
 # In-vivo 2P stack.
-INVIVO_PATH_RED = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\BY95 invivo run two crosstalk removed red.tif"
-INVIVO_PATH_GREEN = r"C:\Users\David\lab_local\projects\cell_type\data\050526 BY95\BY95 invivo run two crosstalk removed green.tif"
+INVIVO_PATH_RED = r"D:\lab_local\projects\cell_type\data\050526 BY95\BY95 invivo run two crosstalk removed red.tif"
+INVIVO_PATH_GREEN = r"D:\lab_local\projects\cell_type\data\050526 BY95\BY95 invivo run two crosstalk removed green.tif"

@@ -20,7 +20,7 @@ diff. Keep credentials out of it.
 # data-tree-adjacent default, so existing subjects need no change.
 # Explicit OUTPUT_ROOT / GRAPH_PATH below still override it.
 # Example:
-#   "C:/Users/David/lab_local/projects/cell_type/analysis/BY95"
+#   "D:/lab_local/projects/cell_type/analysis/BY95"
 # ---------------------------------------------------------------------
 ANALYSIS_ROOT = ""
 
