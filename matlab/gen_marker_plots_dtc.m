@@ -14,7 +14,7 @@
 % cellmask renders paint with.
 %
 % Writes to
-%   <ANALYSIS_ROOT>\preprocessing\gene_plots_dtc\<Marker>\qc<reads>_<genes>_ge<cut>_sat<cap>_<cmap>\
+%   <ANALYSIS_ROOT>\preprocessing\<Marker>_plots_dtc\qc<reads>_<genes>_ge<cut>_sat<cap>_<cmap>\
 % one .fig and one .png per slice, plus median_counts.csv. The parameters are
 % in the folder name, so changing one writes a new folder rather than
 % overwriting the previous run.
@@ -139,7 +139,7 @@ end
 
 param_dir = sprintf('qc%g_%g_ge%g_sat%g_%s', ...
     READS_THRESH, GENES_THRESH, MIN_ROLONIES, RAMP_MAX, lower(COLORMAP));
-out_dir = fullfile(analysis_root, 'preprocessing', 'gene_plots_dtc', MARKER_LABEL, param_dir);
+out_dir = fullfile(analysis_root, 'preprocessing', [MARKER_LABEL '_plots_dtc'], param_dir);
 if ~exist(out_dir, 'dir')
     mkdir(out_dir);
 end
