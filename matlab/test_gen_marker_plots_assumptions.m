@@ -45,11 +45,14 @@ ax = axes('Parent', f); colormap(ax, cmap); clim(ax, [0.5, K + 0.5]);
 cb = colorbar(ax); before = clim(ax);
 cb.Limits = [3.5, K + 0.5]; cb.Ticks = 4:K;
 after = clim(ax);
-ok = isequal(before, after) && isequal(cb.Limits, [3.5, K + 0.5]);
+% Read every property BEFORE close(f) -- the colorbar dies with the figure, and
+% report()'s detail argument is evaluated whether the check passed or not.
+lims_after = cb.Limits;
+ok = isequal(before, after) && isequal(lims_after, [3.5, K + 0.5]);
 close(f);
 n_fail = report(ok, 'setting cb.Limits leaves axes CLim untouched (no re-shading)', ...
     sprintf('CLim %s -> %s, cb.Limits %s', mat2str(before), mat2str(after), ...
-    mat2str(cb.Limits)), n_fail);
+    mat2str(lims_after)), n_fail);
 
 % -- 3. CreateFcn set after creation does not fire, and the .fig opens visible
 f = figure('Visible', 'off');
@@ -88,13 +91,14 @@ ok_empty = true;
 try, scatter(ax, zeros(0,1), zeros(0,1), 5, zeros(0,1), 'filled'); ...
 catch, ok_empty = false; end
 h = scatter(ax, [1;2;3], [1;2;3], 5, [1;2;3], 'filled');
-three_is_cdata = size(h.CData, 2) == 1;
+cdata_size = size(h.CData);          % before close(f), same reason as above
+three_is_cdata = cdata_size(2) == 1;
 close(f);
 n_fail = report(ok_empty, 'scatter accepts empty data', ...
     sprintf('ok = %d', ok_empty), n_fail);
 n_fail = report(three_is_cdata, ...
     'a 3-element COLUMN CData stays colormapped, not read as one RGB triplet', ...
-    sprintf('CData is %s', mat2str(size(h.CData))), n_fail);
+    sprintf('CData is %s', mat2str(cdata_size)), n_fail);
 
 % -- 8. what the definitions file actually looks like in MATLAB -------------
 if isempty(defs_path)
