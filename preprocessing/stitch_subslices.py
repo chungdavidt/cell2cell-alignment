@@ -13,7 +13,7 @@ Usage:
     python stitch_subslices.py --test         # Test mode (first subslice only)
 
 Input:
-    - subslice_definitions.mat (from identify_mscarlet_subslices.py)
+    - subslice_definitions.mat (from identify_marker_subslices.py)
     - hyb/ directory with FOV TIFFs (multi-page: GCAMP, mScarlet, DAPI)
     - hyb_channels/ directory with extracted channels and cellmasks
 
@@ -273,7 +273,7 @@ def stitch_subslices(target_slice: int = None, test_mode: bool = False):
     if not Path(SUBSLICE_DEFINITIONS_FILE).exists():
         raise FileNotFoundError(
             f"Subslice definitions not found!\n"
-            f"Run identify_mscarlet_subslices.py first.\n"
+            f"Run identify_marker_subslices.py first.\n"
             f"Expected: {SUBSLICE_DEFINITIONS_FILE}"
         )
 
@@ -318,20 +318,26 @@ def stitch_subslices(target_slice: int = None, test_mode: bool = False):
         if isinstance(subslice_info, dict):
             slice_id = subslice_info['slice_id']
             fov_list = subslice_info['fov_list']
-            mscarlet_fovs = subslice_info.get('mscarlet_fovs', [])
+            # marker_fovs since the step-1 rename; mscarlet_fovs on any file
+            # written before it. Used for a printed count only.
+            marker_fovs = subslice_info.get(
+                'marker_fovs', subslice_info.get('mscarlet_fovs', []))
             bridge_fovs = subslice_info.get('bridge_fovs', [])
         else:
             slice_id = subslice_info.slice_id
             fov_list = subslice_info.fov_list
-            mscarlet_fovs = subslice_info.mscarlet_fovs if hasattr(subslice_info, 'mscarlet_fovs') else []
+            marker_fovs = getattr(subslice_info, 'marker_fovs',
+                                  getattr(subslice_info, 'mscarlet_fovs', []))
             bridge_fovs = subslice_info.bridge_fovs if hasattr(subslice_info, 'bridge_fovs') else []
 
         # Ensure fov_list is a list of strings (not characters from a single string)
         if isinstance(fov_list, str):
             # Single FOV name - wrap in list
-            fov_list = [fov_list]
+            fov_list = [fov_list.strip()]
         elif isinstance(fov_list, np.ndarray):
-            fov_list = [str(f) for f in fov_list.flatten()]
+            # .strip(): savemat pads a mixed-length name list with spaces to the
+            # longest name, and these names become directory components.
+            fov_list = [str(f).strip() for f in fov_list.flatten()]
         elif not isinstance(fov_list, list):
             # Try to convert, but check if it's iterable of strings vs single string
             fov_list = list(fov_list)
@@ -340,13 +346,13 @@ def stitch_subslices(target_slice: int = None, test_mode: bool = False):
                 # Rejoin - this was a single FOV name
                 fov_list = [''.join(fov_list)]
 
-        # Same handling for mscarlet_fovs and bridge_fovs
-        if isinstance(mscarlet_fovs, str):
-            mscarlet_fovs = [mscarlet_fovs]
-        elif isinstance(mscarlet_fovs, np.ndarray):
-            mscarlet_fovs = [str(f) for f in mscarlet_fovs.flatten()]
-        elif not isinstance(mscarlet_fovs, list):
-            mscarlet_fovs = list(mscarlet_fovs) if mscarlet_fovs else []
+        # Same handling for marker_fovs and bridge_fovs
+        if isinstance(marker_fovs, str):
+            marker_fovs = [marker_fovs]
+        elif isinstance(marker_fovs, np.ndarray):
+            marker_fovs = [str(f).strip() for f in marker_fovs.flatten()]
+        elif not isinstance(marker_fovs, list):
+            marker_fovs = list(marker_fovs) if marker_fovs else []
 
         if isinstance(bridge_fovs, str):
             bridge_fovs = [bridge_fovs]
@@ -359,7 +365,7 @@ def stitch_subslices(target_slice: int = None, test_mode: bool = False):
         print(f"[{s_idx+1}/{len(subslice_info_list)}] Stitching Slice {slice_id} Subslice")
         print("=" * 40)
         print(f"  FOVs to stitch: {len(fov_list)}")
-        print(f"  mScarlet+ FOVs: {len(mscarlet_fovs)}")
+        print(f"  marker+ FOVs: {len(marker_fovs)}")
         print(f"  Bridge FOVs: {len(bridge_fovs)}\n")
 
         # Stitch each channel

@@ -2,7 +2,7 @@
 """
 Stitch a WHOLE slice — every FOV in it — into per-channel TIFs.
 
-The pipeline's stitched images are subslices: `identify_mscarlet_subslices.py`
+The pipeline's stitched images are subslices: `identify_marker_subslices.py`
 filters cells by QC, then by mScarlet expression, keeps the largest 8-connected
 component of the surviving FOVs and adds bridge FOVs across diagonals. That list
 is what the alignment is fitted on. This script exists to see the section itself,

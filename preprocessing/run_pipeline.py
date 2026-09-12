@@ -3,7 +3,7 @@
 Preprocessing Pipeline Runner
 
 Runs the complete mScarlet preprocessing pipeline:
-1. identify_mscarlet_subslices.py - Find FOV clusters with mScarlet+ cells
+1. identify_marker_subslices.py - Find FOV clusters with mScarlet+ cells
 2. stitch_subslices.py - Stitch FOVs into composite images
 3. downsample_subslices_cellmask.py - Downsample to match in-vivo resolution
 4. generate_marker_cellmask_subslice.py - Create mScarlet overlays (its default marker)
@@ -34,8 +34,8 @@ from datetime import datetime
 STEPS = [
     {
         'name': 'Identify Subslices',
-        'script': 'identify_mscarlet_subslices.py',
-        'description': 'Find FOV clusters with mScarlet+ cells',
+        'script': 'identify_marker_subslices.py',
+        'description': 'Find FOV clusters with mScarlet+ cells (--marker not passed: the runner is the mScarlet chain)',
     },
     {
         'name': 'Stitch FOVs',

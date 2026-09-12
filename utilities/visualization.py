@@ -3,7 +3,7 @@ Visualization utilities for preprocessing pipeline.
 
 Provides:
 - Subslice grid visualization
-- Comparison figures (cellmask, overlay, mScarlet-only)
+- Comparison figures (cellmask, overlay, marker-only)
 - Cell count histograms
 """
 
@@ -16,24 +16,27 @@ from typing import List, Optional, Union
 
 def visualize_subslice(
     slice_id: int,
-    mscarlet_fovs: List[str],
-    mscarlet_positions: np.ndarray,
+    marker_fovs: List[str],
+    marker_positions: np.ndarray,
     bridge_fovs: List[str],
     bridge_positions: np.ndarray,
     output_dir: Union[str, Path],
     edited: bool = False,
+    marker_label: str = "mScarlet",
 ) -> str:
     """
     Create diagnostic visualization of subslice FOV grid.
 
     Args:
         slice_id: Slice number
-        mscarlet_fovs: List of mScarlet+ FOV names
-        mscarlet_positions: (N, 2) array of (row, col) positions
+        marker_fovs: List of marker+ FOV names
+        marker_positions: (N, 2) array of (row, col) positions
         bridge_fovs: List of bridge FOV names
         bridge_positions: (M, 2) array of bridge positions
         output_dir: Output directory for saved figure
         edited: If True, add "(EDITED)" to title
+        marker_label: Marker named in the title and legend. The PNG filename
+            carries no marker, so this is the only place it is recorded.
 
     Returns:
         Path to saved figure
@@ -42,11 +45,11 @@ def visualize_subslice(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Combine all positions
-    all_positions = mscarlet_positions
+    all_positions = marker_positions
     if len(bridge_positions) > 0:
-        all_positions = np.vstack([mscarlet_positions, bridge_positions])
+        all_positions = np.vstack([marker_positions, bridge_positions])
 
-    n_mscarlet = len(mscarlet_fovs)
+    n_marker = len(marker_fovs)
 
     # Determine grid bounds
     min_row = int(np.min(all_positions[:, 0]))
@@ -57,9 +60,9 @@ def visualize_subslice(
     # Create figure
     fig, ax = plt.subplots(figsize=(12, 8))
 
-    # Plot mScarlet+ FOVs (green)
-    for i in range(n_mscarlet):
-        r, c = mscarlet_positions[i]
+    # Plot marker+ FOVs (green)
+    for i in range(n_marker):
+        r, c = marker_positions[i]
         rect = Rectangle(
             (c - 0.4, r - 0.4), 0.8, 0.8,
             facecolor='#33CC33',
@@ -98,7 +101,7 @@ def visualize_subslice(
     title = f'Slice {slice_id} Subslice'
     if edited:
         title += ' (EDITED)'
-    title += f': {n_mscarlet} mScarlet FOVs + {len(bridge_fovs)} Bridge FOVs'
+    title += f': {n_marker} {marker_label} FOVs + {len(bridge_fovs)} Bridge FOVs'
     ax.set_title(title, fontsize=14)
 
     ax.set_xlim(min_col - 1, max_col + 1)
@@ -109,7 +112,7 @@ def visualize_subslice(
     # Legend
     from matplotlib.lines import Line2D
     legend_elements = [
-        Rectangle((0, 0), 1, 1, facecolor='#33CC33', edgecolor='black', label='mScarlet+ FOV'),
+        Rectangle((0, 0), 1, 1, facecolor='#33CC33', edgecolor='black', label=f'{marker_label}+ FOV'),
         Rectangle((0, 0), 1, 1, facecolor='#FFFF4D', edgecolor='black', label='Bridge FOV'),
     ]
     ax.legend(handles=legend_elements, loc='best')

@@ -114,7 +114,7 @@ Multi-page TIFFs of the ex vivo tissue block (2P volume imaged before slicing), 
 All three are used by the BARseq preprocessing stage (Section 4) and the subslice nodes it produces:
 - `DATA_ROOT` — where the raw BARseq data lives
 - `OUTPUT_ROOT` — where preprocessing writes its intermediate outputs
-- `SUBSLICE_DIR` — the specific subfolder under `OUTPUT_ROOT` containing the final `slice*_subslice_mScarlet_cellmask.tif` overlays that the graph builder consumes
+- `SUBSLICE_DIR` — the subfolder under `OUTPUT_ROOT` holding the `slice*_subslice_ALIGN.tif` images the graph builder consumes. It ingests ALIGN tifs and nothing else; a folder holding none is a hard error, so this is not step 4's overlay folder
 
 Leave all three blank if you aren't running BARseq preprocessing right now. You can fill them in and re-run the graph builder any time later — it will pick up the subslices then.
 
@@ -203,14 +203,26 @@ cell2cell-alignment/
 ├── local_config.py                ← your paths (gitignored)
 ├── local_config.example.py        ← template (tracked)
 │
+├── analysis_paths.py              ← the per-subject analysis tree
+├── scope_profiles.py              ← microscope table; every pixel size
+├── orientation.py                 ← orientation-code algebra
+├── marker_profiles.py             ← per-marker column, ramp, cutoffs
+│      (all four stdlib-only, so any venv can import them)
+│
 ├── alignment/                     ← graph builder + alignment notebook
 │   ├── subslice_graph_builder.py  ← builds the alignment graph from config
 │   └── castalign_testground.ipynb ← interactive alignment GUI
 │
 ├── preprocessing/                 ← optional, BARseq only
-│   ├── run_pipeline.py            ← 5-step orchestrator
+│   ├── run_pipeline.py            ← 7-step orchestrator
 │   └── ...                        ← individual steps + optional utilities
 │
+├── matlab/                        ← marker scatter plots, run in MATLAB
+│   ├── gen_marker_plots_dtc.m     ← config block at the top; the current one
+│   └── Gen_{mScarlet,GCaMP}_plots.m  ← the lab's originals; never edit
+│
+├── tests/                         ← stdlib-only, runnable on WSL
+├── archive/                       ← frozen; do not run or port from it
 └── utilities/                     ← shared helpers (I/O, graph ops, plotting)
 ```
 

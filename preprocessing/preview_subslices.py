@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Report what identify_mscarlet_subslices.py would emit, without writing anything.
+Report what identify_marker_subslices.py would emit, without writing anything.
 
 Runs step 1's selection per slice using the same utility functions, then prints
 a per-slice table and a summary of which slices would yield a subslice.
@@ -35,8 +35,9 @@ from utilities.graph_utils import (
 
 
 def preview(filt_neurons_path, marker_col, marker_name, min_reads, min_genes,
-            min_cells, min_fovs):
+            min_cells, min_fovs, marker_label='marker'):
     print(f"filt_neurons: {filt_neurons_path}")
+    print(f"marker: {marker_label} (column {marker_col})")
     filt_neurons = load_filt_neurons(filt_neurons_path)
 
     expmat = filt_neurons['expmat']
@@ -71,7 +72,7 @@ def preview(filt_neurons_path, marker_col, marker_name, min_reads, min_genes,
     print(f"slices: {len(unique_slices)}")
     print()
 
-    header = (f"{'slice':>5} {'cells':>7} {'QC':>7} {'QC+mSc':>7} {'FOVs':>5} "
+    header = (f"{'slice':>5} {'cells':>7} {'QC':>7} {'QC+' + marker_label[:4]:>7} {'FOVs':>5} "
               f"{'comps':>5} {'largest':>7} {'bridge':>6} {'final':>5} {'sub_cells':>9}  note")
     print(header)
     print("-" * len(header))
@@ -165,8 +166,13 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--filt-neurons', default=None,
                    help='Path to filt_neurons.mat (default: FILT_NEURONS_PATH from preprocessing_config)')
+    p.add_argument('--marker', '-m', default=None,
+                   help="Which marker to preview, by marker_profiles key "
+                        "('mscarlet', 'gcamp'). This is what identify_marker_subslices.py "
+                        "takes, and sourcing the column from the same table is what keeps "
+                        "this preview describing the thing it claims to preview.")
     p.add_argument('--marker-column', type=int, default=None,
-                   help='0-indexed marker column (default: MSCARLET_COLUMN_INDEX)')
+                   help='0-indexed marker column, overriding --marker')
     p.add_argument('--marker-name', default=None,
                    help='Marker gene name; blank means trust the column index')
     p.add_argument('--min-reads', type=int, default=None)
@@ -180,22 +186,26 @@ def main():
     path = args.filt_neurons
     marker_col, marker_name = args.marker_column, args.marker_name
     min_reads, min_genes = args.min_reads, args.min_genes
+    marker_label = 'marker'
 
     if path is None or marker_col is None or marker_name is None \
             or min_reads is None or min_genes is None:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from preprocessing_config import (
-            FILT_NEURONS_PATH, MSCARLET_COLUMN_INDEX, MSCARLET_GENE_NAME,
-            QC_MIN_READS, QC_MIN_GENES,
-        )
+        from preprocessing_config import FILT_NEURONS_PATH, QC_MIN_READS, QC_MIN_GENES
+        # Same table step 1 reads, so a column correction reaches both.
+        from marker_profiles import MARKERS
+        from identify_marker_subslices import PIPELINE_MARKER
+
+        profile = MARKERS[args.marker or PIPELINE_MARKER]
+        marker_label = profile['label']
         path = path or FILT_NEURONS_PATH
-        marker_col = MSCARLET_COLUMN_INDEX if marker_col is None else marker_col
-        marker_name = MSCARLET_GENE_NAME if marker_name is None else marker_name
+        marker_col = profile['column'] if marker_col is None else marker_col
+        marker_name = profile['gene_name'] if marker_name is None else marker_name
         min_reads = QC_MIN_READS if min_reads is None else min_reads
         min_genes = QC_MIN_GENES if min_genes is None else min_genes
 
     preview(path, marker_col, marker_name, min_reads, min_genes,
-            args.min_cells, args.min_fovs)
+            args.min_cells, args.min_fovs, marker_label)
 
 
 if __name__ == '__main__':

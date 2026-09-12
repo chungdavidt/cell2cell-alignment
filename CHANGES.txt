@@ -1,3 +1,11 @@
+HISTORICAL -- superseded, kept for provenance only. Do not follow the paths below.
+Written 2026-04-09, before the isotropic rescale and the marker parameterizations.
+Every path in it is now wrong: identify_mscarlet_subslices.py is
+identify_marker_subslices.py; generate_mscarlet_cellmask_subslice*.py is
+generate_marker_cellmask_subslice.py; the *_anisotropic.py files and
+refine_subslices_by_threshold.py moved into archive/; config.py is
+preprocessing_config.py. Current state: CLAUDE.md and the Tier 3 memory files.
+
 cell2cell-alignment — Changes needed to make standalone Python repo runnable
 =============================================================================
 Generated: 2026-04-09

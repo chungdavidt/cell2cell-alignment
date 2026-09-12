@@ -1,3 +1,6 @@
+% SUPERSEDED 2026-09-11 by gen_marker_plots_dtc.m, which does both markers from
+% one config block. Kept for reference; not the tool to run.
+%
 % Gen_GCaMP_plots_dtc.m -- Gen_GCaMP_plots.m drawn square: x and y span the same
 % range and one unit is the same length on both axes, so the scatter has
 % the section's proportions. Saves a .png beside each .fig. Everything

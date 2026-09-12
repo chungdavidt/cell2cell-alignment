@@ -19,7 +19,7 @@ Features:
 The threshold parameter ONLY affects which overlay images you can view while
 editing. It does NOT change which definitions you're editing.
 
-Input:  subslice_definitions.mat (from identify_mscarlet_subslices.py)
+Input:  subslice_definitions.mat (from identify_marker_subslices.py)
 Output: Updated subslice_definitions.mat + regenerated diagnostic plots
 """
 
@@ -49,13 +49,13 @@ def display_subslice(subslice: dict):
     print("Current subslice:")
     print(f"  Slice ID: {subslice['slice_id']}")
     print(f"  Total FOVs: {len(subslice['fov_list'])}")
-    print(f"  mScarlet+ FOVs: {len(subslice['mscarlet_fovs'])}")
+    print(f"  mScarlet+ FOVs: {len(subslice['marker_fovs'])}")
     print(f"  Bridge FOVs: {len(subslice['bridge_fovs'])}")
-    print(f"  mScarlet+ cells: {subslice['num_mscarlet_cells']}\n")
+    print(f"  mScarlet+ cells: {subslice['num_marker_cells']}\n")
 
     print("FOV List:")
     for i, fov_name in enumerate(subslice['fov_list']):
-        is_mscarlet = fov_name in subslice['mscarlet_fovs']
+        is_mscarlet = fov_name in subslice['marker_fovs']
         is_bridge = fov_name in subslice['bridge_fovs']
 
         if is_mscarlet:
@@ -66,6 +66,36 @@ def display_subslice(subslice: dict):
             type_str = '[Unknown]'
 
         print(f"  {i+1:2d}. {fov_name:30s} {type_str}")
+
+
+def _as_entry_dict(entry):
+    """One definitions entry as a plain dict under the current field names.
+
+    load_mat passes struct_as_record=False, so entries arrive as scipy
+    mat_struct objects, which carry `_fieldnames` and NOT `dtype.names` -- the
+    old `hasattr(s, 'dtype')` test was False for them, so nothing was converted
+    and the first subscript raised AttributeError.
+
+    A file written before the step-1 rename carries `mscarlet_fovs` /
+    `num_mscarlet_cells`. They are read here and written back under the current
+    names, so one fact never ends up stored under two names that can disagree.
+    """
+    if isinstance(entry, dict):
+        out = dict(entry)
+    elif hasattr(entry, '_fieldnames'):
+        out = {f: getattr(entry, f) for f in entry._fieldnames}
+    elif getattr(entry, 'dtype', None) is not None and entry.dtype.names:
+        out = {k: v for k, v in zip(entry.dtype.names, entry)}
+    else:
+        raise TypeError(
+            f"Cannot unwrap a subslice_info entry of type {type(entry).__name__}")
+
+    for current, legacy in (('marker_fovs', 'marker_fovs'),
+                            ('num_marker_cells', 'num_marker_cells')):
+        if current not in out and legacy in out:
+            out[current] = out[legacy]
+        out.pop(legacy, None)
+    return out
 
 
 def count_mscarlet_cells(fov_list: list, slice_id: int, filt_neurons: dict,
@@ -99,18 +129,18 @@ def remove_fov(subslice: dict, fov_name: str, filt_neurons: dict,
         )
 
     # Remove from mScarlet or bridge list
-    if fov_name in subslice['mscarlet_fovs']:
-        subslice['mscarlet_fovs'] = [f for f in subslice['mscarlet_fovs'] if f != fov_name]
+    if fov_name in subslice['marker_fovs']:
+        subslice['marker_fovs'] = [f for f in subslice['marker_fovs'] if f != fov_name]
         print(f"  Removed mScarlet+ FOV: {fov_name}")
     elif fov_name in subslice['bridge_fovs']:
         subslice['bridge_fovs'] = [f for f in subslice['bridge_fovs'] if f != fov_name]
         print(f"  Removed bridge FOV: {fov_name}")
 
     # Recalculate mScarlet+ cell count
-    subslice['num_mscarlet_cells'] = count_mscarlet_cells(
+    subslice['num_marker_cells'] = count_mscarlet_cells(
         subslice['fov_list'], subslice['slice_id'], filt_neurons, mscarlet_qc_pass
     )
-    print(f"  Updated mScarlet+ cell count: {subslice['num_mscarlet_cells']}")
+    print(f"  Updated mScarlet+ cell count: {subslice['num_marker_cells']}")
 
     return subslice, True
 
@@ -140,7 +170,7 @@ def add_fov(subslice: dict, fov_name: str, filt_neurons: dict,
 
     # Add to appropriate list
     if fov_mscarlet_cells > 0:
-        subslice['mscarlet_fovs'].append(fov_name)
+        subslice['marker_fovs'].append(fov_name)
         print(f"  Added as mScarlet+ FOV ({fov_mscarlet_cells} cells)")
     else:
         subslice['bridge_fovs'].append(fov_name)
@@ -157,10 +187,10 @@ def add_fov(subslice: dict, fov_name: str, filt_neurons: dict,
         subslice['fov_grid_positions'] = np.array([[row, col]])
 
     # Recalculate mScarlet+ cell count
-    subslice['num_mscarlet_cells'] = count_mscarlet_cells(
+    subslice['num_marker_cells'] = count_mscarlet_cells(
         subslice['fov_list'], subslice['slice_id'], filt_neurons, mscarlet_qc_pass
     )
-    print(f"  Updated mScarlet+ cell count: {subslice['num_mscarlet_cells']}")
+    print(f"  Updated mScarlet+ cell count: {subslice['num_marker_cells']}")
 
     return subslice, True
 
@@ -207,7 +237,7 @@ def view_overlay_image(slice_id: int, overlay_dir: Path):
 
     if not overlay_file.exists():
         print(f"\n  WARNING: Overlay image not found: {overlay_file}")
-        print("  You may need to run generate_mscarlet_overlay_subslice.py first.\n")
+        print("  You may need to run generate_marker_cellmask_subslice.py first.\n")
         return
 
     print(f"\n  Opening overlay image: {overlay_file}")
@@ -280,7 +310,7 @@ def edit_subslice_definitions(threshold: float = 0.0, target_slice: int = None):
     if not definitions_file.exists():
         raise FileNotFoundError(
             f"Subslice definitions not found!\n"
-            f"Run identify_mscarlet_subslices.py first.\n"
+            f"Run identify_marker_subslices.py first.\n"
             f"Expected: {definitions_file}"
         )
 
@@ -295,12 +325,13 @@ def edit_subslice_definitions(threshold: float = 0.0, target_slice: int = None):
     definitions_data = load_mat(definitions_file)
     subslice_info_list = definitions_data['subslice_info']
 
-    # Convert to list of dicts if needed
+    # Normalise to plain dicts under the current field names. A single-entry
+    # file squeezes to a bare struct rather than an array, so wrap that too.
     if isinstance(subslice_info_list, np.ndarray):
-        subslice_info_list = [
-            {k: v for k, v in zip(s.dtype.names, s)} if hasattr(s, 'dtype') else s
-            for s in subslice_info_list.flatten()
-        ]
+        subslice_info_list = list(subslice_info_list.flatten())
+    elif not isinstance(subslice_info_list, list):
+        subslice_info_list = [subslice_info_list]
+    subslice_info_list = [_as_entry_dict(e) for e in subslice_info_list]
 
     print(f"  Loaded {len(subslice_info_list)} subslices")
 
@@ -332,9 +363,9 @@ def edit_subslice_definitions(threshold: float = 0.0, target_slice: int = None):
             # Show menu
             print("Available slices:")
             for i, info in enumerate(subslice_info_list):
-                slice_id = info['slice_id'] if isinstance(info, dict) else info.slice_id
-                fov_list = info['fov_list'] if isinstance(info, dict) else info.fov_list
-                num_cells = info['num_mscarlet_cells'] if isinstance(info, dict) else info.num_mscarlet_cells
+                slice_id = info['slice_id']
+                fov_list = info['fov_list']
+                num_cells = info['num_marker_cells']
                 print(f"  {i+1}. Slice {slice_id} ({len(fov_list)} FOVs, {num_cells} mScarlet+ cells)")
             print()
 
@@ -372,8 +403,6 @@ def edit_subslice_definitions(threshold: float = 0.0, target_slice: int = None):
                 raise ValueError(f"Slice {target_slice} not found in subslice definitions")
 
         subslice = subslice_info_list[subslice_idx]
-        if not isinstance(subslice, dict):
-            subslice = {k: v for k, v in zip(subslice.dtype.names, subslice)}
 
         slice_id = subslice['slice_id']
         print("=" * 40)
@@ -460,20 +489,20 @@ def edit_subslice_definitions(threshold: float = 0.0, target_slice: int = None):
                 if modified:
                     print("\nSaving changes...")
                     subslice_info_list[subslice_idx] = subslice
-                    save_mat(definitions_file, {'subslice_info': subslice_info_list}, format='7.3')
+                    save_mat(definitions_file, {'subslice_info': subslice_info_list}, format='5')
                     print(f"Saved updated definitions to: {definitions_file}")
 
                     # Regenerate diagnostic plot
                     print("Regenerating diagnostic plot...")
-                    mscarlet_positions = subslice['fov_grid_positions'][:len(subslice['mscarlet_fovs'])]
+                    mscarlet_positions = subslice['fov_grid_positions'][:len(subslice['marker_fovs'])]
                     if len(subslice['bridge_fovs']) > 0:
-                        bridge_positions = subslice['fov_grid_positions'][len(subslice['mscarlet_fovs']):]
+                        bridge_positions = subslice['fov_grid_positions'][len(subslice['marker_fovs']):]
                     else:
                         bridge_positions = np.zeros((0, 2))
 
                     visualize_subslice(
                         slice_id,
-                        subslice['mscarlet_fovs'],
+                        subslice['marker_fovs'],
                         mscarlet_positions,
                         subslice['bridge_fovs'],
                         bridge_positions,

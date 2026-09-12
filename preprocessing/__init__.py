@@ -8,17 +8,18 @@ to Python with exact fidelity. No shortcuts, no redesigns.
 Critical: Preserve cell position tracking throughout (for barseq gene expression linkage).
 
 Pipeline execution order:
-    1. identify_mscarlet_subslices.py -> subslice_definitions.mat
+    1. identify_marker_subslices.py -> subslice_definitions.mat (--marker writes
+       subslice_definitions_{marker}.mat instead; only mscarlet feeds steps 2-7)
     2. stitch_subslices.py -> HYB_subslice_stitched_tif/
     3. downsample_subslices_cellmask.py -> downsampled cellmasks
-    4. generate_marker_cellmask_subslice.py -> mScarlet overlays
+    4. generate_marker_cellmask_subslice.py -> marker overlays (--marker)
     5. interactive_mscarlet_threshold_cellmask_subslice.py -> batch figures (Agg,
        not interactive despite the name)
     6. generate_alignment_tif.py -> binary marker-only tifs the graph builder fits on
     7. export_subslice_cells.py -> cell <-> cellmask-label table, the join to genes
 
 generate_mscarlet_overlay_labelled.py is NOT step 6 -- it is an optional inspection
-tool driven by edit_subslice_definitions.py.s
+tool driven by edit_subslice_definitions.py.
 
 Utility script (anytime use):
     - edit_subslice_definitions.py -> modify subslice_definitions.mat
@@ -26,7 +27,8 @@ Utility script (anytime use):
 Constants:
     - Coordinates are always (z, y, x) for CASTalign compatibility
     - MATLAB 1-indexed -> Python 0-indexed
-    - mScarlet column 114 in MATLAB -> index 113 in Python
+    - Marker columns are index-only: mScarlet 114 / GCaMP 112 in MATLAB ->
+      113 / 111 in Python. The table is marker_profiles.py.
 """
 
 __version__ = "1.0.0"
