@@ -34,8 +34,8 @@ MARKER        = 'mscarlet';   % 'mscarlet' | 'gcamp'
 % copies disagree on purpose -- Gen_mScarlet_plots.m in THIS folder is 20/5,
 % the lab's own copy is 0/0 so no marker detection is gated on transcriptome
 % quality. Two questions, two answers; feedback_qc_thresholds_are_per_dataset.md.
-READS_THRESH  = 20;
-GENES_THRESH  = 5;
+READS_THRESH  = 0;
+GENES_THRESH  = 0;
 
 % -- Rolony cutoff and colour ----------------------------------------------
 % Rolony cutoff: a cell below this is not painted. 0 draws every QC-passing
@@ -70,7 +70,7 @@ COLORMAP      = 'parula';
 % This is a separate knob from MIN_ROLONIES: the cutoff drops low-count cells
 % everywhere, the crop drops cells by location whatever their count.
 % true writes under crop\, false under full\.
-CROP_TO_SUBSLICE = true;
+CROP_TO_SUBSLICE = false;
 
 % Blank -> <ANALYSIS_ROOT>\preprocessing\subslice_definitions\ and the file
 % matching MARKER: subslice_definitions.mat for mScarlet (the one the pipeline
