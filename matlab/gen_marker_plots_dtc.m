@@ -14,11 +14,13 @@
 % cellmask renders paint with.
 %
 % Writes to
-%   <ANALYSIS_ROOT>\preprocessing\<Marker>_plots_dtc\qc<reads>_<genes>_ge<cut>_sat<cap>_<cmap>\
-% one .fig and one .png per slice, plus median_total_reads.csv. CROP_TO_SUBSLICE
-% appends `_crop`. The parameters are
-% in the folder name, so changing one writes a new folder rather than
-% overwriting the previous run.
+%   <ANALYSIS_ROOT>\preprocessing\<Marker>_plots_dtc\qc<reads>_<genes>\<crop|full>\ge<cut>_sat<cap>\
+% one .fig and one .png per slice, plus median_total_reads.csv. One level per
+% filter, in the order they apply: QC and the crop set which cells exist and
+% the axis frame, the cutoff only which of them are drawn, so every ge folder
+% under one crop|full folder shares its frame. COLORMAP, DRAW_BELOW_CUTOFF,
+% SUBSLICE_DEFINITIONS_OVERRIDE and the figure settings are not in the path;
+% changing one of those overwrites the previous run.
 
 %% ---- CONFIG ---------------------------------------------------------------
 % -- Marker ----------------------------------------------------------------
@@ -68,6 +70,7 @@ COLORMAP      = 'parula';
 % region, because the unit is a whole ~1 mm FOV tile.
 % This is a separate knob from MIN_ROLONIES: the cutoff drops low-count cells
 % everywhere, the crop drops cells by location whatever their count.
+% true writes under crop\, false under full\.
 CROP_TO_SUBSLICE = true;
 
 % Blank -> <ANALYSIS_ROOT>\preprocessing\subslice_definitions\ and the file
@@ -158,12 +161,14 @@ else
     analysis_root = tok{1};
 end
 
-param_dir = sprintf('qc%g_%g_ge%g_sat%g_%s', ...
-    READS_THRESH, GENES_THRESH, MIN_ROLONIES, RAMP_MAX, lower(COLORMAP));
 if CROP_TO_SUBSLICE
-    param_dir = [param_dir '_crop'];
+    crop_dir = 'crop';
+else
+    crop_dir = 'full';
 end
-out_dir = fullfile(analysis_root, 'preprocessing', [MARKER_LABEL '_plots_dtc'], param_dir);
+out_dir = fullfile(analysis_root, 'preprocessing', [MARKER_LABEL '_plots_dtc'], ...
+    sprintf('qc%g_%g', READS_THRESH, GENES_THRESH), crop_dir, ...
+    sprintf('ge%g_sat%g', MIN_ROLONIES, RAMP_MAX));
 % The directory is created further down, after every check has passed -- making
 % it here leaves an empty parameter folder behind when one of them raises.
 
