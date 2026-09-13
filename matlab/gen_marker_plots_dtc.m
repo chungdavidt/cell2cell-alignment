@@ -36,8 +36,8 @@ MARKER        = 'mscarlet';   % 'mscarlet' | 'gcamp'
 % quality. Two questions, two answers; feedback_qc_thresholds_are_per_dataset.md.
 % The subslice crop was chosen at the config's pair, not these -- see
 % CROP_TO_SUBSLICE below.
-READS_THRESH  = 20;
-GENES_THRESH  = 5;
+READS_THRESH  = 0;
+GENES_THRESH  = 0;
 
 % -- Rolony cutoff and colour ----------------------------------------------
 % Rolony cutoff: a cell below this is not painted. 0 draws every QC-passing
@@ -79,7 +79,7 @@ COLORMAP      = 'parula';
 % chosen at the config's pair, and the qc folder name records only this
 % script's pair. To move the crop with the QC, change the config and re-run
 % identify_marker_subslices.py --marker <marker> before plotting.
-CROP_TO_SUBSLICE = true;
+CROP_TO_SUBSLICE = false;
 
 % Blank -> <ANALYSIS_ROOT>\preprocessing\subslice_definitions\ and the file
 % matching MARKER: subslice_definitions.mat for mScarlet (the one the pipeline
