@@ -16,32 +16,33 @@ if nargin < 1, defs_path = ''; end
 fprintf('MATLAB %s\n\n', version);
 n_fail = 0;
 
-% -- 1. count k lands in colormap level k -----------------------------------
-% The whole discrete-legend design depends on clim([0.5 K+0.5]) against a K-row
-% colormap mapping integer k to row k. Measured by rendering and reading pixels
-% back, not by re-deriving MATLAB's documented index formula.
+% -- 1. count k lands in colormap row k+1 -----------------------------------
+% The whole discrete-legend design depends on clim([-0.5 K+0.5]) against a
+% (K+1)-row colormap mapping integer k in 0..K to row k+1. Measured by rendering
+% and reading pixels back, not by re-deriving MATLAB's documented index formula.
 K = 10;
-cmap = [(1:K)'/K, zeros(K, 1), zeros(K, 1)];      % row k = [k/K 0 0], distinct
-f = figure('Visible', 'off', 'Position', [10 10 K*20 40]);
+n_rows = K + 1;
+cmap = [(1:n_rows)'/n_rows, zeros(n_rows, 1), zeros(n_rows, 1)];   % row r = [r/n_rows 0 0]
+f = figure('Visible', 'off', 'Position', [10 10 n_rows*20 40]);
 ax = axes('Parent', f, 'Position', [0 0 1 1]);
-image(ax, 'CData', 1:K, 'CDataMapping', 'scaled');
-colormap(ax, cmap); clim(ax, [0.5, K + 0.5]);
-axis(ax, 'off'); xlim(ax, [0.5 K+0.5]); ylim(ax, [0.5 1.5]);
+image(ax, 'XData', [0 K], 'YData', [1 1], 'CData', 0:K, 'CDataMapping', 'scaled');
+colormap(ax, cmap); clim(ax, [-0.5, K + 0.5]);
+axis(ax, 'off'); xlim(ax, [-0.5 K+0.5]); ylim(ax, [0.5 1.5]);
 frame = getframe(ax); px = frame.cdata;
 mid = round(size(px, 1) / 2);
-got = zeros(1, K);
-for k = 1:K
-    col = round((k - 0.5) / K * size(px, 2));
+got = zeros(1, n_rows);
+for k = 0:K
+    col = round((k + 0.5) / n_rows * size(px, 2));
     col = min(max(col, 1), size(px, 2));
-    got(k) = round(double(px(mid, col, 1)) / 255 * K);
+    got(k + 1) = round(double(px(mid, col, 1)) / 255 * n_rows) - 1;
 end
 close(f);
-n_fail = report(isequal(got, 1:K), 'count k renders in colormap level k', ...
-    sprintf('levels read back: %s', mat2str(got)), n_fail);
+n_fail = report(isequal(got, 0:K), 'count k in 0..K renders in colormap row k+1', ...
+    sprintf('counts read back: %s', mat2str(got)), n_fail);
 
 % -- 2. cb.Limits crops without changing the data mapping -------------------
 f = figure('Visible', 'off');
-ax = axes('Parent', f); colormap(ax, cmap); clim(ax, [0.5, K + 0.5]);
+ax = axes('Parent', f); colormap(ax, cmap); clim(ax, [-0.5, K + 0.5]);
 cb = colorbar(ax); before = clim(ax);
 cb.Limits = [3.5, K + 0.5]; cb.Ticks = 4:K;
 after = clim(ax);

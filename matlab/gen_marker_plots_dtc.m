@@ -5,13 +5,13 @@
 % workspace, as the originals do.
 %
 % Colour is stepwise and absolute. The count -> colour mapping is built first,
-% over a span fixed per marker at [1, RAMP_MAX], one discrete level per integer
-% count; MIN_ROLONIES then chooses which cells are displayed, and the colorbar
-% is cropped to start at it. A 9-rolony cell draws the same colour at a cutoff
-% of 1 and at a cutoff of 5, and the ramp's slope never changes. COLORMAP picks the palette: any MATLAB
-% colormap name (parula is the blue -> yellow default), or 'marker' for the
-% marker's own ramp out of the project's marker_profiles.py, which is what the
-% cellmask renders paint with.
+% over a span fixed per marker at [0, RAMP_MAX], one discrete level per integer
+% count, so a zero-count cell sits at the bottom colour as in Gen_*_plots.m;
+% MIN_ROLONIES then chooses which cells are displayed, and the colorbar is
+% cropped to start at it. A 9-rolony cell draws the same colour at a cutoff of
+% 0 and at a cutoff of 5, and the ramp's slope never changes. COLORMAP picks
+% the palette: any MATLAB colormap name (parula is the blue -> yellow default),
+% or 'marker' for the anchor colours in the project's marker_profiles.py.
 %
 % Writes to
 %   <ANALYSIS_ROOT>\preprocessing\<Marker>_plots_dtc\qc<reads>_<genes>\<crop|full>\ge<cut>_sat<cap>\
@@ -38,29 +38,28 @@ READS_THRESH  = 20;
 GENES_THRESH  = 5;
 
 % -- Rolony cutoff and colour ----------------------------------------------
-% Rolony cutoff: a cell below this is not painted. 1 draws every marker+ cell.
-% The marker's step-4 draw floor is 5 (mScarlet) / 3 (GCaMP) if you want this
-% figure to match what the pipeline renders. Changing it does NOT change any
-% remaining cell's colour.
-MIN_ROLONIES  = 1;   % must be >= 1; 0 would draw zero-count cells at level 1
+% Rolony cutoff: a cell below this is not painted. 0 draws every QC-passing
+% cell, as Gen_*_plots.m did; 1 draws every marker+ cell. The marker's step-4
+% draw floor is 5 (mScarlet) / 3 (GCaMP) if you want this figure to match what
+% the pipeline renders. Changing it does NOT change any remaining cell's colour.
+MIN_ROLONIES  = 0;   % must be >= 0
 
 % Cells below MIN_ROLONIES as a flat grey, for when the section outline is
-% wanted behind the marker cells. Off by default -- a QC-passing cell with 0
-% rolonies carries no marker signal and is not what these figures are for.
+% wanted behind a cutoff above 0. At a cutoff of 0 nothing is below it.
 % 0.25 is the grey the pipeline's cellmask field paints at.
 DRAW_BELOW_CUTOFF = false;
 BELOW_COLOR       = [0.25 0.25 0.25];
 
 % The span of the count -> colour mapping is NOT here on purpose: it is
 % RAMP_MAX in the marker table below, a fixed per-marker constant. Its slope is
-% (top colour - bottom colour) / (RAMP_MAX - 1), so a per-run dial would change
-% the slope between runs -- exactly what the absolute ramp exists to prevent.
+% (top colour - bottom colour) / RAMP_MAX, so a per-run dial would change the
+% slope between runs -- exactly what the absolute ramp exists to prevent.
 
 % Palette. Any MATLAB colormap function name -- 'parula' (blue -> yellow),
-% 'turbo', 'hot', 'jet' -- or 'marker' for this marker's own dark-to-bright
-% ramp from marker_profiles.py, which makes a count draw the same colour here as
-% in the cellmask renders. Either way it is sampled into RAMP_MAX discrete
-% levels, one per count.
+% 'turbo', 'hot', 'jet' -- or 'marker' for this marker's dark-to-bright anchors
+% from marker_profiles.py. Either way it is sampled into RAMP_MAX + 1 discrete
+% levels, one per count 0..RAMP_MAX. 'marker' does NOT reproduce the cellmask
+% renders' colours: those span [1, ceiling] and leave count 0 unpainted.
 COLORMAP      = 'parula';
 
 % -- Crop ------------------------------------------------------------------
@@ -107,9 +106,9 @@ ANALYSIS_ROOT_OVERRIDE = '';
 % every cell and two folders drawn at different RAMP_MAX are not comparable.
 % It is in the output folder name so which one a figure used is never in doubt.
 % Counts above it clamp to the top colour. RAMP_ANCHORS are marker_profiles.py's
-% own anchors, so under COLORMAP = 'marker' a count renders the same colour here
-% as in the cellmask renders. Columns are INDEX-ONLY: this panel labels its
-% readout slots with stale gene names, so never resolve a marker by name.
+% own anchors, used under COLORMAP = 'marker'. Columns are INDEX-ONLY: this
+% panel labels its readout slots with stale gene names, so never resolve a
+% marker by name.
 % Anchors are dark -> mid -> bright, evenly spaced over the ramp domain, and
 % interpolated linearly in RGB (what matplotlib's from_list does).
 switch lower(MARKER)
@@ -128,10 +127,7 @@ switch lower(MARKER)
 end
 
 assert(RAMP_MAX >= 1, 'RAMP_MAX must be at least 1.');
-% Below 1 the ramp has no level to put a cell on: MATLAB clamps the index to
-% row 1, so zero-count cells would draw identically to count-1 cells while the
-% legend's bottom swatch reads 1. DRAW_BELOW_CUTOFF is how to show them.
-assert(MIN_ROLONIES >= 1, 'MIN_ROLONIES must be at least 1 (use DRAW_BELOW_CUTOFF to show the rest).');
+assert(MIN_ROLONIES >= 0, 'MIN_ROLONIES must be at least 0.');
 if MIN_ROLONIES >= RAMP_MAX
     warning('MIN_ROLONIES (%g) is at or above RAMP_MAX (%g) -- every drawn cell saturates.', ...
         MIN_ROLONIES, RAMP_MAX);
@@ -172,21 +168,18 @@ out_dir = fullfile(analysis_root, 'preprocessing', [MARKER_LABEL '_plots_dtc'], 
 % The directory is created further down, after every check has passed -- making
 % it here leaves an empty parameter folder behind when one of them raises.
 
-% Stepwise colormap: one row per integer count 1..RAMP_MAX, so with
-% clim([0.5 K+0.5]) a count lands in its own row -- discrete levels, no
-% interpolation between counts. Row k is the colour of count k at
-% frac = (k-1)/(K-1), the mapping check_rolony_cutoff.py uses, so under
-% COLORMAP = 'marker' a count draws the same colour here as in the cellmask
-% renders.
+% Stepwise colormap: one row per integer count 0..RAMP_MAX, so with
+% clim([-0.5 K+0.5]) count k lands in row k+1 -- discrete levels, no
+% interpolation between counts. Row k+1 is the colour at frac = k/K.
 K = round(RAMP_MAX);
-ramp_frac = ((1:K)' - 1) / max(K - 1, 1);
+ramp_frac = (0:K)' / K;
 if strcmpi(COLORMAP, 'marker')
     CMAP = interp1(linspace(0, 1, size(RAMP_ANCHORS, 1)), RAMP_ANCHORS, ramp_frac, 'linear');
 else
     assert(exist(COLORMAP, 'file') == 2 || exist(COLORMAP, 'builtin') == 5, ...
         'COLORMAP = ''%s'' is not a MATLAB colormap function. Try ''parula'' or ''marker''.', ...
         COLORMAP);
-    CMAP = feval(COLORMAP, K);
+    CMAP = feval(COLORMAP, K + 1);
 end
 CMAP = min(max(CMAP, 0), 1);
 
@@ -277,8 +270,8 @@ fprintf('  QC-passing cells:    %u / %u (%.1f%%)\n', ...
     total_passed, total_cells, total_passed / total_cells * 100);
 fprintf('  median total reads:  %g\n', ...
     full(median(sum(filt_neurons.expmat(pass_qc, :), 2))));
-fprintf('  mapping:             counts 1 .. %g+, %s, %u fixed levels\n', ...
-    RAMP_MAX, lower(COLORMAP), K);
+fprintf('  mapping:             counts 0 .. %g+, %s, %u fixed levels\n', ...
+    RAMP_MAX, lower(COLORMAP), K + 1);
 fprintf('  drawn:               cells with >= %g rolonies\n', MIN_ROLONIES);
 fprintf('  slices:              %u\n', numel(uniq_slices));
 fprintf('  output:              %s\n\n', out_dir);
@@ -348,16 +341,20 @@ for nn = 1:numel(uniq_slices)
             MARKER_SIZE, BELOW_COLOR, 'filled');
     end
     % Counts above RAMP_MAX clamp to it: they draw the top colour, which is
-    % what that count maps to under the fixed span anyway. Guarded because a
-    % slice can have QC-passing cells and none at or above the cutoff, and
-    % empty CData is the least exercised path through scatter.
+    % what that count maps to under the fixed span anyway. Drawn in ascending
+    % count so the zero-count majority cannot cover a marker cell. Guarded
+    % because a slice can have QC-passing cells and none at or above the
+    % cutoff, and empty CData is the least exercised path through scatter.
     if any(drawn)
-        scatter(ax, filt_neurons.pos(drawn, 1), filt_neurons.pos(drawn, 2), ...
-            MARKER_SIZE, min(countspercell(drawn), K), 'filled');
+        idx = find(drawn);
+        [~, order] = sort(countspercell(idx));
+        idx = idx(order);
+        scatter(ax, filt_neurons.pos(idx, 1), filt_neurons.pos(idx, 2), ...
+            MARKER_SIZE, min(countspercell(idx), K), 'filled');
     end
 
     colormap(ax, CMAP);
-    clim(ax, [0.5, K + 0.5]);
+    clim(ax, [-0.5, K + 0.5]);
     set(ax, 'ydir', 'reverse');
 
     % Frame from every cell that survived QC and the crop, not from the drawn
@@ -385,11 +382,11 @@ for nn = 1:numel(uniq_slices)
         end
     end
 
-    % The colormap covers 1..K whatever the cutoff -- the mapping is built once
+    % The colormap covers 0..K whatever the cutoff -- the mapping is built once
     % and never moves. The colorbar is cropped to what is actually on screen, so
     % raising MIN_ROLONIES shortens the legend from the bottom and leaves every
     % remaining swatch on the colour it already had.
-    cb_lo = min(max(round(MIN_ROLONIES), 1), K);
+    cb_lo = min(max(round(MIN_ROLONIES), 0), K);
     tick_step = max(1, ceil((K - cb_lo + 1) / 10));
     ticks = unique([cb_lo:tick_step:K, K]);
     cb = colorbar(ax);
@@ -399,7 +396,7 @@ for nn = 1:numel(uniq_slices)
                      {sprintf('%u+', K)}];
     cb.Label.String = 'rolonies';
 
-    title(ax, sprintf('slice %u, %s  |  ge %g, ramp 1-%g+', ...
+    title(ax, sprintf('slice %u, %s  |  ge %g, ramp 0-%g+', ...
         slice_no, MARKER_LABEL, MIN_ROLONIES, RAMP_MAX));
 
     % Named for the slice number, not the loop index: the two diverge as soon
