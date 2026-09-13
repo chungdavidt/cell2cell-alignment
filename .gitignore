@@ -5,6 +5,7 @@ __pycache__/
 .ipynb_checkpoints/
 .castalign-venv/
 .cellpose-venv/
+.jupyterlab-venv/
 .venv/
 .vscode/
 .claude/scheduled_tasks.lock

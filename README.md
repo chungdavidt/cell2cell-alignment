@@ -15,8 +15,9 @@ The pipeline is config-driven: you fill in `local_config.py` with whatever data 
 |---|---|---|
 | `.castalign-venv/` | Alignment graph builder + `castalign_testground.ipynb`. Preprocessing pipeline likely also runs here (TBD — see note). | `pip install -r requirements-castalign.txt` |
 | `.cellpose-venv/` | Cellpose 3D segmentation for alignment validation (code pending). | `pip install -r requirements-cellpose.txt` |
+| `.jupyterlab-venv/` | JupyterLab app only — no project code runs here. Notebooks run on the `castalign` kernel registered from `.castalign-venv`. | `python -m venv .jupyterlab-venv`, `pip install jupyterlab ipywidgets`, then `.castalign-venv\Scripts\python.exe -m ipykernel install --user --name castalign --display-name castalign`. Launch: `.jupyterlab-venv\Scripts\python.exe -m jupyterlab` |
 
-Both venvs live at project root and are gitignored.
+All three venvs live at project root and are gitignored.
 
 ```bash
 # castalign env
