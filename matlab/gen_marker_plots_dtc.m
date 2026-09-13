@@ -7,7 +7,8 @@
 %
 % This file is the settings. The plotting is plot_marker_slices.m, whose header
 % documents the colour rule, the frame, the output layout and SKIP_EXISTING.
-% sweep_marker_plots_dtc.m runs every combination of marker, QC pair and cutoff.
+% sweep_marker_plots_dtc.m runs every combination of ceiling, marker, QC pair
+% and cutoff.
 
 %% ---- CONFIG ---------------------------------------------------------------
 cfg = struct();   % reset: a cfg left in the workspace by another script is not reused
@@ -29,11 +30,13 @@ cfg.READS_THRESH  = 0;
 cfg.GENES_THRESH  = 0;
 
 % -- Rolony cutoff and colour ----------------------------------------------
-% Rolony cutoff: a cell below this is not painted. 0 draws every QC-passing
-% cell, as Gen_*_plots.m did; 1 draws every marker+ cell. The marker's step-4
-% draw floor is 5 (mScarlet) / 3 (GCaMP) if you want this figure to match what
-% the pipeline renders. Changing it does NOT change any remaining cell's colour.
-cfg.MIN_ROLONIES  = 0;   % must be >= 0
+% Rolony cutoff (floor): a cell below this is not painted. 0 draws every
+% QC-passing cell, as Gen_*_plots.m did; 1 draws every marker+ cell. The
+% marker's step-4 draw floor is 5 (mScarlet) / 3 (GCaMP) if you want this figure
+% to match what the pipeline renders. Under RAMP_FROM = 'floor' the colours
+% start here, so changing it re-shades the remaining cells; under 'zero' it
+% does not.
+cfg.MIN_ROLONIES  = 0;   % whole number >= 0
 
 % Cells below MIN_ROLONIES as a flat grey, for when the section outline is
 % wanted behind a cutoff above 0. At a cutoff of 0 nothing is below it.
@@ -41,17 +44,29 @@ cfg.MIN_ROLONIES  = 0;   % must be >= 0
 cfg.DRAW_BELOW_CUTOFF = false;
 cfg.BELOW_COLOR       = [0.25 0.25 0.25];
 
-% The span of the count -> colour mapping is NOT here on purpose: it is
-% RAMP_MAX in the marker table in plot_marker_slices.m, a fixed per-marker
-% constant. Its slope is (top colour - bottom colour) / RAMP_MAX, so a per-run
-% dial would change the slope between runs -- exactly what the absolute ramp
-% exists to prevent.
+% Rolony ceiling: counts at or above it all take the top colour. Blank -> the
+% marker's default, 15 mScarlet / 10 GCaMP. Lower gives fewer colour levels and
+% more contrast between neighbouring counts, and no distinction above it. It is
+% in the folder name (sat<ceiling>), so runs at different ceilings never
+% overwrite each other. Whole number.
+cfg.ROLONY_CEILING = [];
+
+% Where the colours start.
+%   'floor'  colours span MIN_ROLONIES -> ceiling: the most contrast, but the
+%            same colour means a different count in folders with different
+%            floors (dark blue is 0 rolonies in ge0, 3 in ge3). Compare colours
+%            only between figures with the same ge<floor>_sat<ceiling>.
+%            MIN_ROLONIES must be below the ceiling.
+%   'zero'   colours span 0 -> ceiling at every floor: one colour per count in
+%            every folder, the colorbar cropped at the floor. The folder name
+%            gains _ramp0.
+cfg.RAMP_FROM     = 'floor';
 
 % Palette. Any MATLAB colormap function name -- 'parula' (blue -> yellow),
 % 'turbo', 'hot', 'jet' -- or 'marker' for this marker's dark-to-bright anchors
-% from marker_profiles.py. Either way it is sampled into RAMP_MAX + 1 discrete
-% levels, one per count 0..RAMP_MAX. 'marker' does NOT reproduce the cellmask
-% renders' colours: those span [1, ceiling] and leave count 0 unpainted.
+% from marker_profiles.py. Either way it is sampled into one discrete level per
+% count from the ramp's start to the ceiling. 'marker' does NOT reproduce the
+% cellmask renders' colours: those span [1, ceiling] and leave count 0 unpainted.
 cfg.COLORMAP      = 'parula';
 
 % -- Crop ------------------------------------------------------------------

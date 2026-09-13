@@ -8,12 +8,17 @@ function result = plot_marker_slices(filt_neurons, cfg)
 % (every combination). cfg holds exactly the settings gen_marker_plots_dtc.m
 % defines and documents; a missing or unknown field is an error.
 %
-% Colour is stepwise and absolute. The count -> colour mapping is built first,
-% over a span fixed per marker at [0, RAMP_MAX], one discrete level per integer
-% count, so a zero-count cell sits at the bottom colour as in Gen_*_plots.m;
-% MIN_ROLONIES then chooses which cells are displayed, and the colorbar is
-% cropped to start at it. A 9-rolony cell draws the same colour at a cutoff of
-% 0 and at a cutoff of 5, and the ramp's slope never changes. COLORMAP picks
+% Colour is stepwise: one discrete level per whole rolony count, from the ramp's
+% start to ROLONY_CEILING, and every count at or above the ceiling takes the top
+% colour. MIN_ROLONIES chooses which cells are drawn. RAMP_FROM sets the start:
+%   'floor'  the ramp runs MIN_ROLONIES -> ceiling, so the drawn counts spread
+%            over the whole palette. The same colour means a different count in
+%            folders with different floors -- compare colours only between
+%            figures with the same ge<floor>_sat<ceiling>.
+%   'zero'   the ramp runs 0 -> ceiling whatever the floor, so a count has one
+%            colour in every folder; the colorbar is cropped to start at the
+%            floor. The folder name gains _ramp0.
+% Either way the mapping is linear in the count within a figure. COLORMAP picks
 % the palette: any MATLAB colormap name (parula is the blue -> yellow default),
 % or 'marker' for the anchor colours in the project's marker_profiles.py.
 %
@@ -27,6 +32,7 @@ function result = plot_marker_slices(filt_neurons, cfg)
 %
 % Writes to
 %   <ANALYSIS_ROOT>\preprocessing\<Marker>_plots_dtc\qc<reads>_<genes>\<crop|full>\ge<cut>_sat<cap>\
+%   (plus _ramp0 on the last folder when RAMP_FROM = 'zero')
 % one .fig and one .png per slice, median_total_reads.csv, and last
 % plot_settings.txt. One level per filter, in the order they apply: QC and the
 % crop set which cells exist, the cutoff which of them are drawn. COLORMAP,
@@ -54,7 +60,7 @@ EXPECTED_FIELDS = {'MARKER', 'READS_THRESH', 'GENES_THRESH', 'MIN_ROLONIES', ...
     'DRAW_BELOW_CUTOFF', 'BELOW_COLOR', 'COLORMAP', 'CROP_TO_SUBSLICE', ...
     'SUBSLICE_DEFINITIONS_OVERRIDE', 'PANEL_COLUMNS', 'FIG_SIZE', 'MARKER_SIZE', ...
     'PNG_DPI', 'ANALYSIS_ROOT_OVERRIDE', 'AXIS_SPAN_UM', 'SKIP_EXISTING', ...
-    'VERBOSE', 'DRY_RUN'};
+    'VERBOSE', 'DRY_RUN', 'ROLONY_CEILING', 'RAMP_FROM'};
 assert(isstruct(cfg) && isscalar(cfg), 'cfg must be a scalar struct.');
 missing = setdiff(EXPECTED_FIELDS, fieldnames(cfg));
 unknown = setdiff(fieldnames(cfg), EXPECTED_FIELDS);
@@ -65,6 +71,8 @@ MARKER                        = cfg.MARKER;
 READS_THRESH                  = cfg.READS_THRESH;
 GENES_THRESH                  = cfg.GENES_THRESH;
 MIN_ROLONIES                  = cfg.MIN_ROLONIES;
+ROLONY_CEILING                = cfg.ROLONY_CEILING;
+RAMP_FROM                     = cfg.RAMP_FROM;
 DRAW_BELOW_CUTOFF             = cfg.DRAW_BELOW_CUTOFF;
 BELOW_COLOR                   = cfg.BELOW_COLOR;
 COLORMAP                      = cfg.COLORMAP;
@@ -79,36 +87,62 @@ AXIS_SPAN_UM                  = cfg.AXIS_SPAN_UM;
 VERBOSE                       = cfg.VERBOSE;
 
 % Marker table -- the MATLAB counterpart of the project's marker_profiles.py.
-% RAMP_MAX is the top of the count -> colour mapping and belongs here rather
-% than in the config block: it DEFINES the mapping, so editing it re-shades
-% every cell and two folders drawn at different RAMP_MAX are not comparable.
-% It is in the output folder name so which one a figure used is never in doubt.
-% Counts above it clamp to the top colour. RAMP_ANCHORS are marker_profiles.py's
-% own anchors, used under COLORMAP = 'marker'. Columns are INDEX-ONLY: this
-% panel labels its readout slots with stale gene names, so never resolve a
-% marker by name.
+% DEFAULT_CEILING is marker_profiles.py's ceiling, used when ROLONY_CEILING is
+% blank. RAMP_ANCHORS are marker_profiles.py's own anchors, used under
+% COLORMAP = 'marker'. Columns are INDEX-ONLY: this panel labels its readout
+% slots with stale gene names, so never resolve a marker by name.
 % Anchors are dark -> mid -> bright, evenly spaced over the ramp domain, and
 % interpolated linearly in RGB (what matplotlib's from_list does).
 switch lower(MARKER)
     case 'mscarlet'
-        MARKER_COLUMN  = 114;     % MATLAB 1-indexed (Python 113)
-        MARKER_LABEL   = 'mScarlet';
-        RAMP_ANCHORS   = [0.45 0.00 0.00; 1.00 0.35 0.00; 1.00 0.95 0.25];
-        RAMP_MAX       = 15;      % BY95; marker_profiles.py's ceiling
+        MARKER_COLUMN   = 114;     % MATLAB 1-indexed (Python 113)
+        MARKER_LABEL    = 'mScarlet';
+        RAMP_ANCHORS    = [0.45 0.00 0.00; 1.00 0.35 0.00; 1.00 0.95 0.25];
+        DEFAULT_CEILING = 15;      % BY95; marker_profiles.py's ceiling
     case 'gcamp'
-        MARKER_COLUMN  = 112;     % MATLAB 1-indexed (Python 111)
-        MARKER_LABEL   = 'GCaMP';
-        RAMP_ANCHORS   = [0.00 0.42 0.10; 0.15 0.85 0.20; 0.80 1.00 0.40];
-        RAMP_MAX       = 10;      % BY95; marker_profiles.py's ceiling
+        MARKER_COLUMN   = 112;     % MATLAB 1-indexed (Python 111)
+        MARKER_LABEL    = 'GCaMP';
+        RAMP_ANCHORS    = [0.00 0.42 0.10; 0.15 0.85 0.20; 0.80 1.00 0.40];
+        DEFAULT_CEILING = 10;      % BY95; marker_profiles.py's ceiling
     otherwise
         error('MARKER must be ''mscarlet'' or ''gcamp'', got ''%s''.', MARKER);
 end
 
-assert(RAMP_MAX >= 1, 'RAMP_MAX must be at least 1.');
-assert(MIN_ROLONIES >= 0, 'MIN_ROLONIES must be at least 0.');
-if MIN_ROLONIES >= RAMP_MAX
-    warning('MIN_ROLONIES (%g) is at or above RAMP_MAX (%g) -- every drawn cell saturates.', ...
-        MIN_ROLONIES, RAMP_MAX);
+if isempty(ROLONY_CEILING)
+    ceiling = DEFAULT_CEILING;
+else
+    ceiling = ROLONY_CEILING;
+end
+% Whole numbers: rolony counts are integers, and a fractional floor or ceiling
+% would put a colour level where no count can land.
+is_whole = @(v) isnumeric(v) && isscalar(v) && isfinite(v) && v == round(v);
+assert(is_whole(MIN_ROLONIES) && MIN_ROLONIES >= 0, ...
+    'MIN_ROLONIES must be a whole number >= 0, got %s.', describe_value(MIN_ROLONIES));
+assert(is_whole(ceiling) && ceiling >= 1, ...
+    'ROLONY_CEILING must be blank or a whole number >= 1, got %s.', describe_value(ceiling));
+% double(): an integer class would pass the checks above and then round every
+% half-unit in clim and ramp_frac below.
+MIN_ROLONIES = double(MIN_ROLONIES);
+ceiling      = double(ceiling);
+if isstring(RAMP_FROM)
+    RAMP_FROM = char(RAMP_FROM);
+end
+assert(ischar(RAMP_FROM) && any(strcmpi(RAMP_FROM, {'floor', 'zero'})), ...
+    'RAMP_FROM must be ''floor'' or ''zero'', got %s.', describe_value(RAMP_FROM));
+RAMP_FROM = lower(RAMP_FROM);
+if strcmp(RAMP_FROM, 'floor')
+    ramp_start = MIN_ROLONIES;
+else
+    ramp_start = 0;
+end
+assert(ramp_start < ceiling, ...
+    ['MIN_ROLONIES (%d) must be below the ceiling (%d) under RAMP_FROM = ''floor'' ' ...
+     '-- the ramp would have no width. Lower the floor, raise ROLONY_CEILING, or ' ...
+     'use RAMP_FROM = ''zero''.'], MIN_ROLONIES, ceiling);
+if MIN_ROLONIES >= ceiling
+    warning('plot_marker_slices:saturated', ...
+        'MIN_ROLONIES (%d) is at or above the ceiling (%d) -- every drawn cell saturates.', ...
+        MIN_ROLONIES, ceiling);
 end
 
 assert(size(filt_neurons.expmat, 2) == PANEL_COLUMNS, ...
@@ -152,9 +186,12 @@ if CROP_TO_SUBSLICE
 else
     crop_dir = 'full';
 end
+leaf = sprintf('ge%d_sat%d', MIN_ROLONIES, ceiling);
+if strcmpi(RAMP_FROM, 'zero')
+    leaf = [leaf '_ramp0'];
+end
 out_dir = fullfile(analysis_root, 'preprocessing', [MARKER_LABEL '_plots_dtc'], ...
-    sprintf('qc%g_%g', READS_THRESH, GENES_THRESH), crop_dir, ...
-    sprintf('ge%g_sat%g', MIN_ROLONIES, RAMP_MAX));
+    sprintf('qc%g_%g', READS_THRESH, GENES_THRESH), crop_dir, leaf);
 % The directory is created further down, after every check has passed -- making
 % it here leaves an empty parameter folder behind when one of them raises.
 
@@ -200,18 +237,18 @@ result.slices     = table(zeros(0, 1), zeros(0, 2), zeros(0, 2), zeros(0, 1), ..
     zeros(0, 1), zeros(0, 1), 'VariableNames', ...
     {'slice', 'xlim', 'ylim', 'n_qc', 'n_drawn', 'n_outside'});
 
-% Stepwise colormap: one row per integer count 0..RAMP_MAX, so with
-% clim([-0.5 K+0.5]) count k lands in row k+1 -- discrete levels, no
-% interpolation between counts. Row k+1 is the colour at frac = k/K.
-K = round(RAMP_MAX);
-ramp_frac = (0:K)' / K;
+% Stepwise colormap: one row per whole count ramp_start..ceiling, so with
+% clim([ramp_start-0.5 ceiling+0.5]) count k lands in row k-ramp_start+1 --
+% discrete levels, no interpolation between counts.
+n_levels = ceiling - ramp_start + 1;
+ramp_frac = (0:n_levels - 1)' / (n_levels - 1);
 if strcmpi(COLORMAP, 'marker')
     CMAP = interp1(linspace(0, 1, size(RAMP_ANCHORS, 1)), RAMP_ANCHORS, ramp_frac, 'linear');
 else
     assert(exist(COLORMAP, 'file') == 2 || exist(COLORMAP, 'builtin') == 5, ...
         'COLORMAP = ''%s'' is not a MATLAB colormap function. Try ''parula'' or ''marker''.', ...
         COLORMAP);
-    CMAP = feval(COLORMAP, K + 1);
+    CMAP = feval(COLORMAP, n_levels);
 end
 CMAP = min(max(CMAP, 0), 1);
 
@@ -235,7 +272,8 @@ end
 % different filt_neurons, or a regenerated definitions file under the crop,
 % does not match a folder drawn from the old one.
 settings_path = fullfile(out_dir, 'plot_settings.txt');
-derived = struct('MARKER_COLUMN', MARKER_COLUMN, 'RAMP_MAX', RAMP_MAX, ...
+derived = struct('MARKER_COLUMN', MARKER_COLUMN, 'ceiling', ceiling, ...
+    'ramp_start', ramp_start, ...
     'RAMP_ANCHORS', RAMP_ANCHORS, 'span_um', span_um, 'um_per_pos', um_per_pos, ...
     'data_cells', size(filt_neurons.expmat, 1), ...
     'data_nonzero', nnz(filt_neurons.expmat), ...
@@ -245,7 +283,13 @@ if CROP_TO_SUBSLICE
     derived.subslice_definitions = defs_path;
     derived.subslice_definitions_modified = datestr(defs_info.datenum, 'yyyy-mm-dd HH:MM:SS');
 end
-settings_txt = settings_text(cfg, derived);
+% The key holds resolved values, so a blank ceiling and the marker's default
+% typed out, or 'Floor' and 'floor', draw identical figures and match.
+key_cfg = cfg;
+key_cfg.MIN_ROLONIES   = MIN_ROLONIES;
+key_cfg.ROLONY_CEILING = ceiling;
+key_cfg.RAMP_FROM      = RAMP_FROM;
+settings_txt = settings_text(key_cfg, derived);
 
 if cfg.DRY_RUN
     return
@@ -328,8 +372,8 @@ vprintf(VERBOSE, '  QC-passing cells:    %u / %u (%.1f%%)\n', ...
     total_passed, total_cells, total_passed / total_cells * 100);
 vprintf(VERBOSE, '  median total reads:  %g\n', ...
     full(median(sum(filt_neurons.expmat(pass_qc, :), 2))));
-vprintf(VERBOSE, '  mapping:             counts 0 .. %g+, %s, %u fixed levels\n', ...
-    RAMP_MAX, lower(COLORMAP), K + 1);
+vprintf(VERBOSE, '  mapping:             counts %d .. %d+, %s, %u levels (ramp from %s)\n', ...
+    ramp_start, ceiling, lower(COLORMAP), n_levels, lower(RAMP_FROM));
 vprintf(VERBOSE, '  drawn:               cells with >= %g rolonies\n', MIN_ROLONIES);
 vprintf(VERBOSE, '  slices:              %u\n', numel(uniq_slices));
 vprintf(VERBOSE, '  window:              %g um (%s), %.4g um per pos unit\n', ...
@@ -392,21 +436,20 @@ for nn = 1:numel(uniq_slices)
         scatter(ax, pos_um(below, 1), pos_um(below, 2), ...
             MARKER_SIZE, BELOW_COLOR, 'filled');
     end
-    % Counts above RAMP_MAX clamp to it: they draw the top colour, which is
-    % what that count maps to under the fixed span anyway. Drawn in ascending
-    % count so the zero-count majority cannot cover a marker cell. Guarded
-    % because a slice can have QC-passing cells and none at or above the
-    % cutoff, and empty CData is the least exercised path through scatter.
+    % Counts above the ceiling clamp to it and draw the top colour. Drawn in
+    % ascending count so the zero-count majority cannot cover a marker cell.
+    % Guarded because a slice can have QC-passing cells and none at or above
+    % the cutoff, and empty CData is the least exercised path through scatter.
     if any(drawn)
         idx = find(drawn);
         [~, order] = sort(countspercell(idx));
         idx = idx(order);
         scatter(ax, pos_um(idx, 1), pos_um(idx, 2), ...
-            MARKER_SIZE, min(countspercell(idx), K), 'filled');
+            MARKER_SIZE, min(countspercell(idx), ceiling), 'filled');
     end
 
     colormap(ax, CMAP);
-    clim(ax, [-0.5, K + 0.5]);
+    clim(ax, [ramp_start - 0.5, ceiling + 0.5]);
     set(ax, 'ydir', 'reverse');
 
     xl = centre_x(nn) + [-half, half];
@@ -432,22 +475,21 @@ for nn = 1:numel(uniq_slices)
             slice_no, n_outside, span_um);
     end
 
-    % The colormap covers 0..K whatever the cutoff -- the mapping is built once
-    % and never moves. The colorbar is cropped to what is actually on screen, so
-    % raising MIN_ROLONIES shortens the legend from the bottom and leaves every
-    % remaining swatch on the colour it already had.
-    cb_lo = min(max(round(MIN_ROLONIES), 0), K);
-    tick_step = max(1, ceil((K - cb_lo + 1) / 10));
-    ticks = unique([cb_lo:tick_step:K, K]);
+    % The colorbar starts at the floor. Under 'floor' that is the ramp's start,
+    % so the bar is full height; under 'zero' it crops the bar from the bottom
+    % and leaves every remaining swatch on the colour it has at any floor.
+    cb_lo = min(max(MIN_ROLONIES, ramp_start), ceiling);
+    tick_step = max(1, ceil((ceiling - cb_lo + 1) / 10));
+    ticks = unique([cb_lo:tick_step:ceiling, ceiling]);
     cb = colorbar(ax);
-    cb.Limits = [cb_lo - 0.5, K + 0.5];
+    cb.Limits = [cb_lo - 0.5, ceiling + 0.5];
     cb.Ticks = ticks;
     cb.TickLabels = [arrayfun(@num2str, ticks(1:end-1), 'UniformOutput', false), ...
-                     {sprintf('%u+', K)}];
+                     {sprintf('%u+', ceiling)}];
     cb.Label.String = 'rolonies';
 
-    title(ax, sprintf('slice %u, %s  |  qc %g/%g  |  ge %g, ramp 0-%g+', ...
-        slice_no, MARKER_LABEL, READS_THRESH, GENES_THRESH, MIN_ROLONIES, RAMP_MAX));
+    title(ax, sprintf('slice %u, %s  |  qc %g/%g  |  ge %d, colours %d-%d+', ...
+        slice_no, MARKER_LABEL, READS_THRESH, GENES_THRESH, MIN_ROLONIES, ramp_start, ceiling));
 
     % Named for the slice number, not the loop index: the two diverge as soon
     % as the slice numbering has a gap, and the original saved the index while
@@ -501,6 +543,16 @@ for ii = 1:numel(extra)
     lines{end + 1} = sprintf('%s = %s', extra{ii}, value_text(derived.(extra{ii}))); %#ok<AGROW>
 end
 txt = strjoin(lines', newline);
+end
+
+
+function s = describe_value(v)
+% For error messages: mat2str where it can print the value, the class otherwise.
+if (isnumeric(v) || islogical(v) || ischar(v)) && ismatrix(v)
+    s = mat2str(v);
+else
+    s = sprintf('a %s', class(v));
+end
 end
 
 

@@ -1,5 +1,5 @@
 % test_gen_marker_plots_assumptions.m -- check, on this MATLAB, every assumption
-% gen_marker_plots_dtc.m rests on.
+% plot_marker_slices.m (called by gen_marker_plots_dtc.m) rests on.
 %
 % Each of these was reasoned about on the WSL edit host, where there is no
 % MATLAB, so none of them was verified before the script was written. Run this
@@ -39,6 +39,30 @@ end
 close(f);
 n_fail = report(isequal(got, 0:K), 'count k in 0..K renders in colormap row k+1', ...
     sprintf('counts read back: %s', mat2str(got)), n_fail);
+
+% -- 1b. a ramp starting above 0: count k in s..c lands in row k-s+1 --------
+% RAMP_FROM = 'floor' puts clim at [floor-0.5 ceiling+0.5] against a
+% (ceiling-floor+1)-row colormap. Same read-back as check 1, with s = 3, c = 10.
+s_b = 3; c_b = 10;
+rows_b = c_b - s_b + 1;
+cmap_b = [(1:rows_b)'/rows_b, zeros(rows_b, 1), zeros(rows_b, 1)];
+f = figure('Visible', 'off', 'Position', [10 10 rows_b*20 40]);
+ax = axes('Parent', f, 'Position', [0 0 1 1]);
+image(ax, 'XData', [s_b c_b], 'YData', [1 1], 'CData', s_b:c_b, 'CDataMapping', 'scaled');
+colormap(ax, cmap_b); clim(ax, [s_b - 0.5, c_b + 0.5]);
+axis(ax, 'off'); xlim(ax, [s_b - 0.5, c_b + 0.5]); ylim(ax, [0.5 1.5]);
+frame = getframe(ax); px = frame.cdata;
+mid = round(size(px, 1) / 2);
+got_b = zeros(1, rows_b);
+for k = s_b:c_b
+    col = round((k - s_b + 0.5) / rows_b * size(px, 2));
+    col = min(max(col, 1), size(px, 2));
+    got_b(k - s_b + 1) = round(double(px(mid, col, 1)) / 255 * rows_b) + s_b - 1;
+end
+close(f);
+n_fail = report(isequal(got_b, s_b:c_b), ...
+    'count k in 3..10 renders in colormap row k-2 with clim [2.5 10.5]', ...
+    sprintf('counts read back: %s', mat2str(got_b)), n_fail);
 
 % -- 2. cb.Limits crops without changing the data mapping -------------------
 f = figure('Visible', 'off');

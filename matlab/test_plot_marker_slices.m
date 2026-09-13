@@ -72,6 +72,8 @@ base.MARKER = 'mscarlet';
 base.READS_THRESH = 20;
 base.GENES_THRESH = 5;
 base.MIN_ROLONIES = 0;
+base.ROLONY_CEILING = [];
+base.RAMP_FROM = 'floor';
 base.DRAW_BELOW_CUTOFF = false;
 base.BELOW_COLOR = [0.25 0.25 0.25];
 base.COLORMAP = 'parula';
@@ -268,6 +270,117 @@ msg = error_message(@() plot_marker_slices(fn, c));
 n_fail = report(contains(msg, 'unknown') && contains(msg, 'READ_THRESH'), ...
     '10b. an unknown field errors and names it', sprintf('message: %s', msg), n_fail);
 
+% -- 12. ceiling and ramp start -------------------------------------------------
+% Slice 1 at QC 0/0, mScarlet; its counts in row order c1..c5 are [0 3 20 1 0].
+% 12a. ceiling 5, floor 0, 'floor': drawn in ascending order [0 0 1 3 20],
+%      clamped to [0 0 1 3 5]; 6 levels 0..5 -> CLim [-0.5 5.5], parula(6);
+%      colorbar 0 1 2 3 4 5+.
+c = base; c.READS_THRESH = 0; c.GENES_THRESH = 0; c.ROLONY_CEILING = 5;
+r = plot_marker_slices(fn, c);
+[~, ~, cd, ~, ~, cl, cm, cbl, cbt] = read_points(fullfile(r.out_dir, 'slice_001.fig'));
+want = fullfile(root, 'preprocessing', 'mScarlet_plots_dtc', 'qc0_0', 'full', 'ge0_sat5');
+ok = strcmp(r.out_dir, want) && isequal(cd(:)', [0 0 1 3 5]) && ...
+    max(abs(cl - [-0.5 5.5])) < 1e-12 && isequal(size(cm), [6 3]) && ...
+    max(abs(cm - parula(6)), [], 'all') < 1e-12 && ...
+    max(abs(cbl - [-0.5 5.5])) < 1e-12 && isequal(cbt(:)', {'0', '1', '2', '3', '4', '5+'});
+n_fail = report(ok, '12a. ceiling 5, floor 0: ge0_sat5, CData [0 0 1 3 5], CLim [-0.5 5.5], parula(6), bar 0..5+', ...
+    sprintf('%s CData %s CLim %s rows %d bar %s', r.out_dir, mat2str(cd(:)'), mat2str(cl), ...
+    size(cm, 1), strjoin(cbt(:)', ' ')), n_fail);
+% 12b. ceiling 5, floor 3, 'floor': drawn c2 (3), c3 (20) -> CData [3 5];
+%      3 levels 3..5 -> CLim [2.5 5.5], parula(3); full-height bar 3 4 5+.
+c.MIN_ROLONIES = 3;
+r = plot_marker_slices(fn, c);
+[~, ~, cd, ~, ~, cl, cm, cbl, cbt, ttl, cbk] = read_points(fullfile(r.out_dir, 'slice_001.fig'));
+want = fullfile(root, 'preprocessing', 'mScarlet_plots_dtc', 'qc0_0', 'full', 'ge3_sat5');
+ok = strcmp(r.out_dir, want) && isequal(cd(:)', [3 5]) && ...
+    max(abs(cl - [2.5 5.5])) < 1e-12 && isequal(size(cm), [3 3]) && ...
+    max(abs(cm - parula(3)), [], 'all') < 1e-12 && ...
+    max(abs(cbl - [2.5 5.5])) < 1e-12 && isequal(cbt(:)', {'3', '4', '5+'}) && ...
+    isequal(cbk(:)', [3 4 5]) && contains(ttl, 'colours 3-5+');
+n_fail = report(ok, '12b. floor 3, ceiling 5, ramp from floor: ge3_sat5, CLim [2.5 5.5], parula(3), bar 3..5+', ...
+    sprintf('%s CData %s CLim %s rows %d bar %s title "%s"', r.out_dir, mat2str(cd(:)'), ...
+    mat2str(cl), size(cm, 1), strjoin(cbt(:)', ' '), ttl), n_fail);
+% 12c. the same under 'zero': 6 levels 0..5 -> CLim [-0.5 5.5], parula(6); the
+%      bar is cropped at the floor, Limits [2.5 5.5], 3 4 5+; folder gains _ramp0.
+c.RAMP_FROM = 'zero';
+r = plot_marker_slices(fn, c);
+[~, ~, cd, ~, ~, cl, cm, cbl, cbt, ~, cbk] = read_points(fullfile(r.out_dir, 'slice_001.fig'));
+want = fullfile(root, 'preprocessing', 'mScarlet_plots_dtc', 'qc0_0', 'full', 'ge3_sat5_ramp0');
+ok = strcmp(r.out_dir, want) && isequal(cd(:)', [3 5]) && ...
+    max(abs(cl - [-0.5 5.5])) < 1e-12 && isequal(size(cm), [6 3]) && ...
+    max(abs(cm - parula(6)), [], 'all') < 1e-12 && ...
+    max(abs(cbl - [2.5 5.5])) < 1e-12 && isequal(cbt(:)', {'3', '4', '5+'}) && ...
+    isequal(cbk(:)', [3 4 5]);
+n_fail = report(ok, '12c. floor 3, ceiling 5, ramp from zero: ge3_sat5_ramp0, CLim [-0.5 5.5], parula(6), bar cropped 3..5+', ...
+    sprintf('%s CData %s CLim %s rows %d bar %s', r.out_dir, mat2str(cd(:)'), mat2str(cl), ...
+    size(cm, 1), strjoin(cbt(:)', ' ')), n_fail);
+% 12d. errors.
+c = base; c.DRY_RUN = true; c.MIN_ROLONIES = 5; c.ROLONY_CEILING = 5;
+msg = error_message(@() plot_marker_slices(fn, c));
+n_fail = report(contains(msg, 'below the ceiling'), ...
+    '12d-1. floor 5 = ceiling 5 under ''floor'' errors', sprintf('message: %s', msg), n_fail);
+c = base; c.DRY_RUN = true; c.MIN_ROLONIES = 2.5;
+msg = error_message(@() plot_marker_slices(fn, c));
+n_fail = report(contains(msg, 'MIN_ROLONIES') && contains(msg, 'whole number'), ...
+    '12d-2. floor 2.5 errors', sprintf('message: %s', msg), n_fail);
+c = base; c.DRY_RUN = true; c.ROLONY_CEILING = 7.5;
+msg = error_message(@() plot_marker_slices(fn, c));
+n_fail = report(contains(msg, 'ROLONY_CEILING') && contains(msg, 'whole number'), ...
+    '12d-3. ceiling 7.5 errors', sprintf('message: %s', msg), n_fail);
+c = base; c.DRY_RUN = true; c.RAMP_FROM = 'bogus';
+msg = error_message(@() plot_marker_slices(fn, c));
+n_fail = report(contains(msg, 'RAMP_FROM'), ...
+    '12d-4. RAMP_FROM = ''bogus'' errors', sprintf('message: %s', msg), n_fail);
+% 12e. under 'zero' floor 5 = ceiling 5 only warns: slice 1 draws c3 (20) as 5,
+%      bar Limits [4.5 5.5] labelled 5+.
+c = base; c.READS_THRESH = 0; c.GENES_THRESH = 0; c.MIN_ROLONIES = 5;
+c.ROLONY_CEILING = 5; c.RAMP_FROM = 'zero';
+% The warning is left on so lastwarn records it; it prints once here, expected.
+lastwarn('');
+msg = error_message(@() plot_marker_slices(fn, c));
+[~, warn_id] = lastwarn;
+out = fullfile(root, 'preprocessing', 'mScarlet_plots_dtc', 'qc0_0', 'full', 'ge5_sat5_ramp0');
+ok = isempty(msg) && strcmp(warn_id, 'plot_marker_slices:saturated') && ...
+    isfile(fullfile(out, 'slice_001.fig'));
+if ok
+    [~, ~, cd, ~, ~, ~, ~, cbl, cbt, ~, cbk] = read_points(fullfile(out, 'slice_001.fig'));
+    ok = isequal(cd, 5) && max(abs(cbl - [4.5 5.5])) < 1e-12 && ...
+        isequal(cbt(:)', {'5+'}) && isequal(cbk, 5);
+end
+n_fail = report(ok, '12e. ramp from zero, floor 5 = ceiling 5: warns (saturated), draws c3 as 5, bar 5+', ...
+    sprintf('error "%s", last warning id "%s", folder %s', msg, warn_id, out), n_fail);
+% 12f. one ceiling serves both markers: GCaMP at ceiling 5 is ge0_sat5.
+c = base; c.DRY_RUN = true; c.MARKER = 'gcamp'; c.READS_THRESH = 0; c.GENES_THRESH = 0;
+c.ROLONY_CEILING = 5;
+r = plot_marker_slices(fn, c);
+want = fullfile(root, 'preprocessing', 'GCaMP_plots_dtc', 'qc0_0', 'full', 'ge0_sat5');
+n_fail = report(strcmp(r.out_dir, want), '12f. GCaMP with ROLONY_CEILING = 5 writes ge0_sat5', ...
+    sprintf('got %s', r.out_dir), n_fail);
+% 12g. 'zero' at the default ceiling reproduces the previous behaviour: mScarlet
+%      floor 3 -> ge3_sat15_ramp0, 16 levels 0..15, CLim [-0.5 15.5], parula(16),
+%      CData [3 15]; bar cropped to [2.5 15.5], step ceil(13/10) = 2, ticks
+%      3 5 7 9 11 13 15 labelled 3 5 7 9 11 13 15+.
+c = base; c.READS_THRESH = 0; c.GENES_THRESH = 0; c.MIN_ROLONIES = 3; c.RAMP_FROM = 'zero';
+r = plot_marker_slices(fn, c);
+[~, ~, cd, ~, ~, cl, cm, cbl, cbt, ~, cbk] = read_points(fullfile(r.out_dir, 'slice_001.fig'));
+want = fullfile(root, 'preprocessing', 'mScarlet_plots_dtc', 'qc0_0', 'full', 'ge3_sat15_ramp0');
+ok = strcmp(r.out_dir, want) && isequal(cd(:)', [3 15]) && ...
+    max(abs(cl - [-0.5 15.5])) < 1e-12 && isequal(size(cm), [16 3]) && ...
+    max(abs(cm - parula(16)), [], 'all') < 1e-12 && ...
+    max(abs(cbl - [2.5 15.5])) < 1e-12 && isequal(cbk(:)', [3 5 7 9 11 13 15]) && ...
+    isequal(cbt(:)', {'3', '5', '7', '9', '11', '13', '15+'});
+n_fail = report(ok, '12g. ramp from zero, default ceiling: ge3_sat15_ramp0, CLim [-0.5 15.5], parula(16), bar 3..15+', ...
+    sprintf('%s CData %s CLim %s rows %d ticks %s', r.out_dir, mat2str(cd(:)'), mat2str(cl), ...
+    size(cm, 1), mat2str(cbk)), n_fail);
+% 12h. the resume key holds resolved values: the folder of runs{1} (mScarlet
+%      20/5 ge0, blank ceiling, 'floor', last written by 9e) matches the same
+%      run with the ceiling typed as 15 and RAMP_FROM spelled 'Floor'.
+c = base; c.SKIP_EXISTING = true; c.ROLONY_CEILING = 15; c.RAMP_FROM = 'Floor';
+r = plot_marker_slices(fn, c);
+n_fail = report(r.skipped && strcmp(r.out_dir, runs{1}.out_dir), ...
+    '12h. blank ceiling = typed default, and ''Floor'' = ''floor'', for resume: skipped', ...
+    sprintf('skipped = %d, %s', r.skipped, r.out_dir), n_fail);
+
 % -- Real data (optional) --------------------------------------------------------
 if isempty(real_filt_neurons)
     fprintf('  SKIP  real-data run -- pass filt_neurons to include it\n');
@@ -338,14 +451,23 @@ end
 end
 
 
-function [xd, yd, cd, xl, yl] = read_points(fig_path)
-% The coloured scatter's points and the axes limits from a saved figure.
+function [xd, yd, cd, xl, yl, cl, cm, cbl, cbt, ttl, cbk] = read_points(fig_path)
+% From a saved figure: the coloured scatter's points, the axes limits, colour
+% limits and colormap, the colorbar's limits, tick labels and tick positions,
+% and the title.
 % DRAW_BELOW_CUTOFF is off throughout, so there is at most one scatter object.
 g = openfig(fig_path, 'invisible');
 h = findobj(g, 'Type', 'scatter');
 ax = findobj(g, 'Type', 'axes');
+cb = findobj(g, 'Type', 'colorbar');
 xl = ax(1).XLim;
 yl = ax(1).YLim;
+cl = ax(1).CLim;
+cm = ax(1).Colormap;
+cbl = cb(1).Limits;
+cbt = cellstr(cb(1).TickLabels);
+cbk = cb(1).Ticks;
+ttl = char(get(get(ax(1), 'Title'), 'String'));
 if isempty(h)
     xd = []; yd = []; cd = [];
 else
