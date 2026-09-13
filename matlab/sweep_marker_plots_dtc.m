@@ -24,7 +24,7 @@ GENES    = 5:-1:0;
 ROLONIES = 0:3;
 EXPECTED_RUNS = 720;   % numel of the five lists multiplied; update with them
 
-DRY_RUN  = true;
+DRY_RUN  = false;
 
 %% ---- FIXED SETTINGS (what each one does: gen_marker_plots_dtc.m) ----------
 cfg = struct();   % reset: a cfg left in the workspace by another script is not reused
