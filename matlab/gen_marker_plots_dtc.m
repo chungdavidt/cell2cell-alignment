@@ -34,6 +34,8 @@ MARKER        = 'mscarlet';   % 'mscarlet' | 'gcamp'
 % copies disagree on purpose -- Gen_mScarlet_plots.m in THIS folder is 20/5,
 % the lab's own copy is 0/0 so no marker detection is gated on transcriptome
 % quality. Two questions, two answers; feedback_qc_thresholds_are_per_dataset.md.
+% The subslice crop was chosen at the config's pair, not these -- see
+% CROP_TO_SUBSLICE below.
 READS_THRESH  = 20;
 GENES_THRESH  = 5;
 
@@ -70,6 +72,13 @@ COLORMAP      = 'parula';
 % This is a separate knob from MIN_ROLONIES: the cutoff drops low-count cells
 % everywhere, the crop drops cells by location whatever their count.
 % true writes under crop\, false under full\.
+%
+% The FOVs were picked at local_config.py's QC_MIN_READS / QC_MIN_GENES, NOT at
+% READS_THRESH / GENES_THRESH above. With the two pairs unequal, the plotted
+% cells follow READS_THRESH / GENES_THRESH but the crop region is still the one
+% chosen at the config's pair, and the qc folder name records only this
+% script's pair. To move the crop with the QC, change the config and re-run
+% identify_marker_subslices.py --marker <marker> before plotting.
 CROP_TO_SUBSLICE = true;
 
 % Blank -> <ANALYSIS_ROOT>\preprocessing\subslice_definitions\ and the file
