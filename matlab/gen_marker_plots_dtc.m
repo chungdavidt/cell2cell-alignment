@@ -1,30 +1,19 @@
-% gen_marker_plots_dtc.m -- per-slice marker scatter, one marker per run.
+% gen_marker_plots_dtc.m -- per-slice marker scatter, one marker and one set of
+% thresholds per run.
 %
 % Replaces Gen_mScarlet_plots_dtc.m and Gen_GCaMP_plots_dtc.m: the marker is a
 % config value below, not a separate file. Expects filt_neurons already in the
 % workspace, as the originals do.
 %
-% Colour is stepwise and absolute. The count -> colour mapping is built first,
-% over a span fixed per marker at [0, RAMP_MAX], one discrete level per integer
-% count, so a zero-count cell sits at the bottom colour as in Gen_*_plots.m;
-% MIN_ROLONIES then chooses which cells are displayed, and the colorbar is
-% cropped to start at it. A 9-rolony cell draws the same colour at a cutoff of
-% 0 and at a cutoff of 5, and the ramp's slope never changes. COLORMAP picks
-% the palette: any MATLAB colormap name (parula is the blue -> yellow default),
-% or 'marker' for the anchor colours in the project's marker_profiles.py.
-%
-% Writes to
-%   <ANALYSIS_ROOT>\preprocessing\<Marker>_plots_dtc\qc<reads>_<genes>\<crop|full>\ge<cut>_sat<cap>\
-% one .fig and one .png per slice, plus median_total_reads.csv. One level per
-% filter, in the order they apply: QC and the crop set which cells exist and
-% the axis frame, the cutoff only which of them are drawn, so every ge folder
-% under one crop|full folder shares its frame. COLORMAP, DRAW_BELOW_CUTOFF,
-% SUBSLICE_DEFINITIONS_OVERRIDE and the figure settings are not in the path;
-% changing one of those overwrites the previous run.
+% This file is the settings. The plotting is plot_marker_slices.m, whose header
+% documents the colour rule, the frame, the output layout and SKIP_EXISTING.
+% sweep_marker_plots_dtc.m runs every combination of marker, QC pair and cutoff.
 
 %% ---- CONFIG ---------------------------------------------------------------
+cfg = struct();   % reset: a cfg left in the workspace by another script is not reused
+
 % -- Marker ----------------------------------------------------------------
-MARKER        = 'mscarlet';   % 'mscarlet' | 'gcamp'
+cfg.MARKER        = 'mscarlet';   % 'mscarlet' | 'gcamp'
 
 % -- QC --------------------------------------------------------------------
 % QC floors for a cell to be plotted at all. Deliberately NOT inherited from
@@ -36,33 +25,34 @@ MARKER        = 'mscarlet';   % 'mscarlet' | 'gcamp'
 % quality. Two questions, two answers; feedback_qc_thresholds_are_per_dataset.md.
 % The subslice crop was chosen at the config's pair, not these -- see
 % CROP_TO_SUBSLICE below.
-READS_THRESH  = 0;
-GENES_THRESH  = 0;
+cfg.READS_THRESH  = 0;
+cfg.GENES_THRESH  = 0;
 
 % -- Rolony cutoff and colour ----------------------------------------------
 % Rolony cutoff: a cell below this is not painted. 0 draws every QC-passing
 % cell, as Gen_*_plots.m did; 1 draws every marker+ cell. The marker's step-4
 % draw floor is 5 (mScarlet) / 3 (GCaMP) if you want this figure to match what
 % the pipeline renders. Changing it does NOT change any remaining cell's colour.
-MIN_ROLONIES  = 0;   % must be >= 0
+cfg.MIN_ROLONIES  = 0;   % must be >= 0
 
 % Cells below MIN_ROLONIES as a flat grey, for when the section outline is
 % wanted behind a cutoff above 0. At a cutoff of 0 nothing is below it.
 % 0.25 is the grey the pipeline's cellmask field paints at.
-DRAW_BELOW_CUTOFF = false;
-BELOW_COLOR       = [0.25 0.25 0.25];
+cfg.DRAW_BELOW_CUTOFF = false;
+cfg.BELOW_COLOR       = [0.25 0.25 0.25];
 
 % The span of the count -> colour mapping is NOT here on purpose: it is
-% RAMP_MAX in the marker table below, a fixed per-marker constant. Its slope is
-% (top colour - bottom colour) / RAMP_MAX, so a per-run dial would change the
-% slope between runs -- exactly what the absolute ramp exists to prevent.
+% RAMP_MAX in the marker table in plot_marker_slices.m, a fixed per-marker
+% constant. Its slope is (top colour - bottom colour) / RAMP_MAX, so a per-run
+% dial would change the slope between runs -- exactly what the absolute ramp
+% exists to prevent.
 
 % Palette. Any MATLAB colormap function name -- 'parula' (blue -> yellow),
 % 'turbo', 'hot', 'jet' -- or 'marker' for this marker's dark-to-bright anchors
 % from marker_profiles.py. Either way it is sampled into RAMP_MAX + 1 discrete
 % levels, one per count 0..RAMP_MAX. 'marker' does NOT reproduce the cellmask
 % renders' colours: those span [1, ceiling] and leave count 0 unpainted.
-COLORMAP      = 'parula';
+cfg.COLORMAP      = 'parula';
 
 % -- Crop ------------------------------------------------------------------
 % Keep only cells in the FOVs identify_marker_subslices.py picked for each
@@ -71,7 +61,8 @@ COLORMAP      = 'parula';
 % region, because the unit is a whole ~1 mm FOV tile.
 % This is a separate knob from MIN_ROLONIES: the cutoff drops low-count cells
 % everywhere, the crop drops cells by location whatever their count.
-% true writes under crop\, false under full\.
+% true writes under crop\, false under full\. The window does not move with
+% the crop: it is framed on every cell of the slice either way.
 %
 % The FOVs were picked at local_config.py's QC_MIN_READS / QC_MIN_GENES, NOT at
 % READS_THRESH / GENES_THRESH above. With the two pairs unequal, the plotted
@@ -79,364 +70,48 @@ COLORMAP      = 'parula';
 % chosen at the config's pair, and the qc folder name records only this
 % script's pair. To move the crop with the QC, change the config and re-run
 % identify_marker_subslices.py --marker <marker> before plotting.
-CROP_TO_SUBSLICE = false;
+cfg.CROP_TO_SUBSLICE = false;
 
 % Blank -> <ANALYSIS_ROOT>\preprocessing\subslice_definitions\ and the file
 % matching MARKER: subslice_definitions.mat for mScarlet (the one the pipeline
 % reads), subslice_definitions_<marker>.mat for anything else.
-SUBSLICE_DEFINITIONS_OVERRIDE = '';
+cfg.SUBSLICE_DEFINITIONS_OVERRIDE = '';
 
 % -- Guards ----------------------------------------------------------------
 % Column count of this brain's panel. Guard only, and it asserts equality: a
 % panel with a different slot order but enough columns would otherwise plot the
 % wrong gene with no error.
-PANEL_COLUMNS = 114;
+cfg.PANEL_COLUMNS = 114;
 
 % -- Figure ----------------------------------------------------------------
-FIG_SIZE      = [600 600];    % pixels, [width height]
-SQUARE_AXES   = true;         % x and y over one range, equal unit length
+cfg.FIG_SIZE      = [600 600];    % pixels, [width height]
+cfg.MARKER_SIZE   = 5;            % scatter point area
+cfg.PNG_DPI       = 300;
 
-% One extent for every slice, taken from the widest QC-passing section, so two
-% figures are at the same scale and comparable by eye. false frames each slice
-% on its own cells, which fills the box but makes the scale differ per figure.
-COMMON_EXTENT = true;
-MARKER_SIZE   = 5;            % scatter point area
-PNG_DPI       = 300;
+% Window width and height in µm, the same for every slice; each slice is
+% centred on the bounding box of all its cells. Blank -> the widest slice,
+% measured on every cell before QC, cutoff or crop, so it is one number for
+% every run on this brain. Set a number to override, e.g. to draw two brains
+% at one scale; cells past the edge of a smaller window are not visible, and
+% the run warns per slice.
+cfg.AXIS_SPAN_UM  = [];
 
 % -- Output ----------------------------------------------------------------
 % Blank -> read ANALYSIS_ROOT from local_config.py one level up. Set a path
 % here to write somewhere else instead.
-ANALYSIS_ROOT_OVERRIDE = '';
+cfg.ANALYSIS_ROOT_OVERRIDE = '';
+
+% -- Run control -----------------------------------------------------------
+cfg.SKIP_EXISTING = false;   % true: skip if the folder's plot_settings.txt matches these settings
+cfg.VERBOSE       = true;    % false: print nothing but warnings
+cfg.DRY_RUN       = false;   % true: print the output folder and window, write nothing
 %% ---------------------------------------------------------------------------
-
-% Marker table -- the MATLAB counterpart of the project's marker_profiles.py.
-% RAMP_MAX is the top of the count -> colour mapping and belongs here rather
-% than in the config block: it DEFINES the mapping, so editing it re-shades
-% every cell and two folders drawn at different RAMP_MAX are not comparable.
-% It is in the output folder name so which one a figure used is never in doubt.
-% Counts above it clamp to the top colour. RAMP_ANCHORS are marker_profiles.py's
-% own anchors, used under COLORMAP = 'marker'. Columns are INDEX-ONLY: this
-% panel labels its readout slots with stale gene names, so never resolve a
-% marker by name.
-% Anchors are dark -> mid -> bright, evenly spaced over the ramp domain, and
-% interpolated linearly in RGB (what matplotlib's from_list does).
-switch lower(MARKER)
-    case 'mscarlet'
-        MARKER_COLUMN  = 114;     % MATLAB 1-indexed (Python 113)
-        MARKER_LABEL   = 'mScarlet';
-        RAMP_ANCHORS   = [0.45 0.00 0.00; 1.00 0.35 0.00; 1.00 0.95 0.25];
-        RAMP_MAX       = 15;      % BY95; marker_profiles.py's ceiling
-    case 'gcamp'
-        MARKER_COLUMN  = 112;     % MATLAB 1-indexed (Python 111)
-        MARKER_LABEL   = 'GCaMP';
-        RAMP_ANCHORS   = [0.00 0.42 0.10; 0.15 0.85 0.20; 0.80 1.00 0.40];
-        RAMP_MAX       = 10;      % BY95; marker_profiles.py's ceiling
-    otherwise
-        error('MARKER must be ''mscarlet'' or ''gcamp'', got ''%s''.', MARKER);
-end
-
-assert(RAMP_MAX >= 1, 'RAMP_MAX must be at least 1.');
-assert(MIN_ROLONIES >= 0, 'MIN_ROLONIES must be at least 0.');
-if MIN_ROLONIES >= RAMP_MAX
-    warning('MIN_ROLONIES (%g) is at or above RAMP_MAX (%g) -- every drawn cell saturates.', ...
-        MIN_ROLONIES, RAMP_MAX);
-end
 
 assert(exist('filt_neurons', 'var') == 1, ...
     'filt_neurons is not in the workspace -- load the brain''s filt_neurons.mat first.');
-assert(size(filt_neurons.expmat, 2) == PANEL_COLUMNS, ...
-    ['expmat has %u columns but PANEL_COLUMNS says %u. Column %u is %s for a ' ...
-     '%u-gene panel only; check this brain''s panel before plotting.'], ...
-    size(filt_neurons.expmat, 2), PANEL_COLUMNS, MARKER_COLUMN, MARKER_LABEL, PANEL_COLUMNS);
 
-% ANALYSIS_ROOT: read from local_config.py so it cannot drift from the value
-% the Python pipeline uses. Line-anchored, so a commented-out line never wins.
-if ~isempty(ANALYSIS_ROOT_OVERRIDE)
-    analysis_root = ANALYSIS_ROOT_OVERRIDE;
-else
-    cfg_path = fullfile(fileparts(fileparts(mfilename('fullpath'))), 'local_config.py');
-    assert(isfile(cfg_path), ...
-        'local_config.py not found at %s -- set ANALYSIS_ROOT_OVERRIDE.', cfg_path);
-    tok = regexp(fileread(cfg_path), ...
-        '^\s*ANALYSIS_ROOT\s*=\s*r?[''"]([^''"]*)[''"]', ...
-        'tokens', 'once', 'lineanchors');
-    assert(~isempty(tok) && ~isempty(tok{1}), ...
-        ['ANALYSIS_ROOT is unset in %s -- set it there, or set ' ...
-         'ANALYSIS_ROOT_OVERRIDE above.'], cfg_path);
-    analysis_root = tok{1};
-end
-
-if CROP_TO_SUBSLICE
-    crop_dir = 'crop';
-else
-    crop_dir = 'full';
-end
-out_dir = fullfile(analysis_root, 'preprocessing', [MARKER_LABEL '_plots_dtc'], ...
-    sprintf('qc%g_%g', READS_THRESH, GENES_THRESH), crop_dir, ...
-    sprintf('ge%g_sat%g', MIN_ROLONIES, RAMP_MAX));
-% The directory is created further down, after every check has passed -- making
-% it here leaves an empty parameter folder behind when one of them raises.
-
-% Stepwise colormap: one row per integer count 0..RAMP_MAX, so with
-% clim([-0.5 K+0.5]) count k lands in row k+1 -- discrete levels, no
-% interpolation between counts. Row k+1 is the colour at frac = k/K.
-K = round(RAMP_MAX);
-ramp_frac = (0:K)' / K;
-if strcmpi(COLORMAP, 'marker')
-    CMAP = interp1(linspace(0, 1, size(RAMP_ANCHORS, 1)), RAMP_ANCHORS, ramp_frac, 'linear');
-else
-    assert(exist(COLORMAP, 'file') == 2 || exist(COLORMAP, 'builtin') == 5, ...
-        'COLORMAP = ''%s'' is not a MATLAB colormap function. Try ''parula'' or ''marker''.', ...
-        COLORMAP);
-    CMAP = feval(COLORMAP, K + 1);
-end
-CMAP = min(max(CMAP, 0), 1);
-
-uniq_slices = unique(filt_neurons.slice);
-uniq_slices = uniq_slices(~isnan(uniq_slices));
-
-countspercell = full(filt_neurons.expmat(:, MARKER_COLUMN));
-total_cells   = numel(countspercell);
-pass_qc = sum(filt_neurons.expmat, 2) >= READS_THRESH & ...
-          sum(filt_neurons.expmat > 0, 2) >= GENES_THRESH;
-total_passed  = nnz(pass_qc);
-
-% Crop mask over every row: which cells sit in their slice's subslice FOVs.
-% All true when cropping is off, so everything below reads the same either way.
-in_crop = true(size(countspercell));
-if CROP_TO_SUBSLICE
-    if ~isempty(SUBSLICE_DEFINITIONS_OVERRIDE)
-        defs_path = SUBSLICE_DEFINITIONS_OVERRIDE;
-    elseif strcmpi(MARKER, 'mscarlet')
-        defs_path = fullfile(analysis_root, 'preprocessing', ...
-            'subslice_definitions', 'subslice_definitions.mat');
-    else
-        defs_path = fullfile(analysis_root, 'preprocessing', ...
-            'subslice_definitions', ['subslice_definitions_' lower(MARKER) '.mat']);
-    end
-    assert(isfile(defs_path), ...
-        ['Subslice definitions not found:\n  %s\nRun\n  python ' ...
-         'preprocessing/identify_marker_subslices.py --marker %s\n' ...
-         'or set CROP_TO_SUBSLICE = false.'], defs_path, lower(MARKER));
-    defs = load(defs_path);
-    assert(isfield(defs, 'subslice_info'), ...
-        '%s holds no subslice_info struct.', defs_path);
-    subslice_info = defs.subslice_info;
-
-    % filt_neurons.fov is either the FOV names or numeric indices into
-    % filt_neurons.fov_names -- utilities/mat_io.py resolves both, 1-based, and
-    % the definitions file stores the resolved names.
-    if isnumeric(filt_neurons.fov)
-        assert(isfield(filt_neurons, 'fov_names'), ...
-            'filt_neurons.fov is numeric but there is no fov_names to resolve it against.');
-        fov_of_cell = filt_neurons.fov_names(filt_neurons.fov);
-    else
-        fov_of_cell = filt_neurons.fov;
-    end
-    assert(iscell(fov_of_cell), ...
-        ['FOV names resolved to %s, not a cell array of names -- ismember would ' ...
-         'compare the wrong thing rather than fail. Inspect filt_neurons.fov.'], ...
-        class(fov_of_cell));
-
-    in_crop = false(size(countspercell));
-    for ii = 1:numel(subslice_info)
-        % scipy.io.savemat writes a Python list of dicts as a 1xN CELL of 1x1
-        % structs, not a struct array -- a list is not a mapping, so it takes
-        % savemat's write_cells branch. Indexing it with () yields a 1x1 cell
-        % and "Dot indexing is not supported". Handle both shapes so a file
-        % written by MATLAB would also read.
-        if iscell(subslice_info)
-            entry = subslice_info{ii};
-        else
-            entry = subslice_info(ii);
-        end
-
-        % savemat turns the Python list of names into an N-by-L CHAR MATRIX,
-        % not a cell of strings. `(:)` on that flattens column-major -- every
-        % name's first character, then every name's second -- so ismember would
-        % silently match nothing and every slice would look empty. cellstr
-        % splits it back into rows and trims the padding, which is SPACES (
-        % measured: savemat pads short names to the longest with char 32, not
-        % NUL). deblank is belt and braces on top of that.
-        fov_list = entry.fov_list;
-        if ischar(fov_list)
-            fov_list = cellstr(fov_list);
-        end
-        fov_list = deblank(fov_list(:));
-
-        % (:) on both sides: a row-shaped slice field against a column mask
-        % would implicitly expand into an N-by-N logical instead of erroring.
-        in_slice_entry = filt_neurons.slice(:) == double(entry.slice_id);
-        in_crop(in_slice_entry & ismember(fov_of_cell(:), fov_list)) = true;
-    end
-    fprintf('crop: %s, %u slices, %u of %u QC-passing cells inside\n', ...
-        defs_path, numel(subslice_info), nnz(pass_qc & in_crop), nnz(pass_qc));
-end
-
-fprintf('%s, column %u, reads >= %g, genes >= %g\n', ...
-    MARKER_LABEL, MARKER_COLUMN, READS_THRESH, GENES_THRESH);
-fprintf('  QC-passing cells:    %u / %u (%.1f%%)\n', ...
-    total_passed, total_cells, total_passed / total_cells * 100);
-fprintf('  median total reads:  %g\n', ...
-    full(median(sum(filt_neurons.expmat(pass_qc, :), 2))));
-fprintf('  mapping:             counts 0 .. %g+, %s, %u fixed levels\n', ...
-    RAMP_MAX, lower(COLORMAP), K + 1);
-fprintf('  drawn:               cells with >= %g rolonies\n', MIN_ROLONIES);
-fprintf('  slices:              %u\n', numel(uniq_slices));
-fprintf('  output:              %s\n\n', out_dir);
-
-% Widest QC-passing section, so every figure can be drawn at one scale. Taken
-% from the QC-passing population, not the drawn one, so MIN_ROLONIES cannot
-% change the frame.
-common_span = 0;
-if COMMON_EXTENT
-    for ii = 1:numel(uniq_slices)
-        span_sel = filt_neurons.slice(:) == uniq_slices(ii) & pass_qc & in_crop;
-        if ~any(span_sel)
-            continue
-        end
-        sx = filt_neurons.pos(span_sel, 1);
-        sy = filt_neurons.pos(span_sel, 2);
-        common_span = max([common_span, max(sx) - min(sx), max(sy) - min(sy)]);
-    end
-    fprintf('  common extent:       %g pos units, same in every slice\n', common_span);
-end
-
-slice_col = [];
-counts    = [];
-n_passed  = [];
-n_drawn   = [];
-
-if ~exist(out_dir, 'dir')
-    mkdir(out_dir);
-end
-
-for nn = 1:numel(uniq_slices)
-    slice_no = uniq_slices(nn);
-    % (:) for the same reason as the crop mask above: a row-shaped slice field
-    % against a column mask implicitly expands to an N-by-N logical.
-    sel   = filt_neurons.slice(:) == slice_no & pass_qc & in_crop;
-    drawn = sel & countspercell >= MIN_ROLONIES;
-    below = sel & ~drawn;
-
-    % A slice with no subslice entry has nothing left after the crop. Skip it
-    % rather than writing an empty figure -- step 1 drops slices with no
-    % marker+ cells, so those slices are absent from the definitions file.
-    if ~any(sel)
-        if CROP_TO_SUBSLICE
-            why = 'QC and crop';
-        else
-            why = 'QC';
-        end
-        fprintf('slice %3u   no cells after %s -- skipped\n', slice_no, why);
-        continue
-    end
-
-    med_count = full(median(sum(filt_neurons.expmat(sel, :), 2)));
-    fprintf('slice %3u   QC cells %6u   drawn %6u   median total reads %g\n', ...
-        slice_no, nnz(sel), nnz(drawn), med_count);
-
-    f = figure('Position', [50 50 FIG_SIZE], 'Visible', 'off');
-    % Set CreateFcn AFTER creation: given at creation it runs immediately and
-    % would undo 'Visible','off'. Set now it fires only when the .fig is
-    % reopened, so a saved figure still opens visible without this run
-    % throwing one window per slice.
-    set(f, 'CreateFcn', 'set(gcbo,''Visible'',''on'')');
-    ax = axes('Parent', f);
-    hold(ax, 'on');
-
-    if DRAW_BELOW_CUTOFF && any(below)
-        scatter(ax, filt_neurons.pos(below, 1), filt_neurons.pos(below, 2), ...
-            MARKER_SIZE, BELOW_COLOR, 'filled');
-    end
-    % Counts above RAMP_MAX clamp to it: they draw the top colour, which is
-    % what that count maps to under the fixed span anyway. Drawn in ascending
-    % count so the zero-count majority cannot cover a marker cell. Guarded
-    % because a slice can have QC-passing cells and none at or above the
-    % cutoff, and empty CData is the least exercised path through scatter.
-    if any(drawn)
-        idx = find(drawn);
-        [~, order] = sort(countspercell(idx));
-        idx = idx(order);
-        scatter(ax, filt_neurons.pos(idx, 1), filt_neurons.pos(idx, 2), ...
-            MARKER_SIZE, min(countspercell(idx), K), 'filled');
-    end
-
-    colormap(ax, CMAP);
-    clim(ax, [-0.5, K + 0.5]);
-    set(ax, 'ydir', 'reverse');
-
-    % Frame from every cell that survived QC and the crop, not from the drawn
-    % subset: taking it from the plotted data would let MIN_ROLONIES zoom the
-    % section, and the cutoff must change which cells are drawn and nothing
-    % else. The crop does move the frame, deliberately.
-    px = filt_neurons.pos(sel, 1);
-    py = filt_neurons.pos(sel, 2);
-    if SQUARE_AXES
-        axis(ax, 'image');
-    end
-    if ~isempty(px)
-        if COMMON_EXTENT && common_span > 0
-            % One span for every slice, centred on this slice's own cells, so
-            % two figures are at the same scale whatever each section measures.
-            half = common_span / 2;
-            xlim(ax, (max(px) + min(px)) / 2 + [-half half]);
-            ylim(ax, (max(py) + min(py)) / 2 + [-half half]);
-        elseif SQUARE_AXES
-            lims = pad_span([min([px; py]), max([px; py])]);
-            xlim(ax, lims); ylim(ax, lims);
-        else
-            xlim(ax, pad_span([min(px) max(px)]));
-            ylim(ax, pad_span([min(py) max(py)]));
-        end
-    end
-
-    % The colormap covers 0..K whatever the cutoff -- the mapping is built once
-    % and never moves. The colorbar is cropped to what is actually on screen, so
-    % raising MIN_ROLONIES shortens the legend from the bottom and leaves every
-    % remaining swatch on the colour it already had.
-    cb_lo = min(max(round(MIN_ROLONIES), 0), K);
-    tick_step = max(1, ceil((K - cb_lo + 1) / 10));
-    ticks = unique([cb_lo:tick_step:K, K]);
-    cb = colorbar(ax);
-    cb.Limits = [cb_lo - 0.5, K + 0.5];
-    cb.Ticks = ticks;
-    cb.TickLabels = [arrayfun(@num2str, ticks(1:end-1), 'UniformOutput', false), ...
-                     {sprintf('%u+', K)}];
-    cb.Label.String = 'rolonies';
-
-    title(ax, sprintf('slice %u, %s  |  ge %g, ramp 0-%g+', ...
-        slice_no, MARKER_LABEL, MIN_ROLONIES, RAMP_MAX));
-
-    % Named for the slice number, not the loop index: the two diverge as soon
-    % as the slice numbering has a gap, and the original saved the index while
-    % titling the slice. Zero-padded so the folder sorts in slice order.
-    stem = fullfile(out_dir, sprintf('slice_%03u', slice_no));
-    savefig(f, [stem '.fig']);
-    exportgraphics(f, [stem '.png'], 'Resolution', PNG_DPI);
-    close(f);
-
-    slice_col = [slice_col; slice_no];
-    counts    = [counts; med_count];
-    n_passed  = [n_passed; nnz(sel)];
-    n_drawn   = [n_drawn; nnz(drawn)];
-end
-
-% Rows are the slices actually written, not every slice in the dataset -- a
-% skipped slice has no figure and no row.
-writetable( ...
-    table(slice_col, n_passed, n_drawn, counts, 'VariableNames', ...
-        {'slice', 'cells_passing_qc', 'cells_drawn', 'median_total_reads'}), ...
-    fullfile(out_dir, 'median_total_reads.csv'));
-
-fprintf('\n%u of %u slices written to %s\n', ...
-    numel(slice_col), numel(uniq_slices), out_dir);
-
-
-function lims = pad_span(lims)
-% A slice whose cells share one coordinate gives a zero-width span, which xlim
-% rejects ("Specify limits as increasing values"). Half a unit each way.
-if lims(2) <= lims(1)
-    lims = [lims(1) - 0.5, lims(1) + 0.5];
-end
+result = plot_marker_slices(filt_neurons, cfg);
+if result.dry_run
+    fprintf('dry run: would write %s\n  window %g um, %.4g um per pos unit\n', ...
+        result.out_dir, result.span_um, result.um_per_pos);
 end
