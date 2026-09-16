@@ -4,8 +4,9 @@ Subslice Graph Builder - LineStuffUp Alignment Graph for BARseq Subslices
 Builds the alignment graph from the 2P volumes named in local_config.py plus the
 downsampled BARseq subslices produced by preprocessing/.
 
-The only BARseq image ingested is the binary marker-only ALIGN tif written by
-preprocessing/generate_alignment_tif.py; a folder holding none is an error. A
+The only BARseq image ingested is the marker-only ALIGN tif written by
+preprocessing/generate_alignment_tif.py -- binary, or graded by rolony count
+with its --ceiling; a folder holding none is an error. A
 subslice node is named for its file stem AND its source folder, so each rolony
 cutoff (`qc20_5_ge1`, `qc20_5_ge5`, ...) is a distinct node set. Re-pointing
 SUBSLICE_DIR and re-running adds a parallel set rather than silently keeping the
@@ -29,6 +30,7 @@ Date: 2024-12-15
 """
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -113,6 +115,12 @@ from scope_profiles import (
     spacing_zyx,
     subslice_spacing_zyx,
 )
+
+# Written by preprocessing/generate_alignment_tif.py (RENDER_SIDECAR there) into
+# each render folder: the settings its tifs were drawn with. Copied into each
+# node's metadata as 'render' so a later re-render under the same folder name is
+# caught by assert_stored_shapes_match.
+ALIGN_RENDER_SIDECAR = "align_render.json"
 
 
 # ============================================
@@ -205,11 +213,11 @@ def discover_subslices(
     if not directory.exists():
         raise FileNotFoundError(f"Subslice directory not found: {directory}")
 
-    # The ALIGN tifs are what this fits on: binary, marker-only, written by
-    # preprocessing/generate_alignment_tif.py. Nothing else is accepted -- the
-    # step 4 overlay is an RGB display figure, so load_single_subslice()
-    # collapses it by BT.601 luminance, which on BY95 renders the median marker
-    # cell DARKER than the mask field behind it.
+    # The ALIGN tifs are what this fits on: marker-only, binary or graded,
+    # written by preprocessing/generate_alignment_tif.py. Nothing else is
+    # accepted -- the step 4 overlay is an RGB display figure, so
+    # load_single_subslice() collapses it by BT.601 luminance, which on BY95
+    # renders the median marker cell DARKER than the mask field behind it.
     files = sorted(directory.glob("slice*_subslice_ALIGN.tif"))
     if not files:
         raise FileNotFoundError(
@@ -466,13 +474,28 @@ def add_block_to_graph(
     )
 
 
+def read_align_render(subslice_dir: Union[str, Path]) -> Optional[dict]:
+    """The render settings recorded in a folder's sidecar, or None if it has none."""
+    path = Path(subslice_dir) / ALIGN_RENDER_SIDECAR
+    if not path.exists():
+        return None
+    return json.loads(path.read_text()).get("render")
+
+
 def assert_stored_shapes_match(
     graph: ca.Graph,
     present: List[tuple],
     verbose: bool = True,
+    render: Optional[dict] = None,
 ) -> None:
     """
-    Raise when a node already in the graph was built from differently-sized pixels.
+    Raise when a node already in the graph was built from different pixels.
+
+    Two checks. Shape, below. And render settings: `render` is the folder's
+    sidecar (read_align_render), compared with the 'render' each node recorded
+    at add time. --dim is not in the folder name, so a folder re-rendered at a
+    new --dim keeps its node names and would otherwise keep the old pixels.
+    Either side missing a record is not checked.
 
     A subslice node is named for its file stem and its cutoff folder
     (`subslice_node_name`), and neither encodes the resample factor. So after
@@ -493,7 +516,17 @@ def assert_stored_shapes_match(
     mismatched = []
     unrecorded = []
     for path, node_name in present:
-        stored = (graph.node_metadata.get(node_name) or {}).get('shape')
+        meta = graph.node_metadata.get(node_name) or {}
+        stored_render = meta.get('render')
+        if render is not None and stored_render is not None and stored_render != render:
+            keys = sorted(k for k in set(stored_render) | set(render)
+                          if stored_render.get(k) != render.get(k))
+            mismatched.append((
+                node_name,
+                {k: stored_render.get(k) for k in keys},
+                {k: render.get(k) for k in keys},
+                Path(path).parent / ALIGN_RENDER_SIDECAR))
+        stored = meta.get('shape')
         if stored is None:
             unrecorded.append(node_name)
             continue
@@ -520,9 +553,10 @@ def assert_stored_shapes_match(
         f"{len(mismatched)} subslice node(s) do not match the images on disk.\n\n"
         f"{lines}\n\n"
         f"The node name carries the cutoff folder, not the resample factor, so\n"
-        f"these would have been silently kept at their old pixel size. Either\n"
-        f"the images were regenerated at a different DOWNSAMPLE_XY, or\n"
-        f"SUBSLICE_DIR points at a different render.\n\n"
+        f"these would have been silently kept at their old pixels. Either the\n"
+        f"images were regenerated at a different DOWNSAMPLE_XY or with different\n"
+        f"generate_alignment_tif.py settings (e.g. --dim), or SUBSLICE_DIR points\n"
+        f"at a different render.\n\n"
         f"Rebuild with force_rebuild=True — and note that drops every fit on\n"
         f"these nodes, which were made against images that no longer exist.\n"
         f"{'='*60}"
@@ -578,7 +612,9 @@ def add_subslices_to_graph(
         else:
             already_present.append((f, node_name))
 
-    assert_stored_shapes_match(graph, already_present, verbose=verbose)
+    render = read_align_render(subslice_dir)
+    assert_stored_shapes_match(graph, already_present, verbose=verbose,
+                               render=render)
 
     if verbose:
         print(f"\nSubslice Loading:")
@@ -607,6 +643,8 @@ def add_subslices_to_graph(
                 'orientation': orientation_code,
                 'shape': tuple(int(n) for n in img.shape),
             }
+            if render is not None:
+                metadata['render'] = render
             # compression="label" forces castalign's lossless gzip branch
             # (utils.compress_image:153). "normal" leaves the choice to
             # utils.image_is_label, and when that says False a binary marker
@@ -615,8 +653,9 @@ def add_subslices_to_graph(
             # the background value, so the cells are clipped away and what
             # comes back is float noise, not a mask. Measured on BY95's
             # qc20_5_ge5 nodes 2026-08-31: stored info [2, 1, 90, ...], read
-            # back as float32 in [-1, 0]. An ALIGN tif is binary by
-            # construction, so never let the heuristic decide.
+            # back as float32 in [-1, 0]. An ALIGN tif is binary or a few
+            # graded uint8 levels by construction, so never let the heuristic
+            # decide; gzip keeps every level exact.
             graph.add_node(node_name, image=img, compression="label", metadata=metadata)
             added += 1
 

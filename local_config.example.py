@@ -124,10 +124,12 @@ INVIVO_PATH_GREEN = ""
 # does not reach this file. It is resolved against BOTH output roots:
 #   SUBSLICE_DIR = "qc20_5_ge1"                   # step 6 ALIGN tifs
 #   -> <OUTPUT_ROOT>/subslice_align/qc20_5_ge1
+#   SUBSLICE_DIR = "qc20_5_ge5_sat15"             # graded, --ceiling 15
+#   -> <OUTPUT_ROOT>/subslice_align/qc20_5_ge5_sat15
 #   SUBSLICE_DIR = "threshold_0.00_cellmask_0.50" # step 4 overlays
 #   -> <OUTPUT_ROOT>/mScarlet_cellmask_subslice/threshold_0.00_cellmask_0.50
-# The ALIGN tifs are the ONLY thing the builder ingests — binary and
-# marker-only. A folder holding none raises; the step 4 overlay is an RGB
+# The ALIGN tifs are the ONLY thing the builder ingests — marker-only, binary
+# or graded by rolony count. A folder holding none raises; the step 4 overlay is an RGB
 # display figure and stopped being a fallback in 2026-08.
 # The qc/ge numbers are QC_MIN_READS, QC_MIN_GENES and ALIGN_MIN_ROLONIES; each
 # combination writes its own folder, so this line selects which one is ingested.
@@ -135,7 +137,7 @@ INVIVO_PATH_GREEN = ""
 # used verbatim, for subslices preprocessing did not write.
 SUBSLICE_DIR = ""
 
-# BARseq raw fluorescence channels to carry into the graph beside the binary
+# BARseq raw fluorescence channels to carry into the graph beside the
 # ALIGN renders, as Identity siblings of them. Empty list = skip.
 #
 #   []                       nothing

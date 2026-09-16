@@ -97,10 +97,11 @@ GRAPH_PATH = r""
 # preprocessing_config and a rename never reaches this file. Resolved against
 # BOTH output roots:
 #   "qc20_5_ge3"  -> subslice_align/qc20_5_ge3/   (step 6 ALIGN tifs)
-# ALIGN tifs are the only image the builder ingests — binary, marker-only. A
-# folder holding none (a step 4 overlay folder, say) is a hard error; the step 4
-# overlay is an RGB display figure whose BT.601 collapse renders BY95's median
-# marker cell darker than the mask field behind it.
+#   "qc20_5_ge5_sat15" -> graded render, generate_alignment_tif.py --ceiling 15
+# ALIGN tifs are the only image the builder ingests — marker-only, binary or
+# graded. A folder holding none (a step 4 overlay folder, say) is a hard error;
+# the step 4 overlay is an RGB display figure whose BT.601 collapse renders
+# BY95's median marker cell darker than the mask field behind it.
 # The number is ALIGN_MIN_ROLONIES, picked by eye with check_rolony_cutoff.py;
 # each cutoff writes its own folder, so change it here to switch which one is
 # ingested. A wrong name raises and lists the folders that do exist.
@@ -111,7 +112,7 @@ GRAPH_PATH = r""
 SUBSLICE_DIR = r"qc20_5_ge5"
 
 
-# BARseq raw fluorescence channels to carry into the graph beside the binary
+# BARseq raw fluorescence channels to carry into the graph beside the
 # ALIGN renders, as Identity siblings of them. Empty list = skip.
 #
 #   []              nothing (previous behaviour)

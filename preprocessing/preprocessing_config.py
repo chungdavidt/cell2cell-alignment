@@ -114,8 +114,8 @@ MSCARLET_CELLMASK_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_cellmask_subslice")
 # subfolder per run. Only the mScarlet root feeds a relative SUBSLICE_DIR lookup
 # (analysis_paths._preprocessing_roots); these overlays are display products.
 GCAMP_CELLMASK_DIR = os.path.join(OUTPUT_ROOT, "GCaMP_cellmask_subslice")
-# Binary marker-only images the graph aligns on. One subdirectory per gate
-# combination, named by generate_alignment_tif.py.
+# Marker-only images the graph aligns on, binary or graded (_sat{ceiling}).
+# One subdirectory per gate combination, named by generate_alignment_tif.py.
 SUBSLICE_ALIGN_DIR = os.path.join(OUTPUT_ROOT, "subslice_align")
 MSCARLET_INTERACTIVE_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_cellmask_interactive_subslice")
 MSCARLET_LABELLED_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_overlay_dapi_labelled")
