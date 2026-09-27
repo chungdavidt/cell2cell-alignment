@@ -1,0 +1,6 @@
+*.ipynb filter=nbstripout
+*.zpln filter=nbstripout
+*.ipynb diff=ipynb
+
+# preprocessing/s2p.ipynb is not David's file; leave its committed copy untouched.
+preprocessing/s2p.ipynb -filter -diff
