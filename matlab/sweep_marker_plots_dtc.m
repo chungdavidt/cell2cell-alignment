@@ -17,12 +17,12 @@
 % the list, then set it false.
 
 %% ---- SWEEP ----------------------------------------------------------------
-CEILINGS = [5 10 15];   % one ceiling for both markers
-MARKERS  = {'mscarlet', 'gcamp'};
+CEILINGS = 10;   % one ceiling for both markers
+MARKERS  = {'gcamp'};
 READS    = 20:-5:0;
 GENES    = 5:-1:0;
 ROLONIES = 0:3;
-EXPECTED_RUNS = 720;   % numel of the five lists multiplied; update with them
+EXPECTED_RUNS = 120;   % numel of the five lists multiplied; update with them
 
 DRY_RUN  = false;
 
