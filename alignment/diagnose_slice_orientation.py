@@ -3,9 +3,9 @@
 
 castalign_testground.ipynb shows a BARseq slice two ways:
 
-    Mode C (cell 22)  the slice is the FIXED image, drawn as stored; the target
+    Mode C            the slice is the FIXED image, drawn as stored; the target
                       (ex-vivo block or in-vivo) is warped onto it.
-    Mode A (cell 18)  the target is the FIXED image, drawn as stored; the slice
+    Mode A            the target is the FIXED image, drawn as stored; the slice
                       is warped onto it by g.get_transform(slice, target).
 
 This script replays each step with castalign's own calls on the real graph and
@@ -14,8 +14,8 @@ traced to the step that produces it:
 
     1  slice TIFF on disk      vs  slice node image in the graph
     2  target TIFF on disk     vs  target node image in the graph
-    3  NOTEBOOK REPLAY: the notebook's own cell 16, Mode C cell and Mode A cell
-       are executed on a COPY of the graph, with ca_gui.align_interactive
+    3  NOTEBOOK REPLAY: the startup cell's helper functions, the Mode C cell and
+       the Mode A cell are executed on a COPY of the graph, with ca_gui.align_interactive
        replaced by a recorder. It captures exactly which arrays and which
        start transform each mode hands castalign, and what Mode C saves. The
        recorder answers Mode C with the fit already stored in the graph, so
@@ -29,7 +29,10 @@ traced to the step that produces it:
        through the same castalign call Mode A uses, matched against the 8
        square symmetries of the original
     9  a figure built from the arrays and transforms the replay recorded:
-       the Mode C view, the Mode A view and the test pattern
+       the Mode C view, the Mode A view (one plane, as napari's 2D view draws
+       it) and the test pattern
+   10  what Mode A's 2D view can show: which target planes the warped slice
+       lands on, how much of it one plane holds, and the fit's tilt
 
 Screen convention (napari's default 2D view of (z, y, x) data): y points down,
 x points right. "rotate 90 counter-clockwise" is np.rot90(img, 1).
@@ -320,7 +323,12 @@ def _same_points(t1, t2, shape, seed=0):
 def step3_notebook_replay(rep, g, ca, graph_path, notebook, slice_name, target, work_dir):
     rep(f"\nSTEP 3  notebook replay: {notebook.name} cells executed on a copy of the graph")
     nb = json.loads(Path(notebook).read_text(encoding="utf-8"))
-    cell_utils = _cell_source(nb, "# ALIGNMENT UTILITIES")
+    # The helpers live in the startup cell, which also imports castalign.gui,
+    # loads the REAL graph from local_config and sets slice_node = None. Run
+    # only the function definitions the mode cells call.
+    cell_utils = _function_source(_cell_source(nb, "# ALIGNMENT UTILITIES"),
+                                  {"get_initial_transform_slice_to_target", "load_and_pad_slice",
+                                   "save_alignment", "get_previous_transform"})
     cell_picker = _cell_source(nb, "# CHAIN PICKER")
     cell_mode_c = _cell_source(nb, "# MODE C:")
     cell_mode_a = _cell_source(nb, "# MODE A:")
@@ -523,14 +531,14 @@ def step8_images(rep, ca, seed, slice_img, final):
             rep.status(8, None, f"{label}: castalign rendered {'no planes' if rendered.shape[0] == 0 else 'all zeros'} "
                                 f"{rendered.shape} -- the slice would be INVISIBLE in Mode A (float32 origin rounding)")
             flat = np.zeros(rendered.shape[1:], dtype=np.float32)
-            out[label] = (flat, origin)
+            out[label] = (flat, origin, rendered)
             rep.image_matches[label] = None
             continue
         flat = rendered.max(axis=0)
         if box is None:
             box = footprint(flat)          # the pattern's frame fills the slice rectangle
         best, scores = best_symmetry_match(flat, img2d, box)
-        out[label] = (flat, origin)
+        out[label] = (flat, origin, rendered)
         rep.image_matches[label] = best
         if best is None:
             rep.status(8, None, f"{label}: nothing rendered to compare")
@@ -547,7 +555,43 @@ def step8_images(rep, ca, seed, slice_img, final):
     return out, probe
 
 
-def step9_figure(rep, out_png, replay, rendered, probe):
+def step10_mode_a_planes(rep, seed, slice_img, rendered_real):
+    rep("\nSTEP 10  what Mode A's 2D view can show (napari draws ONE z plane of each layer at a time)")
+    s = np.asarray(slice_img)
+    H, W = s.shape[1:]
+    o = np.asarray(seed.transform(np.asarray([[0.0, 0.0, 0.0]])))[0]
+    n = np.asarray(seed.transform(np.asarray([[1.0, 0.0, 0.0]])))[0] - o      # where the slice's +z points
+    tilt = float(np.degrees(np.arccos(min(1.0, abs(n[0]) / np.linalg.norm(n)))))
+    corners = np.asarray(seed.transform(np.asarray([[0.0, y, x] for y in (0, H) for x in (0, W)], float)))
+    centre_z = float(np.asarray(seed.transform(np.asarray([[0.0, H / 2.0, W / 2.0]])))[0][0])
+    rep(f"  slice normal vs target z axis: {tilt:.2f} degrees"
+        f"{' (turned over: slice +z points to target -z)' if n[0] < 0 else ''}")
+    rep(f"  slice corners land on target z = {corners[:, 0].min():.2f} .. {corners[:, 0].max():.2f}; "
+        f"centre z = {centre_z:.2f}")
+    flat, origin, rendered = rendered_real
+    if rendered.shape[0] == 0 or not rendered.any():
+        rep.status(10, False, "castalign rendered the slice blank -- Mode A shows NOTHING at any z")
+        return None
+    thr = 0.25 * float(rendered.max())
+    foot = int((rendered.max(axis=0) > thr).sum())
+    counts = [int((rendered[k] > thr).sum()) for k in range(rendered.shape[0])]
+    planes = [float(origin[0]) + k for k, c in enumerate(counts) if c > 0]
+    k_best = int(np.argmax(counts))
+    z_best = float(origin[0]) + k_best
+    frac = counts[k_best] / foot if foot else 0.0
+    rep(f"  warped slice has signal on {len(planes)} target plane(s), z = {planes[0]:.1f} .. {planes[-1]:.1f}")
+    rep(f"  best single plane z = {z_best:.1f} holds {frac:.0%} of the slice's drawn footprint")
+    if len(planes) > 1:
+        rep("  Mode C resamples the TARGET onto the slice's plane, so it shows the whole slice against one")
+        rep("  oblique section. Mode A cannot: it shows the target's own planes, and on each one only the")
+        rep("  strip of the slice that crosses it. Scroll z in Mode A, or view in 3D, to see the rest.")
+    rep.status(10, None, f"Mode A 2D: scroll to z = {round(z_best)}; one plane shows {frac:.0%} of the slice "
+                         f"(tilt {tilt:.2f} degrees)")
+    rep.mode_a_plane = {"z": z_best, "k": k_best, "frac": frac, "tilt": tilt, "n_planes": len(planes)}
+    return rep.mode_a_plane
+
+
+def step9_figure(rep, out_png, replay, rendered, probe, plane=None):
     rep("\nSTEP 9  figure, from the arrays and transforms the replay recorded")
     import matplotlib
     matplotlib.use("Agg")
@@ -567,11 +611,18 @@ def step9_figure(rep, out_png, replay, rendered, probe):
         tgt_c = np.zeros((H, W))
     # Mode A: castalign draws the movable (slice) through the start transform, at a napari translate.
     seed = A["transform"]
-    flat_a, origin_a = rendered["real slice"]
-    flat_p, _ = rendered["test pattern"]
+    flat_a, origin_a, rendered_a = rendered["real slice"]
+    flat_p = rendered["test pattern"][0]
     T = np.asarray(A["fixed"])
-    centre = np.asarray(seed.transform(np.asarray([[0.0, H / 2.0, W / 2.0]])))[0]
-    zc = int(np.clip(round(centre[0]), 0, T.shape[0] - 1))
+    if plane is not None:
+        # napari's 2D view: one plane of the warped slice, over the target plane at the same world z
+        flat_a = rendered_a[plane["k"]]
+        zc = int(np.clip(round(plane["z"]), 0, T.shape[0] - 1))
+        a_title = f"MODE A movable: slice on plane z={zc} ({plane['frac']:.0%} of it)"
+    else:
+        centre = np.asarray(seed.transform(np.asarray([[0.0, H / 2.0, W / 2.0]])))[0]
+        zc = int(np.clip(round(centre[0]), 0, T.shape[0] - 1))
+        a_title = "MODE A movable: slice via start transform"
     y0, x0 = int(round(origin_a[1])), int(round(origin_a[2]))
     tgt_a = np.zeros_like(flat_a)
     ys0, xs0 = max(0, y0), max(0, x0)
@@ -589,7 +640,7 @@ def step9_figure(rep, out_png, replay, rendered, probe):
         (ax[0, 0], norm(fixed_c[pad_z]), f"MODE C fixed: slice, plane {pad_z}"),
         (ax[0, 1], norm(tgt_c), f"MODE C movable: target via GUI fit, plane {pad_z}"),
         (ax[0, 2], None, "MODE C overlay: slice red, target green"),
-        (ax[1, 0], norm(flat_a), "MODE A movable: slice via start transform"),
+        (ax[1, 0], norm(flat_a), a_title),
         (ax[1, 1], norm(tgt_a), f"MODE A fixed: target, plane z={zc}"),
         (ax[1, 2], None, "MODE A overlay: target red, slice green"),
         (ax[2, 0], norm(probe), "test pattern: Mode C view (as stored)"),
@@ -622,6 +673,7 @@ def run(g, ca, graph_path, notebook, slice_name, target, slice_tif, slice_loader
         target_tif, target_loader, out_dir, keep_copy=False):
     rep = Report()
     rep.final = None
+    rep.mode_a_plane = None
     rep.image_matches = {}
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -656,7 +708,8 @@ def run(g, ca, graph_path, notebook, slice_name, target, slice_tif, slice_loader
         final = step7_orientation(rep, parts_rev, np.asarray(slice_img).shape)
         rep.final = final
         rendered, probe = step8_images(rep, ca, seed, replay["A"]["movable"], final)
-        step9_figure(rep, out_dir / "orientation_steps.png", replay, rendered, probe)
+        plane = step10_mode_a_planes(rep, seed, replay["A"]["movable"], rendered["real slice"])
+        step9_figure(rep, out_dir / "orientation_steps.png", replay, rendered, probe, plane)
     finally:
         if not keep_copy:
             gc.collect()
@@ -667,6 +720,10 @@ def run(g, ca, graph_path, notebook, slice_name, target, slice_tif, slice_loader
     if final is not None:
         rep(f"  Mode A draws this slice as: {final['nearest']} of how Mode C draws it"
             f" (mirrored on screen: {'YES' if final['mirrored_on_screen'] else 'no'})")
+    if rep.mode_a_plane is not None:
+        p = rep.mode_a_plane
+        rep(f"  Mode A 2D view: the slice spans {p['n_planes']} target plane(s); at z = {round(p['z'])} one plane "
+            f"shows {p['frac']:.0%} of it (tilt {p['tilt']:.2f} degrees)")
     (out_dir / "orientation_steps.txt").write_text("\n".join(rep.lines) + "\n", encoding="utf-8")
     print(f"\nreport: {out_dir / 'orientation_steps.txt'}")
     return rep
@@ -679,6 +736,7 @@ SELF_TEST_CASES = [
     ("yrotate 180 (turn-over)", {"yrotate": 180.0}, False, "flip left-right", True),
     ("zrotate -90 + yrotate 180 (turn-over)", {"zrotate": -90.0, "yrotate": 180.0}, False, "transpose (y<->x)", True),
     ("flip x (reflection)", {}, True, "flip left-right", True),
+    ("xrotate 5 (tilted cut)", {"xrotate": 5.0}, False, "identity", False),
 ]
 
 
@@ -728,16 +786,20 @@ def self_test(ca, notebook, keep=False):
             mirror = rep.final["mirrored_on_screen"] if rep.final else None
             imgs = sorted(set(rep.image_matches.values()))
             ok = (not rep.fails and got == expect and mirror == expect_mirror and imgs == [expect])
-            rows.append((name, expect, got, imgs, sorted(set(rep.fails)), ok))
+            p = rep.mode_a_plane
+            # step 10: a flat fit puts the whole slice on one plane; a tilted one cannot
+            ok = ok and p is not None and ((p["frac"] > 0.9) == (abs(rot.get("xrotate", 0.0)) < 1))
+            plane_txt = f"step 10 {p['frac']:.0%} on z={round(p['z'])}, {p['n_planes']} planes" if p else "step 10 blank"
+            rows.append((name, expect, got, imgs, sorted(set(rep.fails)), plane_txt, ok))
     finally:
         if not keep:
             gc.collect()
             shutil.rmtree(root, ignore_errors=True)
     print("\n" + "=" * 100)
     print("SELF-TEST SUMMARY (known answer vs what the diagnostic reports)")
-    for name, expect, got, imgs, fails, ok in rows:
+    for name, expect, got, imgs, fails, plane_txt, ok in rows:
         print(f"  [{'PASS' if ok else 'FAIL'}] {name:40s} expected {expect!r:30s} step 7 {got!r:30s} "
-              f"step 8 {imgs} failed steps {fails or 'none'}")
+              f"step 8 {imgs} {plane_txt} failed steps {fails or 'none'}")
     if keep:
         print(f"  files kept in {root}")
     return all(r[-1] for r in rows)
