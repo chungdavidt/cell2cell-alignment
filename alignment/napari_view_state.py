@@ -9,13 +9,27 @@ own alignment_gui):
     3D orbit to the other face  mirrored (flip left-right / up-down, or a
                                 transpose if the camera is also turned 90 deg)
 
+Which face is "the other face" depends on napari's depth setting (measured):
+
+    depth "towards" (napari >= 0.6 default)   the 3D view that looks like 2D has the
+                                              LAST z plane nearest the camera; turn
+                                              plane 0 toward you and it is mirrored
+    depth "away"                              the 3D view that looks like 2D has
+                                              plane 0 nearest the camera
+
+So for a stack whose plane 0 is the brain surface, a dorsal 3D view (surface
+toward you) is a mirror of the 2D view under the default, and matches it under
+"away". install(depth="away") sets that on every castalign window; napari's
+Preferences > Application > depth axis orientation sets it for every viewer.
+
 None of these carry over to the next window; each align_interactive call opens
 a fresh napari.Viewer. napari's console is disabled under Jupyter and the
 notebook is blocked while the window is open, so this has to be installed
 before the mode cell runs:
 
     import napari_view_state; napari_view_state.install()     # notebook cell, once
-    ... run Mode C / Mode A ...
+    napari_view_state.install(depth="away")   # also: plane 0 toward you looks like 2D
+    ... run Mode C ...
     napari_view_state.uninstall()
 
 Each window then labels its axes z/y/x, shows the axes overlay, prints its view
@@ -69,17 +83,39 @@ def classify_view(displayed, ndisplay, orientation2d=("down", "right"),
     return best, P
 
 
+def nearest_end(displayed, view_direction, depth):
+    """Which end of the z axis faces the camera in 3D: 'plane 0' or 'last plane'.
+
+    Measured on napari 0.7.0: looking along -z, "towards" puts the last plane nearest and
+    "away" puts plane 0 nearest; looking along +z it is the other way round.
+    """
+    vz = float(np.asarray(view_direction, dtype=float)[[int(a) for a in displayed].index(0)])
+    if abs(vz) < 0.7:
+        return "neither (side view)"
+    last_nearest = (vz < 0) == (str(depth) == "towards")
+    return "last plane" if last_nearest else "plane 0"
+
+
 def view_state(viewer):
     d, c = viewer.dims, viewer.camera
     verdict, _ = classify_view(d.displayed, d.ndisplay, tuple(str(o) for o in c.orientation2d),
                                c.view_direction, c.up_direction)
     labels = [d.axis_labels[i] for i in d.displayed]
-    return (f"(y, x) face shown as: {verdict} | displayed={labels} ndisplay={d.ndisplay} "
+    depth = str(c.orientation[0])
+    near = (f" | nearest the camera: {nearest_end(d.displayed, c.view_direction, depth)} (depth={depth})"
+            if d.ndisplay == 3 else "")
+    return (f"(y, x) face shown as: {verdict}{near} | displayed={labels} ndisplay={d.ndisplay} "
             f"order={tuple(int(i) for i in d.order)} angles={tuple(round(float(a), 1) for a in c.angles)}")
 
 
-def install():
-    """Wrap napari.Viewer (as castalign.gui uses it) for the rest of the session."""
+def install(depth=None):
+    """Wrap napari.Viewer (as castalign.gui uses it) for the rest of the session.
+
+    depth: None leaves napari's setting; "away" or "towards" sets camera.orientation's
+    depth axis on every new window.
+    """
+    if depth not in (None, "away", "towards"):
+        raise ValueError(f"depth must be None, 'away' or 'towards', not {depth!r}")
     import castalign.gui as ca_gui
     napari = ca_gui.napari
     base = getattr(napari, "_unpatched_Viewer", napari.Viewer)
@@ -89,6 +125,8 @@ def install():
         def __init__(self, *args, **kwargs):
             kwargs.setdefault("axis_labels", ("z", "y", "x"))
             super().__init__(*args, **kwargs)
+            if depth is not None:
+                self.camera.orientation = (depth, *tuple(str(o) for o in self.camera.orientation)[1:])
             self.axes.visible = True
             self.axes.labels = True
             self._last_verdict = None
@@ -99,13 +137,14 @@ def install():
 
         def _report_if_changed(self, event=None):
             state = view_state(self)
-            verdict = state.split(" | ")[0]
+            verdict = " | ".join(state.split(" | ")[:2]) if self.dims.ndisplay == 3 else state.split(" | ")[0]
             if verdict != self._last_verdict:
                 self._last_verdict = verdict
                 print(f"[napari view] {state}")
 
     napari.Viewer = _StateViewer
-    print("napari_view_state installed: castalign windows will report their view state (F9 to print).")
+    print("napari_view_state installed: castalign windows will report their view state (F9 to print)"
+          + (f", depth axis '{depth}'." if depth else "."))
 
 
 def uninstall():
