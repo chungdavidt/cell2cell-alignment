@@ -123,26 +123,38 @@ def _preprocessing_config(reason: str = None):
 # generate_alignment_tif.py, where {render} is its folder name
 # (gcamp_qc20_5_ge3_sat10), so a file viewed on its own still says its marker
 # and gates. Folders written before 2026-10-08 hold slice{N}_subslice_ALIGN.tif.
+#
+# generate_alignment_tif.py --source slice draws the same image on the whole
+# section: slice{N}_ALIGN_{render}.tif, with no `subslice` token so the graph
+# builder's glob cannot pick it up. The anchored pattern also keeps the slice
+# form from matching a subslice file (`slice22_subslice_ALIGN_x` fails at `22_`).
 ALIGN_TIF_GLOB = "slice*_subslice_ALIGN*.tif"
 _ALIGN_TIF_RE = re.compile(r"slice(\d+)_subslice_ALIGN(?:_\w+)?\.tif")
+SLICE_ALIGN_TIF_GLOB = "slice*_ALIGN_*.tif"
+_SLICE_ALIGN_TIF_RE = re.compile(r"slice(\d+)_ALIGN_\w+\.tif")
+_ALIGN_FORMS = {"subslice": (ALIGN_TIF_GLOB, _ALIGN_TIF_RE),
+                "slice": (SLICE_ALIGN_TIF_GLOB, _SLICE_ALIGN_TIF_RE)}
 
 
-def align_tif_name(slice_no: int, render: Optional[str] = None) -> str:
-    """`slice22_subslice_ALIGN_gcamp_qc20_5_ge3_sat10.tif`; no render gives the pre-2026-10-08 name."""
+def align_tif_name(slice_no: int, render: Optional[str] = None, source: str = "subslice") -> str:
+    """`slice22_subslice_ALIGN_gcamp_qc20_5_ge3_sat10.tif`, or `slice22_ALIGN_...` for
+    source "slice"; a subslice name with no render is the pre-2026-10-08 one."""
+    if source == "slice":
+        return f"slice{int(slice_no)}_ALIGN_{render}.tif"
     return f"slice{int(slice_no)}_subslice_ALIGN{'_' + render if render else ''}.tif"
 
 
-def align_tif_slice(path) -> Optional[int]:
-    """Section number of an ALIGN tif filename, or None when it is not one."""
-    m = _ALIGN_TIF_RE.fullmatch(Path(path).name)
+def align_tif_slice(path, source: str = "subslice") -> Optional[int]:
+    """Section number of an ALIGN tif filename of `source`, or None when it is not one."""
+    m = _ALIGN_FORMS[source][1].fullmatch(Path(path).name)
     return int(m.group(1)) if m else None
 
 
-def align_tifs(directory) -> "list[Path]":
-    """ALIGN tifs in `directory`, in section order. Raises if a section has two."""
+def align_tifs(directory, source: str = "subslice") -> "list[Path]":
+    """ALIGN tifs of `source` in `directory`, in section order. Raises if a section has two."""
     by_slice = {}
-    for path in Path(directory).glob(ALIGN_TIF_GLOB):
-        n = align_tif_slice(path)
+    for path in Path(directory).glob(_ALIGN_FORMS[source][0]):
+        n = align_tif_slice(path, source)
         if n is None:
             continue
         if n in by_slice:

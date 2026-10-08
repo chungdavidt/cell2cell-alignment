@@ -49,6 +49,21 @@ counterpart is the green channel, which rides the red fit through Identity.
 For GCaMP, --min-rolonies is required: ALIGN_MIN_ROLONIES is mScarlet's cutoff.
 Bare --ceiling takes the marker's ceiling from marker_profiles.
 
+## --source slice
+
+Draws the same image on the WHOLE section instead of the subslice crop: reads
+stitch_slices.py --downsample's slice{N}_CELLMASK.h5 (every FOV with a cell, no
+marker filter) and writes
+
+    <OUTPUT_ROOT>/slice_align_{marker}/{marker}_qc..._ge{n}[_sat{c}]/slice{N}_ALIGN_{folder}.tif
+
+Same gates, same levels, same cell -> pixel formula; a subslice image is a crop
+of its whole-slice one. For stacking and viewing (stack_sections.py): the names
+carry no `subslice` token, so the graph builder never ingests them. The canvas
+offset is read with generate_marker_cellmask_slice.canvas_offsets, which takes
+stitch_slices.py's min_x/min_y (defect D13: step 3 calls the same value
+min_x_offset/min_y_offset).
+
 The whole label is filled, so somas keep the shape the segmentation gave them.
 
 ## What --min-rolonies here does and does not affect
@@ -89,6 +104,7 @@ Usage:
     python preprocessing/generate_alignment_tif.py --min-rolonies 5 --ceiling        # ramp 5 -> 15
     python preprocessing/generate_alignment_tif.py --min-rolonies 0 --ceiling 10 --dim 60
     python preprocessing/generate_alignment_tif.py --marker gcamp --min-rolonies 3 --ceiling   # ramp 3 -> 10
+    python preprocessing/generate_alignment_tif.py --source slice --marker gcamp -n 3 --ceiling  # whole sections
 """
 
 import argparse
@@ -109,6 +125,9 @@ from scipy import sparse
 from preprocessing_config import (
     FILT_NEURONS_PATH,
     HYB_DOWNSAMPLED_DIR,
+    HYB_SLICE_DOWNSAMPLED_DIR,
+    SLICE_ALIGN_MSCARLET_DIR,
+    SLICE_ALIGN_GCAMP_DIR,
     SUBSLICE_ALIGN_MSCARLET_DIR,
     SUBSLICE_ALIGN_GCAMP_DIR,
     QC_MIN_READS,
@@ -127,7 +146,7 @@ from utilities.mat_io import (
 )
 from utilities.image_io import imwrite_tiff
 from marker_profiles import MARKERS
-from analysis_paths import ALIGN_TIF_GLOB, align_tif_name
+from analysis_paths import ALIGN_TIF_GLOB, SLICE_ALIGN_TIF_GLOB, align_tif_name
 
 FOREGROUND = 255
 SPARSE_WARN = 20        # subslices with fewer visible cells than this are flagged
@@ -139,11 +158,17 @@ RENDER_SIDECAR = "align_render.json"
 DEFAULT_MARKER = "mscarlet"
 # --ceiling with no value: take the marker's ceiling. Not a str, which argparse would int().
 BARE_CEILING = object()
-# Output root per marker.
+# Output root per marker, per source.
 ALIGN_ROOTS = {
     "mscarlet": SUBSLICE_ALIGN_MSCARLET_DIR,
     "gcamp": SUBSLICE_ALIGN_GCAMP_DIR,
 }
+SLICE_ALIGN_ROOTS = {
+    "mscarlet": SLICE_ALIGN_MSCARLET_DIR,
+    "gcamp": SLICE_ALIGN_GCAMP_DIR,
+}
+TIF_GLOBS = {"subslice": ALIGN_TIF_GLOB, "slice": SLICE_ALIGN_TIF_GLOB}
+SLICE_CELLMASK_RE = re.compile(r"slice(\d+)_CELLMASK\.h5")
 
 
 def render_leaf(marker, min_reads, min_genes, floor, ceiling=None):
@@ -180,15 +205,29 @@ def read_render_sidecar(out_dir):
     return render
 
 
-def check_render_sidecar(out_dir, render):
+def read_render_source(out_dir):
+    """The sidecar's `source`; one written before --source existed is subslice."""
+    path = Path(out_dir) / RENDER_SIDECAR
+    if not path.exists():
+        return None
+    return json.loads(path.read_text()).get("source", "subslice")
+
+
+def check_render_sidecar(out_dir, render, source="subslice"):
     """Raise if out_dir was rendered with different settings.
 
     --dim and --all-cells-level are not in the folder name, so without this a
-    second run would mix two renders in one folder.
+    second run would mix two renders in one folder. The source sits beside
+    `render`, not in it: the graph builder compares `render` with node metadata,
+    and whole-slice renders never become nodes.
     """
+    existing_source = read_render_source(out_dir)
+    if existing_source is not None and existing_source != source:
+        raise SystemExit(f"\n{out_dir} holds {existing_source} renders; this run is "
+                         f"--source {source}. Pass --out elsewhere.")
     existing = read_render_sidecar(out_dir)
     if existing is None:
-        if any(Path(out_dir).glob(ALIGN_TIF_GLOB)):
+        if any(Path(out_dir).glob(TIF_GLOBS[source])):
             print(f"note: {out_dir.name} has ALIGN tifs but no {RENDER_SIDECAR}; "
                   f"recording this run's settings for the whole folder")
         return
@@ -205,9 +244,10 @@ def check_render_sidecar(out_dir, render):
             f"rebuilt with force_rebuild=True.")
 
 
-def write_render_sidecar(out_dir, render, levels):
-    """Record the settings and the count -> level table for out_dir."""
-    payload = {"render": render,
+def write_render_sidecar(out_dir, render, levels, source="subslice"):
+    """Record the settings, the source and the count -> level table for out_dir."""
+    payload = {"source": source,
+               "render": render,
                "levels": {str(c): int(v) for c, v in levels}}
     (Path(out_dir) / RENDER_SIDECAR).write_text(json.dumps(payload, indent=2) + "\n")
 
@@ -260,6 +300,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
+    ap.add_argument("--source", choices=("subslice", "slice"), default="subslice",
+                    help="subslice crop (the graph's input, default) or the whole section")
     ap.add_argument("--marker", choices=sorted(ALIGN_ROOTS), default=DEFAULT_MARKER,
                     help=f"which marker column to draw (default: {DEFAULT_MARKER})")
     ap.add_argument("--min-rolonies", "-n", type=int, default=None,
@@ -323,14 +365,16 @@ def main():
             ap.error(f"--all-cells-level {args.all_cells_level} must be below --dim {dim}, "
                      f"or other cells read as floor cells")
 
-    input_dir = Path(HYB_DOWNSAMPLED_DIR)
+    whole = args.source == "slice"
+    input_dir = Path(HYB_SLICE_DOWNSAMPLED_DIR if whole else HYB_DOWNSAMPLED_DIR)
     if not input_dir.exists():
         raise FileNotFoundError(
-            f"Downsampled subslices not found: {input_dir}\n"
-            f"Run stitch_subslices.py then downsample_subslices_cellmask.py first."
-        )
+            f"Downsampled {'whole slices' if whole else 'subslices'} not found: {input_dir}\n"
+            + ("Run stitch_slices.py --downsample --no-scale-bars first." if whole else
+               "Run stitch_subslices.py then downsample_subslices_cellmask.py first."))
     leaf = render_leaf(marker, args.min_reads, args.min_genes, floor, ceiling)
-    out_dir = Path(args.out) if args.out else Path(ALIGN_ROOTS[marker]) / leaf
+    roots = SLICE_ALIGN_ROOTS if whole else ALIGN_ROOTS
+    out_dir = Path(args.out) if args.out else Path(roots[marker]) / leaf
     out_dir.mkdir(parents=True, exist_ok=True)
 
     render = {
@@ -343,7 +387,7 @@ def main():
         "dim": dim,
         "all_cells_level": args.all_cells_level,
     }
-    check_render_sidecar(out_dir, render)
+    check_render_sidecar(out_dir, render, args.source)
     if graded:
         ramp_counts = np.arange(floor, ceiling + 1)
         levels = list(zip(ramp_counts.tolist(),
@@ -363,6 +407,7 @@ def main():
         print(f"shading: binary, every drawn cell {FOREGROUND}")
     print(f"         everything else -> background"
           f"{'' if not args.all_cells_level else f' (other cells at {args.all_cells_level})'}")
+    print(f"source:  {'whole slices' if whole else 'subslices'}  ({input_dir})")
     print(f"scope:   {SCOPE} ({TARGET_XY_UM_PER_PX:.4f} µm/px)")
     print(f"output:  {out_dir}\n")
 
@@ -398,28 +443,40 @@ def main():
     slice_ids = np.asarray(fn["slice"]).ravel()
     pos = np.asarray(fn["pos"])
 
-    files = sorted(input_dir.glob("slice*_subslice_CELLMASK.h5"),
-                   key=lambda f: int(re.search(r"slice(\d+)_subslice", f.name).group(1)))
-    use_h5 = bool(files)
-    if not files:
-        files = sorted(input_dir.glob("slice*_subslice_CELLMASK.mat"),
+    if whole:
+        from generate_marker_cellmask_slice import canvas_offsets
+        found = {int(m.group(1)): f for f in input_dir.glob("slice*_CELLMASK.h5")
+                 if (m := SLICE_CELLMASK_RE.fullmatch(f.name))}
+        files = [found[n] for n in sorted(found)]
+        use_h5 = True
+        if not files:
+            raise FileNotFoundError(f"No slice*_CELLMASK.h5 in: {input_dir}")
+    else:
+        files = sorted(input_dir.glob("slice*_subslice_CELLMASK.h5"),
                        key=lambda f: int(re.search(r"slice(\d+)_subslice", f.name).group(1)))
-    if not files:
-        raise FileNotFoundError(f"No downsampled subslices found in: {input_dir}")
+        use_h5 = bool(files)
+        if not files:
+            files = sorted(input_dir.glob("slice*_subslice_CELLMASK.mat"),
+                           key=lambda f: int(re.search(r"slice(\d+)_subslice", f.name).group(1)))
+        if not files:
+            raise FileNotFoundError(f"No downsampled subslices found in: {input_dir}")
 
     want = set(args.slices) if args.slices else None
     written, sparse_slices = [], []
-    write_render_sidecar(out_dir, render, levels)
+    write_render_sidecar(out_dir, render, levels, args.source)
 
     for f in files:
-        slice_id = int(re.search(r"slice(\d+)_subslice", f.name).group(1))
+        slice_id = int(re.search(r"slice(\d+)_", f.name).group(1))
         if want is not None and slice_id not in want:
             continue
         in_slice = slice_ids == slice_id
         if not in_slice.any():
             continue
 
-        if use_h5:
+        if whole:
+            cellmask, meta = load_cellmask_h5(f)
+            min_x_offset, min_y_offset = canvas_offsets(meta, f)
+        elif use_h5:
             cellmask, meta = load_cellmask_h5(f)
             min_x_offset = int(meta.get("min_x_offset", 0))
             min_y_offset = int(meta.get("min_y_offset", 0))
@@ -445,7 +502,7 @@ def main():
             cellmask, x_img, y_img, visible[idx], args.all_cells_level,
             None if values is None else values[idx])
 
-        out_path = out_dir / align_tif_name(slice_id, leaf)
+        out_path = out_dir / align_tif_name(slice_id, leaf, args.source)
         imwrite_tiff(out_path, img)
         written.append((slice_id, int(visible[idx].sum()), n_drawn, off_mask, oob))
         flag = ""

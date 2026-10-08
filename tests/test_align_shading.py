@@ -334,6 +334,46 @@ def test_align_tifs_one_per_section(tmp):
         raise AssertionError("two ALIGN tifs for one section accepted")
 
 
+def test_slice_source_names(tmp):
+    import analysis_paths as ap
+    leaf = "mscarlet_qc0_3_ge0_sat5"
+    assert ap.align_tif_name(1, leaf, "slice") == "slice1_ALIGN_mscarlet_qc0_3_ge0_sat5.tif"
+    # each form ignores the other: the builder must never see a whole-slice file
+    assert ap.align_tif_slice("slice1_ALIGN_mscarlet_qc0_3_ge0_sat5.tif") is None
+    assert ap.align_tif_slice("slice1_ALIGN_mscarlet_qc0_3_ge0_sat5.tif", "slice") == 1
+    assert ap.align_tif_slice("slice22_subslice_ALIGN_" + leaf + ".tif", "slice") is None
+    folder = tmp / "mixed_sources"
+    folder.mkdir()
+    for name in ("slice3_ALIGN_" + leaf + ".tif", "slice3_subslice_ALIGN_" + leaf + ".tif",
+                 "slice12_ALIGN_" + leaf + ".tif"):
+        (folder / name).write_bytes(b"")
+    assert [p.name for p in ap.align_tifs(folder, "slice")] == [
+        "slice3_ALIGN_" + leaf + ".tif", "slice12_ALIGN_" + leaf + ".tif"]
+    assert [p.name for p in ap.align_tifs(folder)] == ["slice3_subslice_ALIGN_" + leaf + ".tif"]
+
+
+def test_sidecar_refuses_other_source(tmp):
+    gat = _gat()
+    folder = tmp / "slice_source"
+    folder.mkdir()
+    gat.write_render_sidecar(folder, _render(), [], "slice")
+    gat.check_render_sidecar(folder, _render(), "slice")
+    try:
+        gat.check_render_sidecar(folder, _render(), "subslice")
+    except SystemExit as e:
+        assert "slice renders" in str(e.code), e.code
+    else:
+        raise AssertionError("subslice render accepted into a whole-slice folder")
+    old = tmp / "pre_source"
+    old.mkdir()
+    gat.write_render_sidecar(old, _render(), [])            # default: subslice
+    import json
+    payload = json.loads((old / gat.RENDER_SIDECAR).read_text())
+    del payload["source"]                                   # as written before --source
+    (old / gat.RENDER_SIDECAR).write_text(json.dumps(payload))
+    gat.check_render_sidecar(old, _render(), "subslice")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     failed = skipped = 0

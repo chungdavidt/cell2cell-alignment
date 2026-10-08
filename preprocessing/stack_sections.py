@@ -17,9 +17,12 @@ Each --channel becomes one channel of the composite, all sharing one shift per
 section (a section's raw channels and ALIGN renders sit on one grid):
 
     DAPI | MSCARLET | GCAMP     the source's downsampled raw channel
-    <render folder name>        --source subslice only: an ALIGN folder, resolved
-                                like SUBSLICE_DIR (mscarlet_qc20_5_ge3_sat15,
-                                gcamp_qc20_5_ge3_sat10, or a pre-2026-10-08 qc20_5_ge5)
+    <render folder name>        an ALIGN folder of the same source:
+                                  slice     slice_align_{mscarlet,gcamp}/<name>
+                                            (generate_alignment_tif.py --source slice)
+                                  subslice  resolved like SUBSLICE_DIR, e.g.
+                                            mscarlet_qc20_5_ge3_sat15 or a
+                                            pre-2026-10-08 qc20_5_ge5
 
 Colours: mScarlet red, GCaMP green, DAPI grey, anything else blue.
 
@@ -38,6 +41,7 @@ prints its size first.
 Usage:
     python preprocessing/stack_sections.py -c MSCARLET -c GCAMP --dry-run
     python preprocessing/stack_sections.py -c MSCARLET -c GCAMP -c DAPI --slices 20 21 22
+    python preprocessing/stack_sections.py -c mscarlet_qc0_3_ge0_sat5 -c gcamp_qc0_3_ge0_sat5
     python preprocessing/stack_sections.py --source subslice -c mscarlet_qc0_3_ge0_sat5 -c gcamp_qc0_3_ge0_sat5
 """
 
@@ -56,7 +60,8 @@ for _p in (str(_ROOT), str(_HERE)):
         sys.path.insert(0, _p)
 
 import section_centers
-from analysis_paths import ALIGN_TIF_GLOB, align_tif_slice, align_tifs, resolve_subslice_dir
+from analysis_paths import (ALIGN_TIF_GLOB, SLICE_ALIGN_TIF_GLOB, align_tif_slice,
+                            align_tifs, resolve_subslice_dir)
 from scope_profiles import SECTION_THICKNESS_UM
 
 RAW_CHANNELS = ("DAPI", "MSCARLET", "GCAMP")
@@ -64,25 +69,41 @@ STACK_DIRNAME = "section_stacks"
 RAW_RANGE_PERCENTILE = 99.9     # display ceiling of a raw channel, max over sections
 
 
-def render_folders(align_roots):
+def render_folders(align_roots, glob=ALIGN_TIF_GLOB):
     """``root/folder`` for every folder under `align_roots` holding ALIGN tifs."""
     found = []
     for root in map(Path, align_roots):
         if root.is_dir():
             found += [f"{root.name}/{d.name}" for d in sorted(root.iterdir())
-                      if d.is_dir() and any(d.glob(ALIGN_TIF_GLOB))]
+                      if d.is_dir() and any(d.glob(glob))]
     return found
 
 
-def channel_files(name, hyb_dir, sections, align_roots, source="subslice"):
+def slice_render_folder(name, slice_roots):
+    """The whole-slice render folder called `name`, or None."""
+    hits = [Path(r) / name for r in slice_roots
+            if (Path(r) / name).is_dir() and any((Path(r) / name).glob(SLICE_ALIGN_TIF_GLOB))]
+    if len(hits) > 1:
+        raise SystemExit(f"--channel {name} names a folder under more than one root: {hits}")
+    return hits[0] if hits else None
+
+
+def channel_files(name, hyb_dir, sections, align_roots, source="subslice", slice_roots=()):
     """``{slice_no: path}`` for one --channel, over `sections`."""
     if name.upper() in RAW_CHANNELS:
         files = {n: Path(hyb_dir) / section_centers.raw_tif_name(source, n, name)
                  for n in sections}
         files = {n: p for n, p in files.items() if p.exists()}
-    elif source != "subslice":
-        raise SystemExit(f"--channel {name}: --source {source} takes "
-                         f"{'/'.join(RAW_CHANNELS)} only; ALIGN renders exist on subslices")
+    elif source == "slice":
+        folder = slice_render_folder(name, slice_roots)
+        if folder is None:
+            listing = "\n".join(f"    {f}" for f in
+                                 render_folders(slice_roots, SLICE_ALIGN_TIF_GLOB)) or "    (none)"
+            raise SystemExit(
+                f"--channel {name}: not one of {'/'.join(RAW_CHANNELS)}, and no whole-slice "
+                f"render folder by that name (generate_alignment_tif.py --source slice)."
+                f"\n\nWhole-slice render folders (pass the part after the /):\n{listing}")
+        files = {align_tif_slice(p, "slice"): p for p in align_tifs(folder, "slice")}
     else:
         try:
             folder = resolve_subslice_dir(name)
@@ -155,8 +176,10 @@ def main():
     from preprocessing_config import (
         HYB_DOWNSAMPLED_DIR, HYB_SLICE_DOWNSAMPLED_DIR, OUTPUT_ROOT, TARGET_XY_UM_PER_PX,
         SUBSLICE_ALIGN_MSCARLET_DIR, SUBSLICE_ALIGN_GCAMP_DIR, SUBSLICE_ALIGN_DIR,
+        SLICE_ALIGN_MSCARLET_DIR, SLICE_ALIGN_GCAMP_DIR,
     )
     align_roots = (SUBSLICE_ALIGN_MSCARLET_DIR, SUBSLICE_ALIGN_GCAMP_DIR, SUBSLICE_ALIGN_DIR)
+    slice_roots = (SLICE_ALIGN_MSCARLET_DIR, SLICE_ALIGN_GCAMP_DIR)
 
     if len(set(c.lower() for c in args.channel)) != len(args.channel):
         ap.error("a --channel is listed twice")
@@ -179,7 +202,7 @@ def main():
         centres = {n: centres[n] for n in args.slices}
     sections = sorted(centres)
 
-    files = {c: channel_files(c, hyb_dir, sections, align_roots, args.source)
+    files = {c: channel_files(c, hyb_dir, sections, align_roots, args.source, slice_roots)
              for c in args.channel}
 
     # One grid per section across every channel, and the grid the click was made on.

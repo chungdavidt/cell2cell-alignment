@@ -120,6 +120,11 @@ GCAMP_CELLMASK_DIR = os.path.join(OUTPUT_ROOT, "GCaMP_cellmask_subslice")
 # named by the leaf folder alone. Both use the mScarlet-defined subslice grid.
 SUBSLICE_ALIGN_MSCARLET_DIR = os.path.join(OUTPUT_ROOT, "subslice_align_mscarlet")
 SUBSLICE_ALIGN_GCAMP_DIR = os.path.join(OUTPUT_ROOT, "subslice_align_gcamp")
+# generate_alignment_tif.py --source slice: the same images on the whole section
+# (stitch_slices.py --downsample's grid), for stacking and viewing. Filenames carry
+# no `subslice` token, so the graph builder never ingests them.
+SLICE_ALIGN_MSCARLET_DIR = os.path.join(OUTPUT_ROOT, "slice_align_mscarlet")
+SLICE_ALIGN_GCAMP_DIR = os.path.join(OUTPUT_ROOT, "slice_align_gcamp")
 # Unprefixed mScarlet renders written before 2026-10-08. Nothing writes here any
 # more; a relative SUBSLICE_DIR still resolves under it (analysis_paths).
 SUBSLICE_ALIGN_DIR = os.path.join(OUTPUT_ROOT, "subslice_align")
