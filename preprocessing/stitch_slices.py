@@ -46,7 +46,7 @@ nothing else. The cellmask is left alone: it is a label array, not a picture.
 
 The names carry no `subslice` token on purpose: `downsample_subslices_cellmask.py`
 globs `slice*_subslice_CELLMASK*` and the graph builder globs
-`*_subslice_ALIGN.tif`, so neither can pick these up.
+`slice*_subslice_ALIGN*.tif`, so neither can pick these up.
 
 Four full-res canvases are allocated per slice at once -- three uint16 plus one
 uint32 -- over the whole section rather than a marker-defined crop. `--dry-run`

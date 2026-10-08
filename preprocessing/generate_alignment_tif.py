@@ -65,13 +65,17 @@ separately, as a filter on the exported cell table. They need not match.
 
 Output goes to a folder named by marker and both gates, so several coexist and
 nothing is overwritten:
-    <OUTPUT_ROOT>/subslice_align_mscarlet/mscarlet_qc{reads}_{genes}_ge{n}/slice{N}_subslice_ALIGN.tif
-    <OUTPUT_ROOT>/subslice_align_mscarlet/mscarlet_qc{reads}_{genes}_ge{n}_sat{ceiling}/...   (graded)
-    <OUTPUT_ROOT>/subslice_align_gcamp/gcamp_qc{reads}_{genes}_ge{n}[_sat{ceiling}]/...
-The prefix repeats the parent's marker because the graph builder names a node by
-the leaf folder alone (slice22_subslice_ALIGN_gcamp_qc20_5_ge3_sat10). Unprefixed
-folders under <OUTPUT_ROOT>/subslice_align/ are mScarlet renders from before
-2026-10-08; this script no longer writes there.
+    <OUTPUT_ROOT>/subslice_align_mscarlet/mscarlet_qc{reads}_{genes}_ge{n}/slice{N}_subslice_ALIGN_mscarlet_qc{reads}_{genes}_ge{n}.tif
+    <OUTPUT_ROOT>/subslice_align_mscarlet/mscarlet_qc{reads}_{genes}_ge{n}_sat{ceiling}/..._sat{ceiling}.tif   (graded)
+    <OUTPUT_ROOT>/subslice_align_gcamp/gcamp_qc{reads}_{genes}_ge{n}[_sat{ceiling}]/slice{N}_subslice_ALIGN_gcamp_...tif
+The folder prefix repeats the parent's marker because the graph builder names a
+node by section number and leaf folder alone (slice22_subslice_ALIGN_gcamp_qc20_5_ge3_sat10);
+each filename repeats the whole folder name so a TIF opened on its own says its
+marker, QC pair, floor and ceiling. Without --out the stem is the node name.
+--dim is in neither; align_render.json records it.
+Unprefixed folders under <OUTPUT_ROOT>/subslice_align/, holding unsuffixed
+slice{N}_subslice_ALIGN.tif, are mScarlet renders from before 2026-10-08; this
+script no longer writes there.
 
 --dim is not in the folder name. Each folder carries align_render.json, the
 settings it was rendered with; a run whose settings differ refuses to write
@@ -123,6 +127,7 @@ from utilities.mat_io import (
 )
 from utilities.image_io import imwrite_tiff
 from marker_profiles import MARKERS
+from analysis_paths import ALIGN_TIF_GLOB, align_tif_name
 
 FOREGROUND = 255
 SPARSE_WARN = 20        # subslices with fewer visible cells than this are flagged
@@ -183,7 +188,7 @@ def check_render_sidecar(out_dir, render):
     """
     existing = read_render_sidecar(out_dir)
     if existing is None:
-        if any(Path(out_dir).glob("slice*_subslice_ALIGN.tif")):
+        if any(Path(out_dir).glob(ALIGN_TIF_GLOB)):
             print(f"note: {out_dir.name} has ALIGN tifs but no {RENDER_SIDECAR}; "
                   f"recording this run's settings for the whole folder")
         return
@@ -440,7 +445,7 @@ def main():
             cellmask, x_img, y_img, visible[idx], args.all_cells_level,
             None if values is None else values[idx])
 
-        out_path = out_dir / f"slice{slice_id}_subslice_ALIGN.tif"
+        out_path = out_dir / align_tif_name(slice_id, leaf)
         imwrite_tiff(out_path, img)
         written.append((slice_id, int(visible[idx].sum()), n_drawn, off_mask, oob))
         flag = ""

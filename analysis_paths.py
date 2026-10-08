@@ -18,6 +18,7 @@ data-tree-adjacent default, so existing subjects need no config change.
 
 from pathlib import Path
 from typing import Optional
+import re
 import sys
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
@@ -116,6 +117,41 @@ def _preprocessing_config(reason: str = None):
             f"SUBSLICE_DIR to an absolute path."
         )
     return preprocessing_config
+
+
+# ALIGN tif filenames: slice{N}_subslice_ALIGN_{render}.tif from
+# generate_alignment_tif.py, where {render} is its folder name
+# (gcamp_qc20_5_ge3_sat10), so a file viewed on its own still says its marker
+# and gates. Folders written before 2026-10-08 hold slice{N}_subslice_ALIGN.tif.
+ALIGN_TIF_GLOB = "slice*_subslice_ALIGN*.tif"
+_ALIGN_TIF_RE = re.compile(r"slice(\d+)_subslice_ALIGN(?:_\w+)?\.tif")
+
+
+def align_tif_name(slice_no: int, render: Optional[str] = None) -> str:
+    """`slice22_subslice_ALIGN_gcamp_qc20_5_ge3_sat10.tif`; no render gives the pre-2026-10-08 name."""
+    return f"slice{int(slice_no)}_subslice_ALIGN{'_' + render if render else ''}.tif"
+
+
+def align_tif_slice(path) -> Optional[int]:
+    """Section number of an ALIGN tif filename, or None when it is not one."""
+    m = _ALIGN_TIF_RE.fullmatch(Path(path).name)
+    return int(m.group(1)) if m else None
+
+
+def align_tifs(directory) -> "list[Path]":
+    """ALIGN tifs in `directory`, in section order. Raises if a section has two."""
+    by_slice = {}
+    for path in Path(directory).glob(ALIGN_TIF_GLOB):
+        n = align_tif_slice(path)
+        if n is None:
+            continue
+        if n in by_slice:
+            raise ValueError(
+                f"Section {n} has two ALIGN tifs in {directory}:\n"
+                f"  {by_slice[n].name}\n  {path.name}\n"
+                f"One folder holds one render; move one to quarantine/.")
+        by_slice[n] = path
+    return [by_slice[n] for n in sorted(by_slice)]
 
 
 def hyb_downsampled_dir() -> Path:

@@ -159,9 +159,12 @@ def default_image(modality: str, slice_id=None):
         # marker-only ALIGN tif at a high cutoff can be nearly empty and is a
         # poor thing to identify anterior on. Order: DAPI, then ALIGN.
         from preprocessing_config import HYB_DOWNSAMPLED_DIR
+        from analysis_paths import align_tif_slice, align_tifs
+        aligns = [p for p in align_tifs(subslice_dir)
+                  if slice_id is None or align_tif_slice(p) == int(slice_id)]
         candidates = [
             by_slice_number(Path(HYB_DOWNSAMPLED_DIR).glob(f"{stem}_subslice_DAPI.tif")),
-            by_slice_number(subslice_dir.glob(f"{stem}_subslice_ALIGN.tif")),
+            aligns,
         ]
         for files in candidates:
             if files:
@@ -169,7 +172,7 @@ def default_image(modality: str, slice_id=None):
         raise FileNotFoundError(
             f"No {stem}_subslice_DAPI.tif under\n"
             f"  {HYB_DOWNSAMPLED_DIR}\n"
-            f"and no {stem}_subslice_ALIGN.tif under\n"
+            f"and no {stem}_subslice_ALIGN*.tif under\n"
             f"  {subslice_dir}\n"
             f"Run the preprocessing pipeline first, or pass --image explicitly."
         )
@@ -196,7 +199,7 @@ def discover_sections(slice_ids=None):
     subslice_dir = resolve_subslice_dir()
     candidates = [(Path(HYB_DOWNSAMPLED_DIR), "_subslice_DAPI.tif")]
     if subslice_dir is not None:
-        candidates += [(subslice_dir, "_subslice_ALIGN.tif")]
+        candidates += [(subslice_dir, "_subslice_ALIGN*.tif")]
 
     for root, suffix in candidates:
         found = {}

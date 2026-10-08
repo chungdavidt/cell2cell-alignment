@@ -51,7 +51,7 @@ import numpy as np
 import castalign as ca
 from castalign import utils
 
-from analysis_paths import resolve_subslice_dir
+from analysis_paths import align_tif_slice, align_tifs, resolve_subslice_dir
 from subslice_graph_builder import (
     GRAPH_PATH, _derive_graph_path, load_single_subslice,
 )
@@ -76,14 +76,20 @@ def source_tif(node, subslice_dir):
     if subslice_dir is None or _STEM_MARKER not in node:
         return None
     stem, folder = node.split(_STEM_MARKER, 1)
-    name = f"{stem}{_STEM_MARKER[:-1]}.tif"
     sibling = Path(subslice_dir).parent / folder
-    if sibling.is_dir():
-        return sibling / name
-    try:
-        return resolve_subslice_dir(folder) / name
-    except ValueError:
-        return sibling / name
+    found = sibling
+    if not sibling.is_dir():
+        try:
+            found = resolve_subslice_dir(folder)
+        except ValueError:
+            pass
+    # Match by section: a file renamed by --out need not carry the folder's name.
+    n = align_tif_slice(f"{stem}{_STEM_MARKER[:-1]}.tif")
+    if found.is_dir():
+        for path in align_tifs(found):
+            if align_tif_slice(path) == n:
+                return path
+    return found / f"{stem}{_STEM_MARKER[:-1]}.tif"
 
 
 def value_summary(arr, limit=8):

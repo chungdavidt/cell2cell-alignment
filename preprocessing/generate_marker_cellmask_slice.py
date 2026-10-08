@@ -31,7 +31,7 @@ the same call montage_downsampled_subslices.py and add_subslice_scale_bars.py
 make: no pipeline step reads them, and ensure_output_dirs() lists no
 out-of-pipeline output. The names carry no `subslice` token, so
 downsample_subslices_cellmask.py's slice*_subslice_CELLMASK* glob and the graph
-builder's *_subslice_ALIGN.tif glob cannot see them.
+builder's slice*_subslice_ALIGN*.tif glob cannot see them.
 
 Two things differ from step 4 beyond the input folder:
 

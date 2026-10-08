@@ -294,6 +294,46 @@ def test_builder_accepts_node_without_marker(tmp):
         raise AssertionError("marker change accepted")
 
 
+def test_align_tif_names(tmp):
+    import analysis_paths as ap
+    sgb = _sgb()
+    assert ap.align_tif_name(22, "gcamp_qc20_5_ge3_sat10") == \
+        "slice22_subslice_ALIGN_gcamp_qc20_5_ge3_sat10.tif"
+    assert ap.align_tif_name(22) == "slice22_subslice_ALIGN.tif"
+    for name, n in [("slice22_subslice_ALIGN_gcamp_qc20_5_ge3_sat10.tif", 22),
+                    ("slice7_subslice_ALIGN_mscarlet_qc0_0_ge0.tif", 7),
+                    ("slice22_subslice_ALIGN.tif", 22),
+                    ("slice22_subslice_MSCARLET.tif", None),
+                    ("slice22_subslice_ALIGN_gcamp.tif.bak", None)]:
+        assert ap.align_tif_slice(name) == n, (name, ap.align_tif_slice(name))
+    # node name: section + folder, never the file's suffix
+    folder = "gcamp_qc20_5_ge3_sat10"
+    assert sgb.subslice_node_name(ap.align_tif_name(22, folder), folder) == \
+        "slice22_subslice_ALIGN_gcamp_qc20_5_ge3_sat10"
+    assert sgb.subslice_node_name("slice22_subslice_ALIGN.tif", "qc20_5_ge5") == \
+        "slice22_subslice_ALIGN_qc20_5_ge5"
+
+
+def test_align_tifs_one_per_section(tmp):
+    import analysis_paths as ap
+    folder = tmp / "two_per_section"
+    folder.mkdir()
+    for name in ("slice10_subslice_ALIGN_mscarlet_qc20_5_ge5.tif",
+                 "slice2_subslice_ALIGN_mscarlet_qc20_5_ge5.tif",
+                 "slice2_subslice_DAPI.tif"):
+        (folder / name).write_bytes(b"")
+    assert [p.name for p in ap.align_tifs(folder)] == [
+        "slice2_subslice_ALIGN_mscarlet_qc20_5_ge5.tif",
+        "slice10_subslice_ALIGN_mscarlet_qc20_5_ge5.tif"]
+    (folder / "slice2_subslice_ALIGN.tif").write_bytes(b"")
+    try:
+        ap.align_tifs(folder)
+    except ValueError as e:
+        assert "Section 2" in str(e), e
+    else:
+        raise AssertionError("two ALIGN tifs for one section accepted")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     failed = skipped = 0

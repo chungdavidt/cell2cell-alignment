@@ -102,6 +102,8 @@ import imageio.v2 as imageio
 from utilities.image_io import get_tiff_resolution
 import orientation
 from analysis_paths import (
+    align_tif_slice,
+    align_tifs,
     hyb_downsampled_dir,
     analysis_subdir,
     resolve_subslice_dir,
@@ -161,20 +163,26 @@ def load_invivo_stack(path: Union[str, Path]) -> np.ndarray:
 
 
 def _slice_number(path: Union[str, Path]) -> Optional[int]:
-    """Section number from a `slice{N}_subslice_ALIGN.tif` filename."""
+    """Section number from a `slice{N}_subslice_ALIGN[_{render}].tif` filename."""
     m = re.match(r"slice(\d+)_subslice", Path(path).name)
     return int(m.group(1)) if m else None
 
 
 def subslice_node_name(path: Union[str, Path],
                        subslice_dir: Union[str, Path]) -> str:
-    """Node name for a subslice file: its stem plus its source folder.
+    """Node name for an ALIGN tif: `slice{N}_subslice_ALIGN_{source folder}`.
 
-    The folder is the rolony cutoff (`qc20_5_ge1`, `qc20_5_ge5`, ...), so two
-    cutoffs of the same section become two distinct nodes that coexist in one
-    graph instead of colliding on `slice10_subslice_ALIGN`.
+    The folder carries marker and gates (`mscarlet_qc20_5_ge5`, `gcamp_qc20_5_ge3_sat10`,
+    or a pre-2026-10-08 `qc20_5_ge5`), so two renders of the same section
+    become two distinct nodes that coexist in one graph instead of colliding on
+    `slice10_subslice_ALIGN`. Built from the section number, not the stem, so
+    the filename's render suffix (`slice10_subslice_ALIGN_gcamp_qc20_5_ge3_sat10.tif`)
+    is not repeated; an unsuffixed file gives the same name it always has. A
+    file that is not an ALIGN tif keeps its stem.
     """
-    return f"{Path(path).stem}_{Path(subslice_dir).name}"
+    n = align_tif_slice(path)
+    stem = f"slice{n}_subslice_ALIGN" if n is not None else Path(path).stem
+    return f"{stem}_{Path(subslice_dir).name}"
 
 
 def raw_channel_node_name(slice_no: int, channel: str) -> str:
@@ -229,10 +237,10 @@ def discover_subslices(
     # accepted -- the step 4 overlay is an RGB display figure, so
     # load_single_subslice() collapses it by BT.601 luminance, which on BY95
     # renders the median marker cell DARKER than the mask field behind it.
-    files = sorted(directory.glob("slice*_subslice_ALIGN.tif"))
+    files = align_tifs(directory)
     if not files:
         raise FileNotFoundError(
-            f"No slice*_subslice_ALIGN.tif in:\n"
+            f"No slice*_subslice_ALIGN*.tif in:\n"
             f"  {directory}\n"
             f"Run preprocessing/generate_alignment_tif.py and point SUBSLICE_DIR "
             f"at its output folder."
