@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Generate the BARseq alignment TIF: QC-passing cells at >= the mScarlet rolony floor,
-everything else background.
+Generate the BARseq alignment TIF: QC-passing cells at >= the marker's rolony floor,
+everything else background. mScarlet by default; --marker gcamp renders GCaMP
+(column 111) on the same mScarlet-defined subslice grid.
 
 This is the image castalign fits on. It deliberately looks like a 2P mScarlet
 volume — sparse bright somas on a dark field — because that is what it has to be
@@ -11,7 +12,7 @@ aligning one against the other means matching dense speckle to sparse points.
 A cell is drawn only if it passes **both** gates:
 
     QC:      total reads >= --min-reads AND distinct genes >= --min-genes
-    marker:  mScarlet rolonies >= --min-rolonies
+    marker:  marker rolonies >= --min-rolonies   (mScarlet, or --marker's column)
 
 Everything else — QC failures, non-marker cells, cells below the cutoff, the gaps
 between cells — goes to background. A cell that fails either gate is not dimmed,
@@ -35,6 +36,19 @@ within one folder. Levels compare within one castalign view, not between views.
 --min-rolonies 0 draws every QC-passing cell; zero-count cells have no row in
 export_subslice_cells.py's table, which keeps mScarlet > 0 only.
 
+## --marker
+
+--marker picks the expmat column from marker_profiles (index-only: mScarlet 113,
+GCaMP 111). The subslice grid is always the mScarlet one -- this script reads
+HYB_DOWNSAMPLED_DIR whatever the marker -- so a GCaMP render is pixel-for-pixel
+on the same grid as the mScarlet renders, and the graph builder's Identity hub
+carries a fit on either to both. GCaMP cells in FOVs outside the mScarlet
+subslices fall off the image (the off-mask / out-of-bounds columns). Its 2P
+counterpart is the green channel, which rides the red fit through Identity.
+
+For GCaMP, --min-rolonies is required: ALIGN_MIN_ROLONIES is mScarlet's cutoff.
+Bare --ceiling takes the marker's ceiling from marker_profiles.
+
 The whole label is filled, so somas keep the shape the segmentation gave them.
 
 ## What --min-rolonies here does and does not affect
@@ -53,6 +67,9 @@ Output goes to a folder named by both gates, so several coexist and nothing is
 overwritten:
     <OUTPUT_ROOT>/subslice_align/qc{reads}_{genes}_ge{n}/slice{N}_subslice_ALIGN.tif
     <OUTPUT_ROOT>/subslice_align/qc{reads}_{genes}_ge{n}_sat{ceiling}/...   (graded)
+    <OUTPUT_ROOT>/subslice_align_gcamp/gcamp_qc{reads}_{genes}_ge{n}[_sat{ceiling}]/...
+The gcamp_ prefix repeats the parent's marker because the graph builder names a
+node by the leaf folder alone (slice22_subslice_ALIGN_gcamp_qc20_5_ge3_sat10).
 
 --dim is not in the folder name. Each folder carries align_render.json, the
 settings it was rendered with; a run whose settings differ refuses to write
@@ -65,6 +82,7 @@ Usage:
     python preprocessing/generate_alignment_tif.py --min-rolonies 3 --all-cells-level 60
     python preprocessing/generate_alignment_tif.py --min-rolonies 5 --ceiling        # ramp 5 -> 15
     python preprocessing/generate_alignment_tif.py --min-rolonies 0 --ceiling 10 --dim 60
+    python preprocessing/generate_alignment_tif.py --marker gcamp --min-rolonies 3 --ceiling   # ramp 3 -> 10
 """
 
 import argparse
@@ -86,11 +104,10 @@ from preprocessing_config import (
     FILT_NEURONS_PATH,
     HYB_DOWNSAMPLED_DIR,
     SUBSLICE_ALIGN_DIR,
+    SUBSLICE_ALIGN_GCAMP_DIR,
     QC_MIN_READS,
     QC_MIN_GENES,
     ALIGN_MIN_ROLONIES,
-    MSCARLET_COLUMN_INDEX,
-    MSCARLET_GENE_NAME,
     DOWNSAMPLE_XY,
     TARGET_XY_UM_PER_PX,
     SCOPE,
@@ -103,14 +120,30 @@ from utilities.mat_io import (
     resolve_marker_column,
 )
 from utilities.image_io import imwrite_tiff
-from marker_profiles import get_marker
+from marker_profiles import MARKERS
 
 FOREGROUND = 255
 SPARSE_WARN = 20        # subslices with fewer visible cells than this are flagged
-DEFAULT_CEILING = get_marker("mscarlet")["ceiling"]   # bare --ceiling
 DEFAULT_DIM = 40        # level of a floor-count cell in a graded render
 # Read back by alignment/subslice_graph_builder.py under the same name.
 RENDER_SIDECAR = "align_render.json"
+# Marker of a sidecar written before --marker existed. The builder holds the same value.
+DEFAULT_MARKER = "mscarlet"
+# --ceiling with no value: take the marker's ceiling. Not a str, which argparse would int().
+BARE_CEILING = object()
+# Output root per marker. Only the default marker leaves its folder names unprefixed.
+ALIGN_ROOTS = {
+    "mscarlet": SUBSLICE_ALIGN_DIR,
+    "gcamp": SUBSLICE_ALIGN_GCAMP_DIR,
+}
+
+
+def render_leaf(marker, min_reads, min_genes, floor, ceiling=None):
+    """Folder name for one render: qc20_5_ge5, qc20_5_ge5_sat15, gcamp_qc20_5_ge3_sat10."""
+    leaf = f"qc{min_reads}_{min_genes}_ge{floor}"
+    if ceiling is not None:
+        leaf += f"_sat{ceiling}"
+    return leaf if marker == DEFAULT_MARKER else f"{marker}_{leaf}"
 
 
 def shade(counts, floor, ceiling, dim):
@@ -133,7 +166,10 @@ def read_render_sidecar(out_dir):
     path = Path(out_dir) / RENDER_SIDECAR
     if not path.exists():
         return None
-    return json.loads(path.read_text()).get("render")
+    render = json.loads(path.read_text()).get("render")
+    if render is not None:
+        render.setdefault("marker", DEFAULT_MARKER)
+    return render
 
 
 def check_render_sidecar(out_dir, render):
@@ -211,14 +247,16 @@ def qualifying_label_mask(cellmask, x_img, y_img, keep_cell, all_cells_level=0,
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Generate the BARseq alignment TIF (mScarlet cells at >= the "
+        description="Generate the BARseq alignment TIF (marker cells at >= the "
                     "floor; binary, or graded with --ceiling)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    ap.add_argument("--min-rolonies", "-n", type=int, default=ALIGN_MIN_ROLONIES,
-                    help=f"mScarlet rolony floor to be drawn at all "
-                         f"(default: config's {ALIGN_MIN_ROLONIES})")
+    ap.add_argument("--marker", choices=sorted(ALIGN_ROOTS), default=DEFAULT_MARKER,
+                    help=f"which marker column to draw (default: {DEFAULT_MARKER})")
+    ap.add_argument("--min-rolonies", "-n", type=int, default=None,
+                    help=f"marker rolony floor to be drawn at all (default for "
+                         f"mscarlet: config's {ALIGN_MIN_ROLONIES}; required otherwise)")
     ap.add_argument("--min-reads", type=int, default=QC_MIN_READS,
                     help=f"QC total reads floor (default: config's {QC_MIN_READS})")
     ap.add_argument("--min-genes", type=int, default=QC_MIN_GENES,
@@ -226,10 +264,12 @@ def main():
     ap.add_argument("--all-cells-level", type=int, default=0,
                     help="draw non-qualifying cells at this level instead of background; "
                          "0 = off, which is the point of this image (default: 0)")
-    ap.add_argument("--ceiling", type=int, nargs="?", const=DEFAULT_CEILING, default=None,
-                    help=f"grade drawn cells by rolony count, --min-rolonies -> --dim up to "
-                         f"this count -> 255; bare flag = {DEFAULT_CEILING}. "
-                         f"Absent = binary (default)")
+    ap.add_argument("--ceiling", type=int, nargs="?", const=BARE_CEILING, default=None,
+                    help="grade drawn cells by rolony count, --min-rolonies -> --dim up to "
+                         "this count -> 255; bare flag = the marker's ceiling in "
+                         "marker_profiles (" + ", ".join(
+                             f"{m} {MARKERS[m]['ceiling']}" for m in sorted(ALIGN_ROOTS))
+                         + "). Absent = binary (default)")
     ap.add_argument("--dim", type=int, default=None,
                     help=f"level of a cell at the floor in a graded render "
                          f"(default: {DEFAULT_DIM}); needs --ceiling")
@@ -237,6 +277,20 @@ def main():
                     help="specific slice IDs")
     ap.add_argument("--out", default=None, help="output directory override")
     args = ap.parse_args()
+
+    marker = args.marker
+    profile = MARKERS[marker]
+    label = profile["label"]
+    if args.min_rolonies is None:
+        if marker != DEFAULT_MARKER:
+            ap.error(f"--marker {marker} needs --min-rolonies; ALIGN_MIN_ROLONIES "
+                     f"is the {MARKERS[DEFAULT_MARKER]['label']} cutoff")
+        args.min_rolonies = ALIGN_MIN_ROLONIES
+    if args.ceiling is BARE_CEILING:
+        if profile["ceiling"] is None:
+            ap.error(f"bare --ceiling: {label} has no ceiling in marker_profiles; "
+                     f"pass --ceiling N")
+        args.ceiling = profile["ceiling"]
 
     floor = args.min_rolonies
     if floor < 0:
@@ -267,13 +321,12 @@ def main():
             f"Downsampled subslices not found: {input_dir}\n"
             f"Run stitch_subslices.py then downsample_subslices_cellmask.py first."
         )
-    leaf = f"qc{args.min_reads}_{args.min_genes}_ge{floor}"
-    if graded:
-        leaf += f"_sat{ceiling}"
-    out_dir = Path(args.out) if args.out else Path(SUBSLICE_ALIGN_DIR) / leaf
+    leaf = render_leaf(marker, args.min_reads, args.min_genes, floor, ceiling)
+    out_dir = Path(args.out) if args.out else Path(ALIGN_ROOTS[marker]) / leaf
     out_dir.mkdir(parents=True, exist_ok=True)
 
     render = {
+        "marker": marker,
         "mode": "graded" if graded else "binary",
         "min_reads": args.min_reads,
         "min_genes": args.min_genes,
@@ -294,7 +347,7 @@ def main():
     print("GENERATE ALIGNMENT TIF")
     print("=" * 60)
     print(f"drawn:   QC (reads >= {args.min_reads} AND genes >= {args.min_genes})"
-          f" AND mScarlet >= {floor}")
+          f" AND {label} (column {profile['column']}) >= {floor}")
     if graded:
         print(f"shading: {floor} rolonies -> {dim}, {ceiling}+ -> {FOREGROUND}, "
               f"{len(levels)} levels (slope set by the floor)")
@@ -318,18 +371,18 @@ def main():
         n_genes = np.sum(expmat > 0, axis=1)
     pass_qc = (total_reads >= args.min_reads) & (n_genes >= args.min_genes)
 
-    marker_col = resolve_marker_column(fn, MSCARLET_GENE_NAME, MSCARLET_COLUMN_INDEX)
-    mscarlet = np.asarray(get_expression_column(expmat, marker_col)).ravel()
+    marker_col = resolve_marker_column(fn, profile["gene_name"], profile["column"])
+    counts = np.asarray(get_expression_column(expmat, marker_col)).ravel()
 
     # The AND gate. Both must hold or the cell is not drawn.
-    visible = pass_qc & (mscarlet >= floor)
-    values = shade(mscarlet, floor, ceiling, dim) if graded else None
+    visible = pass_qc & (counts >= floor)
+    values = shade(counts, floor, ceiling, dim) if graded else None
     print(f"  cells: {n_cells}")
     print(f"  QC-passing: {int(pass_qc.sum())} ({100 * pass_qc.sum() / n_cells:.1f}%)")
-    print(f"  QC-passing AND mScarlet >= {floor}: {int(visible.sum())}")
+    print(f"  QC-passing AND {label} >= {floor}: {int(visible.sum())}")
     if graded:
         print(f"  of those, at >= {ceiling} ({FOREGROUND}): "
-              f"{int((visible & (mscarlet >= ceiling)).sum())}")
+              f"{int((visible & (counts >= ceiling)).sum())}")
     print()
     if not visible.any():
         raise ValueError(f"No cell passes both gates at --min-rolonies {floor}.")

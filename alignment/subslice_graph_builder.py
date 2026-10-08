@@ -121,6 +121,17 @@ from scope_profiles import (
 # node's metadata as 'render' so a later re-render under the same folder name is
 # caught by assert_stored_shapes_match.
 ALIGN_RENDER_SIDECAR = "align_render.json"
+# Marker of a render recorded before generate_alignment_tif.py took --marker
+# (DEFAULT_MARKER there). Filled in on read so old sidecars and old node
+# metadata compare equal to a re-render of the same mScarlet folder.
+ALIGN_RENDER_DEFAULT_MARKER = "mscarlet"
+
+
+def _with_marker(render: Optional[dict]) -> Optional[dict]:
+    """`render` with 'marker' filled in when it predates the field."""
+    if render is None:
+        return None
+    return {**render, "marker": render.get("marker", ALIGN_RENDER_DEFAULT_MARKER)}
 
 
 # ============================================
@@ -479,7 +490,7 @@ def read_align_render(subslice_dir: Union[str, Path]) -> Optional[dict]:
     path = Path(subslice_dir) / ALIGN_RENDER_SIDECAR
     if not path.exists():
         return None
-    return json.loads(path.read_text()).get("render")
+    return _with_marker(json.loads(path.read_text()).get("render"))
 
 
 def assert_stored_shapes_match(
@@ -513,11 +524,12 @@ def assert_stored_shapes_match(
     if not present:
         return
 
+    render = _with_marker(render)
     mismatched = []
     unrecorded = []
     for path, node_name in present:
         meta = graph.node_metadata.get(node_name) or {}
-        stored_render = meta.get('render')
+        stored_render = _with_marker(meta.get('render'))
         if render is not None and stored_render is not None and stored_render != render:
             keys = sorted(k for k in set(stored_render) | set(render)
                           if stored_render.get(k) != render.get(k))

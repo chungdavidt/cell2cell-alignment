@@ -73,17 +73,19 @@ def subject_name() -> Optional[str]:
     return None if root is None else root.name
 
 
-def _preprocessing_roots() -> "tuple[Path, Path]":
-    """(overlay root, alignment-tif root) from preprocessing_config.
+def _preprocessing_roots() -> "tuple[Path, Path, Path]":
+    """(overlay root, alignment-tif root, GCaMP alignment-tif root) from preprocessing_config.
 
-    A relative SUBSLICE_DIR is resolved against both: step 4's overlays live
-    under the first, generate_alignment_tif.py's output under the second. Only
-    the second holds anything the graph builder will ingest — it takes ALIGN
-    tifs and nothing else — but the lookup stays symmetric so a folder name
-    under either root resolves instead of silently missing.
+    A relative SUBSLICE_DIR is resolved against all three: step 4's overlays
+    live under the first, generate_alignment_tif.py's output under the second,
+    and its --marker gcamp output (gcamp_* folders) under the third. Only the
+    alignment roots hold anything the graph builder will ingest — it takes
+    ALIGN tifs and nothing else — but the lookup stays symmetric so a folder
+    name under any root resolves instead of silently missing.
     """
     cfg = _preprocessing_config()
-    return (Path(cfg.MSCARLET_CELLMASK_DIR), Path(cfg.SUBSLICE_ALIGN_DIR))
+    return (Path(cfg.MSCARLET_CELLMASK_DIR), Path(cfg.SUBSLICE_ALIGN_DIR),
+            Path(cfg.SUBSLICE_ALIGN_GCAMP_DIR))
 
 
 def _preprocessing_config(reason: str = None):
@@ -138,15 +140,16 @@ def resolve_subslice_dir(value: Optional[str] = None) -> Optional[Path]:
     The BARseq images the graph builder reads are preprocessing output, so
     their parent directory is already known to preprocessing_config. A relative
     SUBSLICE_DIR inherits it and names only the trailing folder — resolved
-    against BOTH output roots::
+    against every output root::
 
         SUBSLICE_DIR = "qc20_5_ge1"                    # alignment TIFs
+        SUBSLICE_DIR = "gcamp_qc20_5_ge3_sat10"        # GCaMP alignment TIFs
         SUBSLICE_DIR = "rolony_ge5_sat15"              # step 4 overlays
 
     which survives any later rename of the directories above it. Resolving an
     overlay folder is not the same as the graph builder accepting one: it
     ingests ALIGN tifs only and raises on a folder holding none. A name that
-    exists under both roots raises rather than guessing. Blank means
+    exists under more than one root raises rather than guessing. Blank means
     skip subslices, and an absolute path is used verbatim — pointing at a tree
     preprocessing did not write stays possible.
 
@@ -195,7 +198,7 @@ def resolve_subslice_dir(value: Optional[str] = None) -> Optional[Path]:
         f"SUBSLICE_DIR = {value!r} is relative, so it resolves under\n"
         f"preprocessing's output roots:\n"
         + "".join(f"  {r}\n" for r in roots) +
-        f"but no such folder exists in either.\n\n"
+        f"but no such folder exists in any of them.\n\n"
         f"Available:\n{listing}\n\n"
         f"Set SUBSLICE_DIR to one of those names (the trailing folder only), to\n"
         f"an absolute path, or blank to skip subslices.\n"

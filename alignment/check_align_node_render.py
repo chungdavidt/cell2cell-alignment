@@ -69,13 +69,21 @@ def source_tif(node, subslice_dir):
 
     A node is named `{stem}_{render folder}` (subslice_node_name), so the
     folder it came from is in the name even after SUBSLICE_DIR has moved on to
-    a different cutoff. Both render folders live side by side under
-    <OUTPUT_ROOT>/subslice_align/.
+    a different cutoff. Renders of one marker sit side by side under one root
+    (subslice_align/, subslice_align_gcamp/), so a folder that is not next to
+    SUBSLICE_DIR is looked up under every root by resolve_subslice_dir.
     """
     if subslice_dir is None or _STEM_MARKER not in node:
         return None
     stem, folder = node.split(_STEM_MARKER, 1)
-    return Path(subslice_dir).parent / folder / f"{stem}{_STEM_MARKER[:-1]}.tif"
+    name = f"{stem}{_STEM_MARKER[:-1]}.tif"
+    sibling = Path(subslice_dir).parent / folder
+    if sibling.is_dir():
+        return sibling / name
+    try:
+        return resolve_subslice_dir(folder) / name
+    except ValueError:
+        return sibling / name
 
 
 def value_summary(arr, limit=8):

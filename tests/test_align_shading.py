@@ -161,6 +161,9 @@ def test_cli_guards(tmp):
         ["-n", "5", "--ceiling", "--dim", "0"],
         ["-n", "5", "--ceiling", "--dim", "255"],
         ["-n", "5", "--ceiling", "--all-cells-level", "40"],
+        ["--marker", "gcamp"],                              # no --min-rolonies
+        ["--marker", "gcamp", "--ceiling"],
+        ["--marker", "nope", "-n", "3"],
     ]
     for argv in bad:
         with mock.patch.object(sys, "argv", ["generate_alignment_tif.py", *argv]), \
@@ -174,7 +177,7 @@ def test_cli_guards(tmp):
 
 
 def _render(**over):
-    r = {"mode": "graded", "min_reads": 20, "min_genes": 5, "min_rolonies": 5,
+    r = {"marker": "mscarlet", "mode": "graded", "min_reads": 20, "min_genes": 5, "min_rolonies": 5,
          "ceiling": 15, "dim": 40, "all_cells_level": 0}
     r.update(over)
     return r
@@ -243,6 +246,52 @@ def test_builder_refuses_rerendered_folder(tmp):
         raise AssertionError("re-rendered folder accepted")
     # castalign stores node metadata with repr and reads it back with eval
     assert eval(repr(stored)) == stored
+
+
+def test_render_leaf_per_marker(tmp):
+    gat = _gat()
+    assert gat.render_leaf("mscarlet", 20, 5, 5) == "qc20_5_ge5"
+    assert gat.render_leaf("mscarlet", 20, 5, 5, 15) == "qc20_5_ge5_sat15"
+    assert gat.render_leaf("gcamp", 20, 5, 3, 10) == "gcamp_qc20_5_ge3_sat10"
+    assert gat.ALIGN_ROOTS["mscarlet"] == gat.SUBSLICE_ALIGN_DIR
+    assert gat.ALIGN_ROOTS["gcamp"] == gat.SUBSLICE_ALIGN_GCAMP_DIR
+    assert gat.ALIGN_ROOTS["gcamp"] != gat.ALIGN_ROOTS["mscarlet"]
+
+
+def test_sidecar_without_marker_is_mscarlet(tmp):
+    gat, sgb = _gat(), _sgb()
+    assert sgb.ALIGN_RENDER_DEFAULT_MARKER == gat.DEFAULT_MARKER
+    folder = tmp / "pre_marker"
+    folder.mkdir()
+    old = {k: v for k, v in _render().items() if k != "marker"}
+    gat.write_render_sidecar(folder, old, [])
+    gat.check_render_sidecar(folder, _render())             # mScarlet re-render: fine
+    assert sgb.read_align_render(folder) == _render()
+    try:
+        gat.check_render_sidecar(folder, _render(marker="gcamp"))
+    except SystemExit as e:
+        assert "marker" in str(e.code), e.code
+    else:
+        raise AssertionError("gcamp render accepted into an mScarlet folder")
+
+
+def test_builder_accepts_node_without_marker(tmp):
+    gat, sgb = _gat(), _sgb()
+    folder = tmp / "pre_marker_node"
+    folder.mkdir()
+    tif = folder / "slice22_subslice_ALIGN.tif"
+    gat.imwrite_tiff(tif, np.zeros((8, 8), np.uint8))
+    name = "slice22_subslice_ALIGN_pre_marker_node"
+    old = {k: v for k, v in _render().items() if k != "marker"}
+    g = types.SimpleNamespace(node_metadata={name: {"shape": (1, 8, 8), "render": old}})
+    sgb.assert_stored_shapes_match(g, [(tif, name)], verbose=False, render=_render())
+    try:
+        sgb.assert_stored_shapes_match(g, [(tif, name)], verbose=False,
+                                       render=_render(marker="gcamp"))
+    except ValueError as e:
+        assert "'marker'" in str(e), str(e)
+    else:
+        raise AssertionError("marker change accepted")
 
 
 def main():

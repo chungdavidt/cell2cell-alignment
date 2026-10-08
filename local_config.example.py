@@ -121,11 +121,13 @@ INVIVO_PATH_GREEN = ""
 #
 # PREFERRED: a RELATIVE path, which names only the trailing folder and inherits
 # everything above it from preprocessing_config, so a rename of the output dirs
-# does not reach this file. It is resolved against BOTH output roots:
+# does not reach this file. It is resolved against every output root:
 #   SUBSLICE_DIR = "qc20_5_ge1"                   # step 6 ALIGN tifs
 #   -> <OUTPUT_ROOT>/subslice_align/qc20_5_ge1
 #   SUBSLICE_DIR = "qc20_5_ge5_sat15"             # graded, --ceiling 15
 #   -> <OUTPUT_ROOT>/subslice_align/qc20_5_ge5_sat15
+#   SUBSLICE_DIR = "gcamp_qc20_5_ge3_sat10"       # generate_alignment_tif.py --marker gcamp
+#   -> <OUTPUT_ROOT>/subslice_align_gcamp/gcamp_qc20_5_ge3_sat10
 #   SUBSLICE_DIR = "threshold_0.00_cellmask_0.50" # step 4 overlays
 #   -> <OUTPUT_ROOT>/mScarlet_cellmask_subslice/threshold_0.00_cellmask_0.50
 # The ALIGN tifs are the ONLY thing the builder ingests — marker-only, binary
