@@ -7,6 +7,8 @@ castalign_testground.ipynb shows a BARseq slice two ways:
                       (ex-vivo block or in-vivo) is warped onto it.
     Mode A            the target is the FIXED image, drawn as stored; the slice
                       is warped onto it by g.get_transform(slice, target).
+                      The Mode A cell was removed 2026-10-07; "Mode A" below
+                      names that view, which the graph viewer cell also draws.
 
 This script replays each step with castalign's own calls on the real graph and
 prints PASS / FAIL / INFO with numbers, so a mirrored or transposed slice can be
@@ -14,13 +16,13 @@ traced to the step that produces it:
 
     1  slice TIFF on disk      vs  slice node image in the graph
     2  target TIFF on disk     vs  target node image in the graph
-    3  NOTEBOOK REPLAY: the startup cell's helper functions, the Mode C cell and
-       the Mode A cell are executed on a COPY of the graph, with ca_gui.align_interactive
+    3  NOTEBOOK REPLAY: the startup cell's load_and_pad_slice and the Mode C
+       cell are executed on a COPY of the graph, with ca_gui.align_interactive
        replaced by a recorder. It captures exactly which arrays and which
-       start transform each mode hands castalign, and what Mode C saves. The
-       recorder answers Mode C with the fit already stored in the graph, so
-       the replayed save reproduces the real edge; it answers Mode A with
-       Identity, so Mode A saves nothing.
+       start transform Mode C hands castalign. The recorder answers with the
+       fit already stored in the graph, which is where Mode C now opens, so the
+       cell sees no change and saves nothing. The Mode A view is taken from
+       the graph: slice node image, target node image, g.get_transform(slice, target).
     4  the stored routes target <-> slice, hop by hop, split into components
     5  Mode A's start transform is the exact inverse of the Mode C route
     6  pressing a key in Mode A starts from that same transform
@@ -326,12 +328,9 @@ def step3_notebook_replay(rep, g, ca, graph_path, notebook, slice_name, target, 
     # The helpers live in the startup cell, which also imports castalign.gui,
     # loads the REAL graph from local_config and sets slice_node = None. Run
     # only the function definitions the mode cells call.
-    cell_utils = _function_source(_cell_source(nb, "# ALIGNMENT UTILITIES"),
-                                  {"get_initial_transform_slice_to_target", "load_and_pad_slice",
-                                   "save_alignment", "get_previous_transform"})
+    cell_utils = _function_source(_cell_source(nb, "# ALIGNMENT UTILITIES"), {"load_and_pad_slice"})
     cell_picker = _cell_source(nb, "# CHAIN PICKER")
     cell_mode_c = _cell_source(nb, "# MODE C:")
-    cell_mode_a = _cell_source(nb, "# MODE A:")
     pad_m = re.search(r"^PAD_Z\s*=\s*(\d+)", cell_mode_c, re.M)
     rep_m = re.search(r"^REPEAT_SLICE_IN_Z\s*=\s*(True|False)", cell_mode_c, re.M)
     if not pad_m or not rep_m:
@@ -349,7 +348,7 @@ def step3_notebook_replay(rep, g, ca, graph_path, notebook, slice_name, target, 
     # The Mode C GUI answer: the fit the real graph already stores (route with -PAD_Z undone).
     stored_route = g.get_transform(target, slice_name)
     mode_c_answer = stored_route + ca.TranslateFixed(z=pad_z)
-    recorder = GuiRecorder([mode_c_answer, ca.Identity()])
+    recorder = GuiRecorder([mode_c_answer])
 
     has_block = target.startswith("block")
     slice_nodes = sorted(n for n in gcopy.nodes if "_subslice_ALIGN" in n)
@@ -372,14 +371,14 @@ def step3_notebook_replay(rep, g, ca, graph_path, notebook, slice_name, target, 
 
     rep("  --- Mode C cell output ---")
     exec(cell_mode_c, ns)
-    rep("  --- Mode A cell output ---")
-    exec(cell_mode_a, ns)
     rep("  --- end of notebook output ---")
 
-    if len(recorder.calls) != 2:
-        rep.status(3, False, f"expected 2 align_interactive calls, recorded {len(recorder.calls)}")
+    if len(recorder.calls) != 1:
+        rep.status(3, False, f"expected 1 align_interactive call, recorded {len(recorder.calls)}")
         return None
-    C, A = recorder.calls
+    C = recorder.calls[0]
+    A = {"movable": np.asarray(g.get_image(slice_name)), "fixed": np.asarray(g.get_image(target)),
+         "transform": g.get_transform(slice_name, target)}
     s_img = np.asarray(g.get_image(slice_name))
     t_img = np.asarray(g.get_image(target))
     H, W = s_img.shape[1:]
@@ -393,15 +392,16 @@ def step3_notebook_replay(rep, g, ca, graph_path, notebook, slice_name, target, 
     planes = range(fixed_c.shape[0]) if repeat else [pad_z]
     ok_planes = all(np.array_equal(fixed_c[k], s_img[0]) for k in planes)
     rep.status(3, ok_planes, f"fixed plane(s) {'0..' + str(2 * pad_z) if repeat else pad_z} equal the slice node image, same (y, x) order")
-    rep.status(3, isinstance(C["transform"], ca.Identity), f"start transform: {C['transform']!r}")
+    err = _same_points(C["transform"], mode_c_answer, t_img.shape)
+    rep.status(3, err < 1e-6, f"start transform = stored fit + TranslateFixed(z={pad_z}); max point error {err:.2e}")
     rep.status(3, C["graph"] is None, f"graph= passed: {C['graph'] is not None}")
     saved = gcopy.get_transform(target, slice_name)
     err = _same_points(saved, mode_c_answer + ca.TranslateFixed(z=-pad_z), t_img.shape)
-    rep.status(3, err < 1e-6, f"Mode C saved (GUI fit + TranslateFixed(z=-{pad_z})); max point error {err:.2e}")
+    rep.status(3, err < 1e-6, f"edge after Mode C = GUI answer + TranslateFixed(z=-{pad_z}); max point error {err:.2e}")
     err = _same_points(saved, stored_route, t_img.shape)
     rep.status(3, err < 1e-6, f"replayed save reproduces the route in the real graph; max point error {err:.2e}")
 
-    rep("  Mode A call:")
+    rep("  Mode A view, from the graph:")
     rep.status(3, isinstance(A["movable"], np.ndarray) and np.array_equal(np.asarray(A["movable"]), s_img),
                f"movable = slice node image {s_img.shape}, same array values")
     rep.status(3, isinstance(A["fixed"], np.ndarray) and np.array_equal(np.asarray(A["fixed"]), t_img),
@@ -555,7 +555,7 @@ def step8_images(rep, ca, seed, slice_img, final):
     return out, probe
 
 
-def step10_mode_a_planes(rep, seed, slice_img, rendered_real):
+def step10_mode_a_planes(rep, seed, slice_img, rendered_real, target_shape):
     rep("\nSTEP 10  what Mode A's 2D view can show (napari draws ONE z plane of each layer at a time)")
     s = np.asarray(slice_img)
     H, W = s.shape[1:]
@@ -565,27 +565,41 @@ def step10_mode_a_planes(rep, seed, slice_img, rendered_real):
     corners = np.asarray(seed.transform(np.asarray([[0.0, y, x] for y in (0, H) for x in (0, W)], float)))
     centre_z = float(np.asarray(seed.transform(np.asarray([[0.0, H / 2.0, W / 2.0]])))[0][0])
     rep(f"  slice normal vs target z axis: {tilt:.2f} degrees"
-        f"{' (turned over: slice +z points to target -z)' if n[0] < 0 else ''}")
+        f"{' (slice +z points to target -z: a turn-over or a reflection, see step 7)' if n[0] < 0 else ''}")
     rep(f"  slice corners land on target z = {corners[:, 0].min():.2f} .. {corners[:, 0].max():.2f}; "
         f"centre z = {centre_z:.2f}")
     flat, origin, rendered = rendered_real
     if rendered.shape[0] == 0 or not rendered.any():
         rep.status(10, False, "castalign rendered the slice blank -- Mode A shows NOTHING at any z")
         return None
+    # Count only what lands inside the target volume -- the part Mode A can show against tissue.
     thr = 0.25 * float(rendered.max())
-    foot = int((rendered.max(axis=0) > thr).sum())
-    counts = [int((rendered[k] > thr).sum()) for k in range(rendered.shape[0])]
-    planes = [float(origin[0]) + k for k, c in enumerate(counts) if c > 0]
+    zw, yw, xw = (float(origin[i]) + np.arange(rendered.shape[i]) for i in range(3))
+    in_yx = ((yw >= 0) & (yw < target_shape[1]))[:, None] & ((xw >= 0) & (xw < target_shape[2]))[None, :]
+    in_z = (zw >= 0) & (zw < target_shape[0])
+    foot_mask = np.zeros(rendered.shape[1:], dtype=bool)
+    counts = []
+    for k in range(rendered.shape[0]):
+        m = (rendered[k] > thr) & in_yx if in_z[k] else np.zeros_like(in_yx)
+        foot_mask |= m
+        counts.append(int(m.sum()))
+    foot = int(foot_mask.sum())
+    whole = int((rendered.max(axis=0) > thr).sum())
+    if foot == 0:
+        rep.status(10, False, f"no part of the slice lands inside the target volume {tuple(target_shape)}")
+        return None
+    planes = [float(zw[k]) for k, c in enumerate(counts) if c > 0]
     k_best = int(np.argmax(counts))
-    z_best = float(origin[0]) + k_best
-    frac = counts[k_best] / foot if foot else 0.0
-    rep(f"  warped slice has signal on {len(planes)} target plane(s), z = {planes[0]:.1f} .. {planes[-1]:.1f}")
-    rep(f"  best single plane z = {z_best:.1f} holds {frac:.0%} of the slice's drawn footprint")
+    z_best = float(zw[k_best])
+    frac = counts[k_best] / foot
+    rep(f"  {foot / whole:.0%} of the drawn slice lies inside the target volume {tuple(target_shape)}")
+    rep(f"  that part has signal on {len(planes)} target plane(s), z = {planes[0]:.1f} .. {planes[-1]:.1f}")
+    rep(f"  best single plane z = {z_best:.1f} holds {frac:.0%} of it")
     if len(planes) > 1:
         rep("  Mode C resamples the TARGET onto the slice's plane, so it shows the whole slice against one")
         rep("  oblique section. Mode A cannot: it shows the target's own planes, and on each one only the")
         rep("  strip of the slice that crosses it. Scroll z in Mode A, or view in 3D, to see the rest.")
-    rep.status(10, None, f"Mode A 2D: scroll to z = {round(z_best)}; one plane shows {frac:.0%} of the slice "
+    rep.status(10, None, f"Mode A 2D: scroll to z = {round(z_best)}; one plane shows {frac:.0%} of the slice inside the target "
                          f"(tilt {tilt:.2f} degrees)")
     rep.mode_a_plane = {"z": z_best, "k": k_best, "frac": frac, "tilt": tilt, "n_planes": len(planes)}
     return rep.mode_a_plane
@@ -690,8 +704,7 @@ def run(g, ca, graph_path, notebook, slice_name, target, slice_tif, slice_loader
     if g.has_transform(slice_name, target):
         rep.status(0, None, "a route exists, so Mode A starts from g.get_transform(slice, target)")
     else:
-        rep.status(0, False, "NO route: Mode A would start from a neighbouring slice's transform "
-                             "(get_previous_transform) or Identity -- this report cannot continue")
+        rep.status(0, False, "NO route between slice and target -- this report cannot continue")
         return rep
 
     step1_slice_file(rep, slice_img, slice_tif, slice_loader)
@@ -708,7 +721,8 @@ def run(g, ca, graph_path, notebook, slice_name, target, slice_tif, slice_loader
         final = step7_orientation(rep, parts_rev, np.asarray(slice_img).shape)
         rep.final = final
         rendered, probe = step8_images(rep, ca, seed, replay["A"]["movable"], final)
-        plane = step10_mode_a_planes(rep, seed, replay["A"]["movable"], rendered["real slice"])
+        plane = step10_mode_a_planes(rep, seed, replay["A"]["movable"], rendered["real slice"],
+                                     np.asarray(replay["A"]["fixed"]).shape)
         step9_figure(rep, out_dir / "orientation_steps.png", replay, rendered, probe, plane)
     finally:
         if not keep_copy:
@@ -722,8 +736,8 @@ def run(g, ca, graph_path, notebook, slice_name, target, slice_tif, slice_loader
             f" (mirrored on screen: {'YES' if final['mirrored_on_screen'] else 'no'})")
     if rep.mode_a_plane is not None:
         p = rep.mode_a_plane
-        rep(f"  Mode A 2D view: the slice spans {p['n_planes']} target plane(s); at z = {round(p['z'])} one plane "
-            f"shows {p['frac']:.0%} of it (tilt {p['tilt']:.2f} degrees)")
+        rep(f"  Mode A 2D view: inside the target the slice spans {p['n_planes']} plane(s); at z = {round(p['z'])} "
+            f"one plane shows {p['frac']:.0%} of it (tilt {p['tilt']:.2f} degrees)")
     (out_dir / "orientation_steps.txt").write_text("\n".join(rep.lines) + "\n", encoding="utf-8")
     print(f"\nreport: {out_dir / 'orientation_steps.txt'}")
     return rep

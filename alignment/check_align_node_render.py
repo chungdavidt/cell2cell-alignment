@@ -176,7 +176,7 @@ def describe(g, node, subslice_dir, pad_z, repeat):
         print(f"  padded base (repeat=True): {padded.shape}, no fill value")
     else:
         old_fill = float(img.mean()) * 0.90
-        # castalign_testground cell 16: any ALIGN node pads with 0, graded too
+        # castalign_testground Mode C cell: any ALIGN node pads with 0, graded too
         new_fill = 0 if (_STEM_MARKER in node or vals.size <= 3) else old_fill
         padded = np.full((2 * pad_z + 1, *img.shape[1:]),
                          new_fill, dtype=img.dtype)
