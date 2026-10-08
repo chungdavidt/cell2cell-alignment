@@ -63,13 +63,15 @@ cell <-> label link (export_subslice_cells.py) takes no cutoff at all.
 So pick this value purely for legibility against the 2P. Pick the analysis cutoff
 separately, as a filter on the exported cell table. They need not match.
 
-Output goes to a folder named by both gates, so several coexist and nothing is
-overwritten:
-    <OUTPUT_ROOT>/subslice_align/qc{reads}_{genes}_ge{n}/slice{N}_subslice_ALIGN.tif
-    <OUTPUT_ROOT>/subslice_align/qc{reads}_{genes}_ge{n}_sat{ceiling}/...   (graded)
+Output goes to a folder named by marker and both gates, so several coexist and
+nothing is overwritten:
+    <OUTPUT_ROOT>/subslice_align_mscarlet/mscarlet_qc{reads}_{genes}_ge{n}/slice{N}_subslice_ALIGN.tif
+    <OUTPUT_ROOT>/subslice_align_mscarlet/mscarlet_qc{reads}_{genes}_ge{n}_sat{ceiling}/...   (graded)
     <OUTPUT_ROOT>/subslice_align_gcamp/gcamp_qc{reads}_{genes}_ge{n}[_sat{ceiling}]/...
-The gcamp_ prefix repeats the parent's marker because the graph builder names a
-node by the leaf folder alone (slice22_subslice_ALIGN_gcamp_qc20_5_ge3_sat10).
+The prefix repeats the parent's marker because the graph builder names a node by
+the leaf folder alone (slice22_subslice_ALIGN_gcamp_qc20_5_ge3_sat10). Unprefixed
+folders under <OUTPUT_ROOT>/subslice_align/ are mScarlet renders from before
+2026-10-08; this script no longer writes there.
 
 --dim is not in the folder name. Each folder carries align_render.json, the
 settings it was rendered with; a run whose settings differ refuses to write
@@ -103,7 +105,7 @@ from scipy import sparse
 from preprocessing_config import (
     FILT_NEURONS_PATH,
     HYB_DOWNSAMPLED_DIR,
-    SUBSLICE_ALIGN_DIR,
+    SUBSLICE_ALIGN_MSCARLET_DIR,
     SUBSLICE_ALIGN_GCAMP_DIR,
     QC_MIN_READS,
     QC_MIN_GENES,
@@ -127,23 +129,24 @@ SPARSE_WARN = 20        # subslices with fewer visible cells than this are flagg
 DEFAULT_DIM = 40        # level of a floor-count cell in a graded render
 # Read back by alignment/subslice_graph_builder.py under the same name.
 RENDER_SIDECAR = "align_render.json"
-# Marker of a sidecar written before --marker existed. The builder holds the same value.
+# Default --marker, and the marker of a sidecar written before --marker existed.
+# The builder holds the same value.
 DEFAULT_MARKER = "mscarlet"
 # --ceiling with no value: take the marker's ceiling. Not a str, which argparse would int().
 BARE_CEILING = object()
-# Output root per marker. Only the default marker leaves its folder names unprefixed.
+# Output root per marker.
 ALIGN_ROOTS = {
-    "mscarlet": SUBSLICE_ALIGN_DIR,
+    "mscarlet": SUBSLICE_ALIGN_MSCARLET_DIR,
     "gcamp": SUBSLICE_ALIGN_GCAMP_DIR,
 }
 
 
 def render_leaf(marker, min_reads, min_genes, floor, ceiling=None):
-    """Folder name for one render: qc20_5_ge5, qc20_5_ge5_sat15, gcamp_qc20_5_ge3_sat10."""
-    leaf = f"qc{min_reads}_{min_genes}_ge{floor}"
+    """Folder name for one render: mscarlet_qc20_5_ge5, gcamp_qc20_5_ge3_sat10."""
+    leaf = f"{marker}_qc{min_reads}_{min_genes}_ge{floor}"
     if ceiling is not None:
         leaf += f"_sat{ceiling}"
-    return leaf if marker == DEFAULT_MARKER else f"{marker}_{leaf}"
+    return leaf
 
 
 def shade(counts, floor, ceiling, dim):

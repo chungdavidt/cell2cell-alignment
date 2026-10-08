@@ -250,10 +250,10 @@ def test_builder_refuses_rerendered_folder(tmp):
 
 def test_render_leaf_per_marker(tmp):
     gat = _gat()
-    assert gat.render_leaf("mscarlet", 20, 5, 5) == "qc20_5_ge5"
-    assert gat.render_leaf("mscarlet", 20, 5, 5, 15) == "qc20_5_ge5_sat15"
+    assert gat.render_leaf("mscarlet", 20, 5, 5) == "mscarlet_qc20_5_ge5"
+    assert gat.render_leaf("mscarlet", 20, 5, 5, 15) == "mscarlet_qc20_5_ge5_sat15"
     assert gat.render_leaf("gcamp", 20, 5, 3, 10) == "gcamp_qc20_5_ge3_sat10"
-    assert gat.ALIGN_ROOTS["mscarlet"] == gat.SUBSLICE_ALIGN_DIR
+    assert gat.ALIGN_ROOTS["mscarlet"] == gat.SUBSLICE_ALIGN_MSCARLET_DIR
     assert gat.ALIGN_ROOTS["gcamp"] == gat.SUBSLICE_ALIGN_GCAMP_DIR
     assert gat.ALIGN_ROOTS["gcamp"] != gat.ALIGN_ROOTS["mscarlet"]
 

@@ -265,7 +265,7 @@ Examples:
         from preprocessing_config import (
             OUTPUT_ROOT, SUBSLICE_DEFINITIONS_DIR, HYB_STITCHED_DIR,
             HYB_DOWNSAMPLED_DIR, MSCARLET_CELLMASK_DIR, MSCARLET_INTERACTIVE_DIR,
-            SUBSLICE_ALIGN_DIR,
+            SUBSLICE_ALIGN_MSCARLET_DIR,
         )
         print("Status: COMPLETED successfully")
         print(f"\nOutput locations:")
@@ -274,7 +274,7 @@ Examples:
         print(f"  Downsampled: {HYB_DOWNSAMPLED_DIR}")
         print(f"  Overlays: {MSCARLET_CELLMASK_DIR}")
         print(f"  Figures: {MSCARLET_INTERACTIVE_DIR}")
-        print(f"  Alignment TIFs: {SUBSLICE_ALIGN_DIR}")
+        print(f"  Alignment TIFs: {SUBSLICE_ALIGN_MSCARLET_DIR}")
         print(f"  Cell table: {Path(OUTPUT_ROOT) / 'subslice_cell_table'}")
         print("\nTwo manual acts remain, in this order:")
         print("  1. python preprocessing/assign_orientation.py --modality barseq_subslice")
@@ -292,7 +292,7 @@ Examples:
         print("     Bare, it AUGMENTS instead -- adding only missing nodes, and hard-")
         print("     erroring on a shape mismatch. To add another rolony cutoff without")
         print("     touching what is aligned:")
-        print("       python alignment/subslice_graph_builder.py -d qc20_5_ge5")
+        print("       python alignment/subslice_graph_builder.py -d mscarlet_qc20_5_ge5")
 
 
 if __name__ == '__main__':

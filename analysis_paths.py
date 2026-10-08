@@ -73,19 +73,19 @@ def subject_name() -> Optional[str]:
     return None if root is None else root.name
 
 
-def _preprocessing_roots() -> "tuple[Path, Path, Path]":
-    """(overlay root, alignment-tif root, GCaMP alignment-tif root) from preprocessing_config.
+def _preprocessing_roots() -> "tuple[Path, ...]":
+    """Every root a relative SUBSLICE_DIR is resolved against, from preprocessing_config.
 
-    A relative SUBSLICE_DIR is resolved against all three: step 4's overlays
-    live under the first, generate_alignment_tif.py's output under the second,
-    and its --marker gcamp output (gcamp_* folders) under the third. Only the
-    alignment roots hold anything the graph builder will ingest — it takes
-    ALIGN tifs and nothing else — but the lookup stays symmetric so a folder
-    name under any root resolves instead of silently missing.
+    Step 4's overlays; generate_alignment_tif.py's per-marker roots
+    (mscarlet_* and gcamp_* folders); and subslice_align/, which holds the
+    unprefixed mScarlet renders written before 2026-10-08. Only the alignment
+    roots hold anything the graph builder will ingest — it takes ALIGN tifs and
+    nothing else — but the lookup stays symmetric so a folder name under any
+    root resolves instead of silently missing.
     """
     cfg = _preprocessing_config()
-    return (Path(cfg.MSCARLET_CELLMASK_DIR), Path(cfg.SUBSLICE_ALIGN_DIR),
-            Path(cfg.SUBSLICE_ALIGN_GCAMP_DIR))
+    return (Path(cfg.MSCARLET_CELLMASK_DIR), Path(cfg.SUBSLICE_ALIGN_MSCARLET_DIR),
+            Path(cfg.SUBSLICE_ALIGN_GCAMP_DIR), Path(cfg.SUBSLICE_ALIGN_DIR))
 
 
 def _preprocessing_config(reason: str = None):
@@ -142,8 +142,9 @@ def resolve_subslice_dir(value: Optional[str] = None) -> Optional[Path]:
     SUBSLICE_DIR inherits it and names only the trailing folder — resolved
     against every output root::
 
-        SUBSLICE_DIR = "qc20_5_ge1"                    # alignment TIFs
+        SUBSLICE_DIR = "mscarlet_qc20_5_ge1"           # alignment TIFs
         SUBSLICE_DIR = "gcamp_qc20_5_ge3_sat10"        # GCaMP alignment TIFs
+        SUBSLICE_DIR = "qc20_5_ge1"                    # pre-2026-10-08 subslice_align/
         SUBSLICE_DIR = "rolony_ge5_sat15"              # step 4 overlays
 
     which survives any later rename of the directories above it. Resolving an

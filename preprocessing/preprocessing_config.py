@@ -114,12 +114,15 @@ MSCARLET_CELLMASK_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_cellmask_subslice")
 # subfolder per run. Only the mScarlet root feeds a relative SUBSLICE_DIR lookup
 # (analysis_paths._preprocessing_roots); these overlays are display products.
 GCAMP_CELLMASK_DIR = os.path.join(OUTPUT_ROOT, "GCaMP_cellmask_subslice")
-# Marker-only images the graph aligns on, binary or graded (_sat{ceiling}).
-# One subdirectory per gate combination, named by generate_alignment_tif.py.
-SUBSLICE_ALIGN_DIR = os.path.join(OUTPUT_ROOT, "subslice_align")
-# generate_alignment_tif.py --marker gcamp. Same mScarlet-defined subslice grid;
-# its folders carry a gcamp_ prefix because a node is named by the leaf folder alone.
+# Marker-only images the graph aligns on, binary or graded (_sat{ceiling}), one
+# root per marker. One subdirectory per gate combination, named by
+# generate_alignment_tif.py with a {marker}_ prefix, because a graph node is
+# named by the leaf folder alone. Both use the mScarlet-defined subslice grid.
+SUBSLICE_ALIGN_MSCARLET_DIR = os.path.join(OUTPUT_ROOT, "subslice_align_mscarlet")
 SUBSLICE_ALIGN_GCAMP_DIR = os.path.join(OUTPUT_ROOT, "subslice_align_gcamp")
+# Unprefixed mScarlet renders written before 2026-10-08. Nothing writes here any
+# more; a relative SUBSLICE_DIR still resolves under it (analysis_paths).
+SUBSLICE_ALIGN_DIR = os.path.join(OUTPUT_ROOT, "subslice_align")
 MSCARLET_INTERACTIVE_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_cellmask_interactive_subslice")
 MSCARLET_LABELLED_DIR = os.path.join(OUTPUT_ROOT, "mScarlet_overlay_dapi_labelled")
 

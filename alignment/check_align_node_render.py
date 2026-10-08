@@ -70,7 +70,7 @@ def source_tif(node, subslice_dir):
     A node is named `{stem}_{render folder}` (subslice_node_name), so the
     folder it came from is in the name even after SUBSLICE_DIR has moved on to
     a different cutoff. Renders of one marker sit side by side under one root
-    (subslice_align/, subslice_align_gcamp/), so a folder that is not next to
+    (subslice_align_mscarlet/, subslice_align_gcamp/), so a folder that is not next to
     SUBSLICE_DIR is looked up under every root by resolve_subslice_dir.
     """
     if subslice_dir is None or _STEM_MARKER not in node:

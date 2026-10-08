@@ -95,9 +95,10 @@ GRAPH_PATH = r""
 
 # BARseq subslices. Relative, so everything above it comes from
 # preprocessing_config and a rename never reaches this file. Resolved against
-# BOTH output roots:
-#   "qc20_5_ge3"  -> subslice_align/qc20_5_ge3/   (step 6 ALIGN tifs)
-#   "qc20_5_ge5_sat15" -> graded render, generate_alignment_tif.py --ceiling 15
+# every output root:
+#   "mscarlet_qc20_5_ge3" -> subslice_align_mscarlet/mscarlet_qc20_5_ge3/   (step 6 ALIGN tifs)
+#   "gcamp_qc20_5_ge3_sat10" -> subslice_align_gcamp/, generate_alignment_tif.py --marker gcamp
+#   "qc20_5_ge5"  -> subslice_align/qc20_5_ge5/   (unprefixed, written before 2026-10-08)
 # ALIGN tifs are the only image the builder ingests — marker-only, binary or
 # graded. A folder holding none (a step 4 overlay folder, say) is a hard error;
 # the step 4 overlay is an RGB display figure whose BT.601 collapse renders
@@ -105,7 +106,7 @@ GRAPH_PATH = r""
 # The number is ALIGN_MIN_ROLONIES, picked by eye with check_rolony_cutoff.py;
 # each cutoff writes its own folder, so change it here to switch which one is
 # ingested. A wrong name raises and lists the folders that do exist.
-# NOTE: the folder name is part of the node name (slice22_subslice_ALIGN_qc20_5_ge3),
+# NOTE: the folder name is part of the node name (slice22_subslice_ALIGN_mscarlet_qc20_5_ge3),
 # so switching cutoffs ADDS a parallel node set to an existing graph rather than
 # replacing one. The old set keeps its own alignment; the new one is aligned by
 # hand. force_rebuild=True is the reset.

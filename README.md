@@ -165,7 +165,7 @@ python run_pipeline.py --test         # slice 22 only, quick sanity check
 python run_pipeline.py --start-from 3 # resume from step N
 ```
 
-The outputs land under `OUTPUT_ROOT`. Point `SUBSLICE_DIR` in `local_config.py` at the resulting `subslice_align/qc*_ge*/` folder.
+The outputs land under `OUTPUT_ROOT`. Point `SUBSLICE_DIR` in `local_config.py` at the resulting `subslice_align_mscarlet/mscarlet_qc*_ge*/` folder (the folder name alone is enough). `generate_alignment_tif.py --marker gcamp` writes `subslice_align_gcamp/gcamp_qc*_ge*/`.
 
 ---
 
