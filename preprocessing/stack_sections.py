@@ -52,7 +52,7 @@ for _p in (str(_ROOT), str(_HERE)):
         sys.path.insert(0, _p)
 
 import section_centers
-from analysis_paths import align_tif_slice, align_tifs, resolve_subslice_dir
+from analysis_paths import ALIGN_TIF_GLOB, align_tif_slice, align_tifs, resolve_subslice_dir
 from scope_profiles import SECTION_THICKNESS_UM
 
 RAW_CHANNELS = ("DAPI", "MSCARLET", "GCAMP")
@@ -60,7 +60,17 @@ STACK_DIRNAME = "section_stacks"
 RAW_RANGE_PERCENTILE = 99.9     # display ceiling of a raw channel, max over sections
 
 
-def channel_files(name, hyb_dir, sections):
+def render_folders(align_roots):
+    """``root/folder`` for every folder under `align_roots` holding ALIGN tifs."""
+    found = []
+    for root in map(Path, align_roots):
+        if root.is_dir():
+            found += [f"{root.name}/{d.name}" for d in sorted(root.iterdir())
+                      if d.is_dir() and any(d.glob(ALIGN_TIF_GLOB))]
+    return found
+
+
+def channel_files(name, hyb_dir, sections, align_roots):
     """``{slice_no: path}`` for one --channel, over `sections`."""
     if name.upper() in RAW_CHANNELS:
         files = {n: Path(hyb_dir) / f"slice{n}_subslice_{name.upper()}.tif" for n in sections}
@@ -68,9 +78,14 @@ def channel_files(name, hyb_dir, sections):
     else:
         try:
             folder = resolve_subslice_dir(name)
-        except ValueError as e:
-            raise SystemExit(f"--channel {name}: not one of {'/'.join(RAW_CHANNELS)}, "
-                             f"and no render folder by that name.{e}")
+        except ValueError:
+            folder = None
+        if folder is None or not any(folder.glob(ALIGN_TIF_GLOB)):
+            listing = "\n".join(f"    {f}" for f in render_folders(align_roots)) or "    (none)"
+            raise SystemExit(
+                f"--channel {name}: not one of {'/'.join(RAW_CHANNELS)}, and no folder "
+                f"of ALIGN tifs by that name.\n\nALIGN render folders (pass the part "
+                f"after the /):\n{listing}")
         files = {align_tif_slice(p): p for p in align_tifs(folder)}
     missing = [n for n in sections if n not in files]
     if missing:
@@ -127,7 +142,11 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="report the layout, write nothing")
     args = ap.parse_args()
 
-    from preprocessing_config import HYB_DOWNSAMPLED_DIR, OUTPUT_ROOT, TARGET_XY_UM_PER_PX
+    from preprocessing_config import (
+        HYB_DOWNSAMPLED_DIR, OUTPUT_ROOT, TARGET_XY_UM_PER_PX,
+        SUBSLICE_ALIGN_MSCARLET_DIR, SUBSLICE_ALIGN_GCAMP_DIR, SUBSLICE_ALIGN_DIR,
+    )
+    align_roots = (SUBSLICE_ALIGN_MSCARLET_DIR, SUBSLICE_ALIGN_GCAMP_DIR, SUBSLICE_ALIGN_DIR)
 
     if len(set(c.lower() for c in args.channel)) != len(args.channel):
         ap.error("a --channel is listed twice")
@@ -145,7 +164,8 @@ def main():
         centres = {n: centres[n] for n in args.slices}
     sections = sorted(centres)
 
-    files = {c: channel_files(c, HYB_DOWNSAMPLED_DIR, sections) for c in args.channel}
+    files = {c: channel_files(c, HYB_DOWNSAMPLED_DIR, sections, align_roots)
+             for c in args.channel}
 
     # One grid per section across every channel, and the grid the click was made on.
     dtypes = set()
