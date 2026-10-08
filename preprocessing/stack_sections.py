@@ -2,39 +2,43 @@
 """
 Stack BARseq sections on their clicked centres into one ImageJ composite TIFF.
 
-For viewing: where the red and green signal sits through the series. Reads
-<ANALYSIS_ROOT>/section_centers.json (pick_section_centers.py) and shifts every
-section by whole pixels so its centre lands on one canvas pixel. Translation
+For viewing: where the red and green signal sits through the series. Reads the
+centres pick_section_centers.py recorded for --source and shifts every section
+by whole pixels so its centre lands on one canvas pixel.
+
+--source slice (default)  whole sections, stitch_slices.py --downsample;
+                          centres from <ANALYSIS_ROOT>/section_centers_slice.json
+--source subslice         step 3's marker-defined regions;
+                          centres from <ANALYSIS_ROOT>/section_centers.json Translation
 only, no resampling: pixel values in the stack are the values on disk. Rotation
 and flips between sections are NOT corrected.
 
 Each --channel becomes one channel of the composite, all sharing one shift per
 section (a section's raw channels and ALIGN renders sit on one grid):
 
-    DAPI | MSCARLET | GCAMP     step 3's downsampled raw channel
-                                (HYB_subslice_stitched_tif_downsampled_micronwise/)
-    <render folder name>        an ALIGN folder, resolved like SUBSLICE_DIR
-                                (mscarlet_qc20_5_ge3_sat15, gcamp_qc20_5_ge3_sat10,
-                                or a pre-2026-10-08 qc20_5_ge5)
+    DAPI | MSCARLET | GCAMP     the source's downsampled raw channel
+    <render folder name>        --source subslice only: an ALIGN folder, resolved
+                                like SUBSLICE_DIR (mscarlet_qc20_5_ge3_sat15,
+                                gcamp_qc20_5_ge3_sat10, or a pre-2026-10-08 qc20_5_ge5)
 
 Colours: mScarlet red, GCaMP green, DAPI grey, anything else blue.
 
 Output, under <OUTPUT_ROOT>/section_stacks/:
 
-    sections_{channel}__{channel}.tif            Z C Y X, Z = sections in ascending
+    sections_{source}_{channel}__{channel}.tif   Z C Y X, Z = sections in ascending
                                                  slice number; calibrated XY from
                                                  SCOPE, Z = --z-um (20 µm sections)
-    sections_{channel}__{channel}_offsets.json   per section: z index, depth, (dy, dx)
+    sections_{source}_..._offsets.json           per section: z index, depth, (dy, dx)
 
 A section pixel (y, x) is at (y + dy, x + dx) in the stack; the offsets file is
-what a point cloud built from export_subslice_cells.py's y_node/x_node reads.
+what a point cloud built on these sections reads.
 Written through a memory map, so a stack larger than RAM is fine; --dry-run
 prints its size first.
 
 Usage:
-    python preprocessing/stack_sections.py -c mscarlet_qc20_5_ge3_sat15 -c gcamp_qc20_5_ge3_sat10 --dry-run
-    python preprocessing/stack_sections.py -c mscarlet_qc20_5_ge3_sat15 -c gcamp_qc20_5_ge3_sat10 -c DAPI
-    python preprocessing/stack_sections.py -c MSCARLET -c GCAMP --slices 20 21 22
+    python preprocessing/stack_sections.py -c MSCARLET -c GCAMP --dry-run
+    python preprocessing/stack_sections.py -c MSCARLET -c GCAMP -c DAPI --slices 20 21 22
+    python preprocessing/stack_sections.py --source subslice -c mscarlet_qc0_3_ge0_sat5 -c gcamp_qc0_3_ge0_sat5
 """
 
 import argparse
@@ -70,11 +74,15 @@ def render_folders(align_roots):
     return found
 
 
-def channel_files(name, hyb_dir, sections, align_roots):
+def channel_files(name, hyb_dir, sections, align_roots, source="subslice"):
     """``{slice_no: path}`` for one --channel, over `sections`."""
     if name.upper() in RAW_CHANNELS:
-        files = {n: Path(hyb_dir) / f"slice{n}_subslice_{name.upper()}.tif" for n in sections}
+        files = {n: Path(hyb_dir) / section_centers.raw_tif_name(source, n, name)
+                 for n in sections}
         files = {n: p for n, p in files.items() if p.exists()}
+    elif source != "subslice":
+        raise SystemExit(f"--channel {name}: --source {source} takes "
+                         f"{'/'.join(RAW_CHANNELS)} only; ALIGN renders exist on subslices")
     else:
         try:
             folder = resolve_subslice_dir(name)
@@ -129,6 +137,8 @@ def main():
     ap = argparse.ArgumentParser(
         description="Stack BARseq sections on their clicked centres (ImageJ composite)",
         formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
+    ap.add_argument("--source", choices=section_centers.SOURCES, default="slice",
+                    help="whole slices or step 3 subslices (default: slice)")
     ap.add_argument("-c", "--channel", action="append", required=True,
                     help=f"{'/'.join(RAW_CHANNELS)} or an ALIGN render folder name; repeat")
     ap.add_argument("--slices", type=int, nargs="+", default=None, metavar="N",
@@ -136,14 +146,14 @@ def main():
     ap.add_argument("--z-um", type=float, default=SECTION_THICKNESS_UM,
                     help=f"spacing between consecutive sections (default {SECTION_THICKNESS_UM})")
     ap.add_argument("--centers", default=None,
-                    help="record path (default: <ANALYSIS_ROOT>/section_centers.json)")
+                    help="record path (default: the --source's record under ANALYSIS_ROOT)")
     ap.add_argument("--out", default=None, help="output .tif (default: under section_stacks/)")
     ap.add_argument("--force", action="store_true", help="overwrite an existing output")
     ap.add_argument("--dry-run", action="store_true", help="report the layout, write nothing")
     args = ap.parse_args()
 
     from preprocessing_config import (
-        HYB_DOWNSAMPLED_DIR, OUTPUT_ROOT, TARGET_XY_UM_PER_PX,
+        HYB_DOWNSAMPLED_DIR, HYB_SLICE_DOWNSAMPLED_DIR, OUTPUT_ROOT, TARGET_XY_UM_PER_PX,
         SUBSLICE_ALIGN_MSCARLET_DIR, SUBSLICE_ALIGN_GCAMP_DIR, SUBSLICE_ALIGN_DIR,
     )
     align_roots = (SUBSLICE_ALIGN_MSCARLET_DIR, SUBSLICE_ALIGN_GCAMP_DIR, SUBSLICE_ALIGN_DIR)
@@ -151,12 +161,17 @@ def main():
     if len(set(c.lower() for c in args.channel)) != len(args.channel):
         ap.error("a --channel is listed twice")
 
-    cpath = section_centers.centers_path(args.centers)
+    hyb_dir = HYB_SLICE_DOWNSAMPLED_DIR if args.source == "slice" else HYB_DOWNSAMPLED_DIR
+    cpath = section_centers.centers_path(args.centers, args.source)
     record = section_centers.load(cpath)
+    if record["sections"] and section_centers.record_source(record) != args.source:
+        raise SystemExit(f"{cpath} holds {section_centers.record_source(record)} centres; "
+                         f"this run is --source {args.source}.")
     centres = section_centers.centers(record)
     grids = section_centers.shapes(record)
     if not centres:
-        raise SystemExit(f"No centres in {cpath}. Run preprocessing/pick_section_centers.py first.")
+        raise SystemExit(f"No centres in {cpath}. Run "
+                         f"preprocessing/pick_section_centers.py --source {args.source} first.")
     if args.slices:
         missing = sorted(set(args.slices) - set(centres))
         if missing:
@@ -164,7 +179,7 @@ def main():
         centres = {n: centres[n] for n in args.slices}
     sections = sorted(centres)
 
-    files = {c: channel_files(c, HYB_DOWNSAMPLED_DIR, sections, align_roots)
+    files = {c: channel_files(c, hyb_dir, sections, align_roots, args.source)
              for c in args.channel}
 
     # One grid per section across every channel, and the grid the click was made on.
@@ -182,7 +197,8 @@ def main():
             "These images are not on the grid their centre was clicked on:\n"
             + "\n".join(bad) + "\n"
             "Step 3 was re-run at another pitch, or the folder is from another subject. "
-            "Re-click those sections (pick_section_centers.py --slices N --redo).")
+            f"Re-click those sections (pick_section_centers.py --source {args.source} "
+            f"--slices N --redo).")
     if any(d.kind not in "ui" or d.itemsize > 2 for d in dtypes):
         raise SystemExit(f"Only 8/16-bit integer images stack; found {sorted(map(str, dtypes))}")
     dtype = np.dtype(np.uint8) if dtypes == {np.dtype(np.uint8)} else np.dtype(np.uint16)
@@ -192,13 +208,14 @@ def main():
     nbytes = Z * C * H * W * dtype.itemsize
 
     gaps = [(a, b) for a, b in zip(sections, sections[1:]) if b - a != 1]
-    stem = "sections_" + "__".join(args.channel)
+    stem = f"sections_{args.source}_" + "__".join(args.channel)
     out = Path(args.out) if args.out else Path(OUTPUT_ROOT) / STACK_DIRNAME / f"{stem}.tif"
     offsets_path = out.with_name(out.stem + "_offsets.json")
 
     print("=" * 60)
     print("STACK SECTIONS")
     print("=" * 60)
+    print(f"source:   {args.source}  ({hyb_dir if any(c.upper() in RAW_CHANNELS for c in args.channel) else 'ALIGN folders'})")
     print(f"centres:  {cpath}  ({Z} section(s): {sections[0]}..{sections[-1]})")
     for c in args.channel:
         print(f"channel:  {c}")
@@ -248,6 +265,7 @@ def main():
     del stack
 
     offsets = {
+        "source": args.source,
         "centers_file": str(cpath),
         "channels": list(args.channel),
         "canvas_shape": [H, W],

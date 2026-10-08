@@ -52,6 +52,14 @@ try:
 except ValueError:
     check("empty layout raises", True)
 
+print("sources")
+check("raw names", [sc.raw_tif_name("slice", 22, "dapi"), sc.raw_tif_name("subslice", 22, "GCAMP")]
+      == ["slice22_DAPI.tif", "slice22_subslice_GCAMP.tif"])
+check("one record per source", sc.CENTERS_FILENAMES ==
+      {"slice": "section_centers_slice.json", "subslice": "section_centers.json"})
+check("record without source is subslice", sc.record_source({"sections": {}}) == "subslice")
+check("record source read", sc.record_source({"source": "slice", "sections": {}}) == "slice")
+
 print("record")
 with tempfile.TemporaryDirectory() as d:
     path = Path(d) / "sub" / sc.CENTERS_FILENAME

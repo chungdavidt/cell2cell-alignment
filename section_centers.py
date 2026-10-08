@@ -4,9 +4,19 @@ Lives at the project root next to ``orientation.py`` and imports nothing beyond
 the stdlib, so the picker (matplotlib), the stacker (numpy + tifffile) and a later
 point-cloud step all read one record through one module.
 
-The record is ``<ANALYSIS_ROOT>/section_centers.json``::
+One record per SOURCE, because the two sources are different grids:
+
+    slice     the whole section, stitch_slices.py --downsample
+              (HYB_slice_stitched_tif_downsampled_micronwise/slice{N}_{CH}.tif)
+              -> <ANALYSIS_ROOT>/section_centers_slice.json
+    subslice  the marker-defined region, pipeline step 3
+              (HYB_subslice_stitched_tif_downsampled_micronwise/slice{N}_subslice_{CH}.tif)
+              -> <ANALYSIS_ROOT>/section_centers.json
+
+A record::
 
     {
+      "source": "slice",
       "image": "DAPI",
       "sections": {
         "22": {"y": 812.4, "x": 1040.0, "shape": [1630, 2210],
@@ -15,9 +25,10 @@ The record is ``<ANALYSIS_ROOT>/section_centers.json``::
       }
     }
 
-``y``/``x`` are 0-indexed pixel coordinates in that section's downsampled grid --
-the grid every step 3 output and every ALIGN render of the section shares, so
-one click serves all of them. ``shape`` is the grid the click was made on; a
+``y``/``x`` are 0-indexed pixel coordinates in that section's downsampled grid
+for the record's source. Every channel of one source shares that grid (and for
+subslice, so does every ALIGN render), so one click serves all of them. A
+record without ``source`` predates the field and is subslice. ``shape`` is the grid the click was made on; a
 consumer whose image has another shape is on a different grid (step 3 re-run at
 another pitch) and must refuse the click rather than misplace the section.
 
@@ -33,19 +44,34 @@ from pathlib import Path
 
 from analysis_paths import get_analysis_root
 
-CENTERS_FILENAME = "section_centers.json"
+SOURCES = ("slice", "subslice")
+CENTERS_FILENAMES = {"slice": "section_centers_slice.json",
+                     "subslice": "section_centers.json"}
+CENTERS_FILENAME = CENTERS_FILENAMES["subslice"]
+RAW_TIF_NAMES = {"slice": "slice{n}_{channel}.tif",
+                 "subslice": "slice{n}_subslice_{channel}.tif"}
 
 
-def centers_path(explicit=None) -> Path:
-    """``<ANALYSIS_ROOT>/section_centers.json``; `explicit` (an ``--centers`` value) wins."""
+def raw_tif_name(source, slice_no, channel) -> str:
+    """Downsampled raw channel filename: `slice22_DAPI.tif` / `slice22_subslice_DAPI.tif`."""
+    return RAW_TIF_NAMES[source].format(n=int(slice_no), channel=channel.upper())
+
+
+def record_source(record) -> str:
+    """The record's source; a record from before the field is subslice."""
+    return record.get("source") or "subslice"
+
+
+def centers_path(explicit=None, source="subslice") -> Path:
+    """``<ANALYSIS_ROOT>/<CENTERS_FILENAMES[source]>``; `explicit` (an ``--centers`` value) wins."""
     if explicit:
         return Path(explicit).expanduser()
     root = get_analysis_root()
     if root is None:
         raise ValueError(
             f"ANALYSIS_ROOT is not set in local_config.py, so there is no place "
-            f"to keep {CENTERS_FILENAME}. Set it, or pass --centers <path>.")
-    return root / CENTERS_FILENAME
+            f"to keep {CENTERS_FILENAMES[source]}. Set it, or pass --centers <path>.")
+    return root / CENTERS_FILENAMES[source]
 
 
 def load(path) -> dict:

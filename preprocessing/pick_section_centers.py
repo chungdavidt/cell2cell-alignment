@@ -2,15 +2,20 @@
 """
 Click a centre on every BARseq section, for stack_sections.py to stack them on.
 
-Walks each section's downsampled DAPI (step 3's
-HYB_subslice_stitched_tif_downsampled_micronwise/slice{N}_subslice_DAPI.tif) in
-slice-number order. Click the centre and it moves on. DAPI because it shows the
-anatomy; every other image of a section -- raw channels, every ALIGN render --
-sits on the same grid, so one click serves them all.
+Walks each section's downsampled DAPI in slice-number order. Click the centre
+and it moves on. DAPI because it shows the anatomy; every other image of the
+same source sits on the same grid, so one click serves them all.
 
-It NEVER writes an image. The only file it writes is
-<ANALYSIS_ROOT>/section_centers.json (section_centers.py), saved after every
-click, so an interrupted pass resumes at the first section without a centre.
+--source slice (default)  the whole section, stitch_slices.py --downsample:
+                          HYB_slice_stitched_tif_downsampled_micronwise/slice{N}_DAPI.tif
+                          -> <ANALYSIS_ROOT>/section_centers_slice.json
+--source subslice         the marker-defined region, pipeline step 3:
+                          HYB_subslice_stitched_tif_downsampled_micronwise/slice{N}_subslice_DAPI.tif
+                          -> <ANALYSIS_ROOT>/section_centers.json
+
+The two are different grids, so each has its own record. It NEVER writes an
+image; the record is saved after every click, so an interrupted pass resumes at
+the first section without a centre.
 
 Ghost: the previous centred section is drawn in magenta, following the cursor
 with ITS centre under the pointer. Move until the anatomy lines up, then click;
@@ -25,13 +30,15 @@ Keys:
     q       stop; everything clicked is already saved
 
 Usage:
-    python preprocessing/pick_section_centers.py                 # resume where it stopped
+    python preprocessing/pick_section_centers.py                 # whole slices; resume where it stopped
+    python preprocessing/pick_section_centers.py --source subslice
     python preprocessing/pick_section_centers.py --slices 22 24  # only these
     python preprocessing/pick_section_centers.py --redo          # walk every section again
     python preprocessing/pick_section_centers.py --show          # print what is recorded
 """
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -52,18 +59,27 @@ import section_centers
 GHOST_MAX_PX = 1500     # ghost drawn at a stride so its long side is at most this
 
 
-def find_sections(dapi_dir, slice_ids=None):
-    """``[(slice_no, path)]`` for every downsampled DAPI, in slice order."""
-    paths = by_slice_number(Path(dapi_dir).glob("slice*_subslice_DAPI.tif"))
+MADE_BY = {"slice": "stitch_slices.py --downsample --no-scale-bars",
+           "subslice": "the preprocessing pipeline through step 3"}
+
+
+def find_sections(dapi_dir, slice_ids=None, source="subslice"):
+    """``[(slice_no, path)]`` for every downsampled DAPI of `source`, in slice order."""
+    template = section_centers.RAW_TIF_NAMES[source]
+    glob = template.format(n="*", channel="DAPI")
+    # Anchored: as a glob, slice*_DAPI.tif also matches slice22_subslice_DAPI.tif.
+    pattern = re.compile("^" + re.escape(template.format(n="@", channel="DAPI"))
+                         .replace("@", r"(\d+)") + "$")
     sections = []
-    for p in paths:
-        n = int(p.name.split("_", 1)[0][len("slice"):])
-        if slice_ids is None or n in slice_ids:
-            sections.append((n, p))
+    for p in sorted(Path(dapi_dir).glob(glob)):
+        m = pattern.match(p.name)
+        if m and (slice_ids is None or int(m.group(1)) in slice_ids):
+            sections.append((int(m.group(1)), p))
+    sections.sort()
     if not sections:
-        raise SystemExit(f"No slice*_subslice_DAPI.tif under {dapi_dir}"
+        raise SystemExit(f"No {glob} under {dapi_dir}"
                          + (f" for slices {sorted(slice_ids)}" if slice_ids else "")
-                         + ". Run the preprocessing pipeline through step 3 first.")
+                         + f". Run {MADE_BY[source]} first.")
     if slice_ids:
         missing = sorted(set(slice_ids) - {n for n, _ in sections})
         if missing:
@@ -74,8 +90,9 @@ def find_sections(dapi_dir, slice_ids=None):
 class CenterPicker:
     """One click per section; the record is saved after each."""
 
-    def __init__(self, sections, record, out_path, start=0, ghost=True):
+    def __init__(self, sections, record, out_path, start=0, ghost=True, source="subslice"):
         self.sections = sections
+        self.source = source
         self.record = record
         self.out_path = out_path
         self.index = start
@@ -192,6 +209,7 @@ class CenterPicker:
         section_centers.set_center(self.record, self.slice_no, y, x,
                                    self.shape, self.path.name)
         self.record["image"] = "DAPI"
+        self.record["source"] = self.source
         section_centers.save(self.out_path, self.record)
         print(f"  slice {self.slice_no}: centre (y {y:.1f}, x {x:.1f})")
         self.advance()
@@ -234,7 +252,8 @@ class CenterPicker:
 def report(record, sections=None):
     entries = record["sections"]
     print(f"{len(entries)} section(s) centred"
-          + (f" (image: {record.get('image')})" if entries else ""))
+          + (f" (source: {section_centers.record_source(record)}, "
+             f"image: {record.get('image')})" if entries else ""))
     for k in sorted(entries, key=int):
         e = entries[k]
         print(f"  slice {int(k):>3}   y {e['y']:>8.1f}   x {e['x']:>8.1f}   "
@@ -249,26 +268,33 @@ def main():
     ap = argparse.ArgumentParser(
         description="Click a centre on every BARseq section (writes section_centers.json)",
         formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
+    ap.add_argument("--source", choices=section_centers.SOURCES, default="slice",
+                    help="whole slices or step 3 subslices (default: slice)")
     ap.add_argument("--slices", type=int, nargs="+", default=None, metavar="N",
                     help="only these sections")
     ap.add_argument("--redo", action="store_true",
                     help="start at the first section even if it has a centre")
     ap.add_argument("--no-ghost", action="store_true", help="start with the ghost off")
     ap.add_argument("--centers", default=None,
-                    help="record path (default: <ANALYSIS_ROOT>/section_centers.json)")
+                    help="record path (default: <ANALYSIS_ROOT>/section_centers_slice.json, "
+                         "or section_centers.json for --source subslice)")
     ap.add_argument("--show", action="store_true", help="print the record and exit")
     args = ap.parse_args()
 
-    out_path = section_centers.centers_path(args.centers)
+    out_path = section_centers.centers_path(args.centers, args.source)
     record = section_centers.load(out_path)
     if args.show:
         print(f"record: {out_path}")
         report(record)
         return
+    if record["sections"] and section_centers.record_source(record) != args.source:
+        raise SystemExit(f"{out_path} holds {section_centers.record_source(record)} centres; "
+                         f"this run is --source {args.source}. Pass a different --centers.")
 
-    from preprocessing_config import HYB_DOWNSAMPLED_DIR
-    sections = find_sections(HYB_DOWNSAMPLED_DIR,
-                             set(args.slices) if args.slices else None)
+    from preprocessing_config import HYB_DOWNSAMPLED_DIR, HYB_SLICE_DOWNSAMPLED_DIR
+    dapi_dir = HYB_SLICE_DOWNSAMPLED_DIR if args.source == "slice" else HYB_DOWNSAMPLED_DIR
+    sections = find_sections(dapi_dir, set(args.slices) if args.slices else None,
+                             args.source)
 
     if args.redo:
         start = 0
@@ -284,7 +310,7 @@ def main():
     print(f"record: {out_path}")
     print(f"{len(sections)} section(s); starting at slice {sections[start][0]}")
     CenterPicker(sections, record, out_path, start=start,
-                 ghost=not args.no_ghost).run()
+                 ghost=not args.no_ghost, source=args.source).run()
     print()
     report(record, sections)
 
