@@ -80,11 +80,11 @@ HYB_ROOT = ""
 #
 # Rules:
 #   blank ("")                            → skip that node
-#   set but file/dir doesn't exist        → hard error (catches typos)
+#   set but not on disk yet               → skipped, with a warning in the summary
 #   set and exists                        → add to graph
 #   GREEN set without RED for same volume → hard error (would dangle Identity)
 #
-# At least one of the four 2P paths (or SUBSLICE_DIR) must be set.
+# At least one of the four 2P paths (or SUBSLICE_DIR) must be set and on disk.
 # ---------------------------------------------------------------------
 
 # Path to ex-vivo block RED channel (3D 2-photon volume, .tif/.tiff)

@@ -76,14 +76,14 @@ This is the only file you need to edit to get running. It holds all machine-spec
 
 ### Rules for the optional data inputs
 
-The graph builder turns each path into a node. The rules are intentionally strict:
+The graph builder turns each path into a node:
 
 - **Blank (`""`)** → skip that node, don't add it to the graph
-- **Set but the file/directory doesn't exist** → hard error (catches typos)
+- **Set but not on disk yet** (2P file, `SUBSLICE_DIR` folder or its ALIGN tifs, the raw-channel folder) → skipped with a warning, repeated in the build summary, so a 2P-only graph builds before any BARseq is processed. Folders passed with `-d` and channels passed with `--raw-channels` still raise
 - **Set and exists** → add to the graph
 - **GREEN set without RED for the same volume** → hard error (would dangle the Identity edge)
 
-You need **at least one** of the four 2P paths or `SUBSLICE_DIR` set, or the builder raises a `ValueError` ("nothing to build").
+You need **at least one** of the four 2P paths or `SUBSLICE_DIR` set and on disk, or the builder raises.
 
 ### Multi-channel volumes — red + green
 
@@ -115,7 +115,7 @@ Multi-page TIFFs of the ex vivo tissue block (2P volume imaged before slicing), 
 All three are used by the BARseq preprocessing stage (Section 4) and the subslice nodes it produces:
 - `DATA_ROOT` — where the raw BARseq data lives
 - `OUTPUT_ROOT` — where preprocessing writes its intermediate outputs
-- `SUBSLICE_DIR` — the subfolder under `OUTPUT_ROOT` holding the `slice*_subslice_ALIGN.tif` images the graph builder consumes. It ingests ALIGN tifs and nothing else; a folder holding none is a hard error, so this is not step 4's overlay folder
+- `SUBSLICE_DIR` — the subfolder under `OUTPUT_ROOT` holding the `slice*_subslice_ALIGN.tif` images the graph builder consumes. It ingests ALIGN tifs and nothing else; a folder holding none is skipped with a warning, so this is not step 4's overlay folder
 
 Leave all three blank if you aren't running BARseq preprocessing right now. You can fill them in and re-run the graph builder any time later — it will pick up the subslices then.
 

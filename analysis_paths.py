@@ -89,6 +89,15 @@ def _preprocessing_roots() -> "tuple[Path, ...]":
             Path(cfg.SUBSLICE_ALIGN_GCAMP_DIR), Path(cfg.SUBSLICE_ALIGN_DIR))
 
 
+class PreprocessingOutputMissing(ValueError):
+    """Preprocessing output a config line names is not on disk, or its tree
+    cannot be located because preprocessing_config does not load.
+
+    A ValueError subclass, so existing callers are unchanged; the graph builder
+    catches it to skip a config-named BARseq input that has not been produced.
+    """
+
+
 def _preprocessing_config(reason: str = None):
     """preprocessing_config, imported lazily.
 
@@ -110,7 +119,7 @@ def _preprocessing_config(reason: str = None):
             "SUBSLICE_DIR is relative, so it is resolved against "
             "preprocessing's output tree"
         )
-        raise ValueError(
+        raise PreprocessingOutputMissing(
             f"{why} — but preprocessing_config could not be loaded:\n"
             f"  {type(e).__name__}: {e}\n\n"
             f"Either fix that (it needs DATA_ROOT and SCOPE), or set "
@@ -202,8 +211,9 @@ def resolve_subslice_dir(value: Optional[str] = None) -> Optional[Path]:
     skip subslices, and an absolute path is used verbatim — pointing at a tree
     preprocessing did not write stays possible.
 
-    `value` defaults to local_config's. Raises ValueError when a relative value
-    does not name an existing folder, listing what is there instead.
+    `value` defaults to local_config's. Raises PreprocessingOutputMissing (a
+    ValueError) when a relative value does not name an existing folder, listing
+    what is there instead.
     """
     if value is None:
         if str(_PROJECT_ROOT) not in sys.path:
@@ -242,7 +252,7 @@ def resolve_subslice_dir(value: Optional[str] = None) -> Optional[Path]:
                           if p.is_dir()]
     listing = "\n".join(available) if available else \
         "    (none — run the preprocessing pipeline first)"
-    raise ValueError(
+    raise PreprocessingOutputMissing(
         f"\n{'='*60}\n"
         f"SUBSLICE_DIR = {value!r} is relative, so it resolves under\n"
         f"preprocessing's output roots:\n"

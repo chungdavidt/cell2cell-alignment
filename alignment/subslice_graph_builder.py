@@ -68,6 +68,9 @@ INVIVO_PATH_GREEN = getattr(local_config, "INVIVO_PATH_GREEN", "")
 BLOCK_STACK_PATH_RED = getattr(local_config, "BLOCK_STACK_PATH_RED", "")
 BLOCK_STACK_PATH_GREEN = getattr(local_config, "BLOCK_STACK_PATH_GREEN", "")
 SUBSLICE_DIR = getattr(local_config, "SUBSLICE_DIR", "")
+# Blank = no BARseq for this subject yet. Read only to word the skip message:
+# a relative SUBSLICE_DIR and the raw channels both need it to be located.
+DATA_ROOT = getattr(local_config, "DATA_ROOT", "")
 
 # BARseq raw fluorescence channels to carry into the graph beside the ALIGN
 # renders, e.g. ["MSCARLET"]. Empty (or missing) = skip them. Every channel
@@ -106,6 +109,7 @@ from analysis_paths import (
     align_tifs,
     hyb_downsampled_dir,
     analysis_subdir,
+    PreprocessingOutputMissing,
     resolve_subslice_dir,
     subject_name,
     ALIGNMENT_SUBDIR,
@@ -925,6 +929,14 @@ def _derive_graph_path(
     return parent / "alignment" / f"{subject}_graph.db"
 
 
+def _format_skipped(skipped) -> str:
+    """One indented block per (config name, reason) for the builder's skip list."""
+    return "\n".join(
+        f"  {label}: " + reason.replace("\n", "\n      ")
+        for label, reason in skipped
+    )
+
+
 def build_subslice_graph(
     force_rebuild: bool = False,
     save_every: int = 10,
@@ -936,10 +948,16 @@ def build_subslice_graph(
     """
     Build alignment graph from whatever is configured in local_config.py.
 
-    Reads INVIVO_PATH, BLOCK_STACK_PATH, SUBSLICE_DIR from config. For each:
+    Reads INVIVO_PATH, BLOCK_STACK_PATH, SUBSLICE_DIR, SUBSLICE_RAW_CHANNELS
+    from config. For each:
     - blank (or missing attribute) → skip that node type
-    - set but file/dir doesn't exist → hard error
+    - set but not on disk (no file, no folder, no ALIGN tifs in it) → skipped
+      with a warning, so the graph builds from whatever exists; the warning is
+      repeated in the final summary
     - set and exists → add to graph if not already a node
+    Nothing available at all is an error. Folders passed as `subslice_dirs` and
+    channels passed as `raw_channels` are explicit asks and still raise when
+    missing.
 
     Re-running after editing config augments the existing graph. Use
     force_rebuild=True to wipe and start over.
@@ -981,12 +999,12 @@ def build_subslice_graph(
     invivo_green_path = Path(INVIVO_PATH_GREEN) if INVIVO_PATH_GREEN else None
     block_red_path = Path(BLOCK_STACK_PATH_RED) if BLOCK_STACK_PATH_RED else None
     block_green_path = Path(BLOCK_STACK_PATH_GREEN) if BLOCK_STACK_PATH_GREEN else None
-    # Relative SUBSLICE_DIR inherits preprocessing's overlay output dir and
-    # names only the threshold folder; absolute is used verbatim; blank skips.
-    # `subslice_dirs` overrides config so several cutoffs can be ingested in
-    # one run; each folder is its own node set, so they coexist.
+    # GRAPH_PATH derives from the configured red paths, before availability
+    # drops any, so the graph's location does not depend on which files exist.
+    configured_block_red, configured_invivo_red = block_red_path, invivo_red_path
+    explicit_dirs = bool(subslice_dirs)
+    explicit_channels = raw_channels is not None
     requested = list(subslice_dirs) if subslice_dirs else [SUBSLICE_DIR]
-    subslice_paths = [d for d in (resolve_subslice_dir(v) for v in requested) if d]
     channels = [c.upper() for c in (
         SUBSLICE_RAW_CHANNELS if raw_channels is None else raw_channels)]
 
@@ -1004,35 +1022,92 @@ def build_subslice_graph(
             "BLOCK_STACK_PATH_RED or leave BLOCK_STACK_PATH_GREEN blank."
         )
 
-    # Configured-but-missing = hard error (catches typos)
-    for label, p in [
-        ("INVIVO_PATH_RED",       invivo_red_path),
-        ("INVIVO_PATH_GREEN",     invivo_green_path),
-        ("BLOCK_STACK_PATH_RED",  block_red_path),
-        ("BLOCK_STACK_PATH_GREEN", block_green_path),
-    ]:
-        if p and not p.exists():
-            raise FileNotFoundError(
-                f"{label} is set in local_config.py but the file does not exist:\n"
-                f"  {p}\n"
-                f"Fix the path or leave {label} blank to skip that node."
-            )
-    for d in subslice_paths:
-        if not d.is_dir():
-            raise FileNotFoundError(
-                f"Subslice folder is not a directory:\n"
-                f"  {d}\n"
-                f"Fix the path, or leave SUBSLICE_DIR blank to skip subslices."
-            )
-
-    any_invivo = bool(invivo_red_path or invivo_green_path)
-    any_block = bool(block_red_path or block_green_path)
-    if not (any_invivo or any_block or subslice_paths or channels):
+    if not (invivo_red_path or block_red_path or any(requested) or channels):
         raise ValueError(
             "No inputs configured in local_config.py — set at least one of:\n"
             "  INVIVO_PATH_RED / INVIVO_PATH_GREEN          (in vivo 2P stack)\n"
             "  BLOCK_STACK_PATH_RED / BLOCK_STACK_PATH_GREEN (ex vivo block)\n"
             "  SUBSLICE_DIR                                  (BARseq subslices)"
+        )
+
+    # Configured but not on disk = skipped, so a subject builds from what
+    # exists (a 2P stack before any BARseq is processed). Listed again at the end.
+    skipped = []                # (config name, reason)
+    no_barseq = "DATA_ROOT is blank, so preprocessing output cannot be located"
+
+    for red_label, green_label, red, green in [
+        ("INVIVO_PATH_RED", "INVIVO_PATH_GREEN", invivo_red_path, invivo_green_path),
+        ("BLOCK_STACK_PATH_RED", "BLOCK_STACK_PATH_GREEN", block_red_path, block_green_path),
+    ]:
+        if red and not red.exists():
+            skipped.append((red_label, f"file not found: {red}"))
+            if green:
+                skipped.append((green_label, f"its red channel ({red_label}) is missing"))
+        elif green and not green.exists():
+            skipped.append((green_label, f"file not found: {green}"))
+    skipped_labels = {label for label, _ in skipped}
+    if "INVIVO_PATH_RED" in skipped_labels:
+        invivo_red_path = None
+    if "INVIVO_PATH_GREEN" in skipped_labels:
+        invivo_green_path = None
+    if "BLOCK_STACK_PATH_RED" in skipped_labels:
+        block_red_path = None
+    if "BLOCK_STACK_PATH_GREEN" in skipped_labels:
+        block_green_path = None
+
+    # Relative SUBSLICE_DIR inherits preprocessing's overlay output dir and
+    # names only the threshold folder; absolute is used verbatim; blank skips.
+    # `subslice_dirs` overrides config so several cutoffs can be ingested in
+    # one run; each folder is its own node set, so they coexist.
+    subslice_paths = []
+    for value in requested:
+        try:
+            d = resolve_subslice_dir(value)
+        except PreprocessingOutputMissing as e:
+            if explicit_dirs:
+                raise
+            skipped.append(("SUBSLICE_DIR", str(e).strip() if DATA_ROOT else no_barseq))
+            continue
+        if d is None:
+            continue
+        if not d.is_dir():
+            problem = f"not a directory: {d}"
+        elif not align_tifs(d):
+            problem = f"no slice*_subslice_ALIGN*.tif in {d}"
+        else:
+            subslice_paths.append(d)
+            continue
+        if explicit_dirs:
+            raise FileNotFoundError(
+                f"Subslice folder {problem}\n"
+                f"Run preprocessing/generate_alignment_tif.py, or fix the -d value."
+            )
+        skipped.append(("SUBSLICE_DIR", problem))
+
+    hyb_dir = None
+    if channels:
+        try:
+            hyb_dir = hyb_downsampled_dir()
+        except PreprocessingOutputMissing as e:
+            if explicit_channels:
+                raise
+            skipped.append(("SUBSLICE_RAW_CHANNELS",
+                            str(e).strip() if DATA_ROOT else no_barseq))
+        else:
+            # An explicit ask falls through to add_raw_channels_to_graph's error.
+            if not hyb_dir.is_dir() and not explicit_channels:
+                skipped.append(("SUBSLICE_RAW_CHANNELS",
+                                f"raw channel folder not found: {hyb_dir}"))
+                hyb_dir = None
+        if hyb_dir is None:
+            channels = []
+
+    any_invivo = bool(invivo_red_path or invivo_green_path)
+    any_block = bool(block_red_path or block_green_path)
+    if not (any_invivo or any_block or subslice_paths or channels):
+        raise FileNotFoundError(
+            "Nothing configured in local_config.py is on disk yet:\n"
+            + _format_skipped(skipped)
         )
 
     # -------------------------------------------------------------
@@ -1042,7 +1117,7 @@ def build_subslice_graph(
         output_path = Path(GRAPH_PATH)
         graph_path_source = "config"
     else:
-        output_path = _derive_graph_path(block_red_path, invivo_red_path)
+        output_path = _derive_graph_path(configured_block_red, configured_invivo_red)
         graph_path_source = "derived"
 
     # -------------------------------------------------------------
@@ -1064,17 +1139,25 @@ def build_subslice_graph(
         print(f"Alignment folder: created (did not exist)")
     print()
     print(f"Inputs:")
-    print(f"  invivo  red:   {invivo_red_path   if invivo_red_path   else '(not set, skipping)'}")
-    print(f"  invivo  green: {invivo_green_path if invivo_green_path else '(not set, skipping)'}")
-    print(f"  block   red:   {block_red_path    if block_red_path    else '(not set, skipping)'}")
-    print(f"  block   green: {block_green_path  if block_green_path  else '(not set, skipping)'}")
+    def _unused(label):
+        return ("(not on disk, skipping)" if label in skipped_labels
+                else "(not set, skipping)")
+    skipped_labels = {label for label, _ in skipped}
+    print(f"  invivo  red:   {invivo_red_path   or _unused('INVIVO_PATH_RED')}")
+    print(f"  invivo  green: {invivo_green_path or _unused('INVIVO_PATH_GREEN')}")
+    print(f"  block   red:   {block_red_path    or _unused('BLOCK_STACK_PATH_RED')}")
+    print(f"  block   green: {block_green_path  or _unused('BLOCK_STACK_PATH_GREEN')}")
     if subslice_paths:
         for i, d in enumerate(subslice_paths):
             print(f"  subslices:     {d}" if i == 0 else f"                 {d}")
     else:
-        print(f"  subslices:     (not set, skipping)")
+        print(f"  subslices:     {_unused('SUBSLICE_DIR')}")
     print(f"  raw channels:  "
-          f"{', '.join(channels) + f'  (hub: {channels[0]})' if channels else '(none, skipping)'}")
+          f"{', '.join(channels) + f'  (hub: {channels[0]})' if channels else _unused('SUBSLICE_RAW_CHANNELS')}")
+    if skipped:
+        print()
+        print("Skipped — configured but not on disk:")
+        print(_format_skipped(skipped))
     if dry_run:
         print()
         print("  DRY RUN — nothing will be written")
@@ -1225,7 +1308,6 @@ def build_subslice_graph(
     if channels:
         print("\n4. Adding BARseq raw channels")
         print("-" * 60)
-        hyb_dir = hyb_downsampled_dir()
         print(f"  From: {hyb_dir}")
         add_raw_channels_to_graph(
             g,
@@ -1270,6 +1352,9 @@ def build_subslice_graph(
     n_raw = len(g.nodes) - n_anchor - n_align
     if n_raw:
         print(f"  - {n_raw} BARseq raw channel nodes")
+    if skipped:
+        print("\nSkipped — configured but not on disk:")
+        print(_format_skipped(skipped))
     print(f"\nReady for alignment in CASTalign!")
 
     return output_path
@@ -1296,6 +1381,11 @@ the config value and can ingest more than one in a single run:
     python alignment/subslice_graph_builder.py -d qc20_5_ge5 --slices 1 22
     python alignment/subslice_graph_builder.py --raw-channels MSCARLET
     python alignment/subslice_graph_builder.py --dry-run             # report, write nothing
+
+Anything local_config.py names that is not on disk yet (a 2P file, the
+SUBSLICE_DIR folder or its ALIGN tifs, the raw channel folder) is skipped with
+a warning, so a 2P-only graph builds before any BARseq is processed. -d and
+--raw-channels values are explicit and raise instead.
 
 --force-rebuild WIPES the .db and every fitted edge, including the hand-made
 block_stack_red -> invivo_red fit, which exists nowhere else. Back it up first.

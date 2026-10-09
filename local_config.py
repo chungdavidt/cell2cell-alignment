@@ -65,6 +65,9 @@ ALIGN_MIN_ROLONIES = 3
 # Raw input (read-only)
 # ---------------------------------------------------------------------
 
+# Blank = no BARseq for this subject yet: preprocessing will not run, and the
+# graph builder skips SUBSLICE_DIR and SUBSLICE_RAW_CHANNELS and builds from the
+# 2P paths alone.
 DATA_ROOT = r"D:\lab_local\projects\cell_type\data\050526 BY95\allen_transcriptomics\BY95"
 
 # Per-FOV raw directory (the MAX_Pos*_*_* folders).
@@ -88,9 +91,10 @@ GRAPH_PATH = r""
 # What the graph ingests
 #
 # Each 2P volume enters as a _red + _green pair joined by Identity; rigid and
-# nonlinear edges are fitted only on _red <-> _red. Blank skips that node,
-# set-but-missing is a hard error, GREEN without its RED is a hard error.
-# At least one of these five must be set.
+# nonlinear edges are fitted only on _red <-> _red. Blank skips that node;
+# set but not on disk yet is skipped with a warning, so a 2P-only graph builds
+# before any BARseq exists. GREEN without its RED is a hard error, and so is
+# nothing on disk at all.
 # ---------------------------------------------------------------------
 
 # BARseq subslices. Relative, so everything above it comes from
@@ -100,8 +104,8 @@ GRAPH_PATH = r""
 #   "gcamp_qc20_5_ge3_sat10" -> subslice_align_gcamp/, generate_alignment_tif.py --marker gcamp
 #   "qc20_5_ge5"  -> subslice_align/qc20_5_ge5/   (unprefixed, written before 2026-10-08)
 # ALIGN tifs are the only image the builder ingests — marker-only, binary or
-# graded. A folder holding none (a step 4 overlay folder, say) is a hard error;
-# the step 4 overlay is an RGB display figure whose BT.601 collapse renders
+# graded. A folder holding none (a step 4 overlay folder, say) is skipped with a
+# warning, never ingested; the step 4 overlay is an RGB display figure whose BT.601 collapse renders
 # BY95's median marker cell darker than the mask field behind it.
 # The number is ALIGN_MIN_ROLONIES, picked by eye with check_rolony_cutoff.py;
 # each cutoff writes its own folder, so change it here to switch which one is
