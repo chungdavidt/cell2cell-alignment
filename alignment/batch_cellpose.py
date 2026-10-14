@@ -20,7 +20,8 @@ Depth range: each TIFF needs the Z planes worth segmenting recorded by hand
 first (``cellpose_curation.py depth``, kept in ``<ANALYSIS_ROOT>/cellpose/
 depth_ranges.json`` by TIFF file name). Cells outside it are zeroed after
 stitching; a TIFF with no range stops the run. MIN_PLANES then drops cells
-spanning fewer Z planes. Both happen before anything is written. MODEL_PATHS swaps cpsam for a retrained model per node (cellpose_curation.py
+spanning fewer Z planes. ALIGN_PLANES joins outlines across planes after
+undoing the sideways shift between neighbouring planes. Both happen before anything is written. MODEL_PATHS swaps cpsam for a retrained model per node (cellpose_curation.py
 train prints the line). EVAL_PARAMS are cellpose's defaults, which beat the cellprob/flow/diameter/
 sharpen variants on visual QC in the 2026-04-16 by94 sweep. EVAL_OVERRIDES
 changes them for one node only; tune with sweep_in_vivo_2d.py --node <node>
@@ -95,6 +96,16 @@ EVAL_OVERRIDES: dict[str, dict] = {
 MIN_PLANES: dict[str, int] = {
     "block_stack_red": 0,
     "invivo_red": 3,
+}
+
+# Per-node, with stitch_threshold > 0: before joining outlines across planes, move
+# each plane's outlines by the sideways shift measured between neighbouring planes
+# (check_plane_shift.py), join, then carry the joined labels back. Images and
+# outputs stay in the TIFF's own frame. BY95 in vivo: single planes jump 3-6 px
+# and back (z227, z350), which split every cell crossing them.
+ALIGN_PLANES: dict[str, bool] = {
+    "block_stack_red": False,
+    "invivo_red": True,
 }
 
 # Per-node model: "" = cellpose's cpsam; otherwise a model file, e.g. one written
@@ -190,6 +201,57 @@ def save_depth_range(out_dir: Path, tiff: Path, first: int, last: int) -> None:
     path.write_text(json.dumps(ranges, indent=2))
 
 
+def plane_offsets(stack):
+    """(Z, 2) int: each plane's content position relative to plane 0, (dy, dx) in
+    whole pixels, summed from the neighbour-to-neighbour phase-correlation shifts."""
+    import numpy as np
+    from check_plane_shift import hann2d, phase_shift, spectrum
+    window = hann2d(stack.shape[1:])
+    cum = np.zeros((stack.shape[0], 2))
+    f_prev = spectrum(stack[0], window)
+    for z in range(1, stack.shape[0]):
+        f_cur = spectrum(stack[z], window)
+        cum[z] = cum[z - 1] + phase_shift(f_prev, f_cur)[:2]
+        f_prev = f_cur
+    return np.rint(cum).astype(int)
+
+
+def shift_plane(a, dy: int, dx: int):
+    """Move a 2D array's content dy down and dx right; zero fill, no wrap."""
+    import numpy as np
+    out = np.zeros_like(a)
+    ny, nx = a.shape
+    if abs(dy) >= ny or abs(dx) >= nx:
+        return out
+    out[max(dy, 0):ny + min(dy, 0), max(dx, 0):nx + min(dx, 0)] = \
+        a[max(-dy, 0):ny + min(-dy, 0), max(-dx, 0):nx + min(-dx, 0)]
+    return out
+
+
+def stitch_aligned(masks, offsets, stitch_threshold: float):
+    """Join per-plane outlines (each plane labelled 1..n on its own) into 3D cells
+    after moving plane z by -offsets[z]; returns labels in the input frame. An
+    outline moved entirely off the edge becomes its own cell."""
+    import numpy as np
+    from cellpose.utils import stitch3D
+    aligned = np.stack([shift_plane(masks[z], -int(oy), -int(ox))
+                        for z, (oy, ox) in enumerate(offsets)]).astype(np.int32)
+    st = stitch3D(aligned.copy(), stitch_threshold=stitch_threshold)
+    out = np.zeros(masks.shape, dtype=np.int32)
+    next_label = int(st.max()) + 1
+    for z in range(masks.shape[0]):
+        lut = np.zeros(int(masks[z].max()) + 1, dtype=np.int64)
+        fg = aligned[z] > 0
+        ids, first = np.unique(aligned[z][fg], return_index=True)
+        lut[ids] = st[z][fg][first]
+        own = np.unique(masks[z])
+        own = own[(own > 0) & (lut[own] == 0)]
+        lut[own] = np.arange(next_label, next_label + own.size)
+        next_label += own.size
+        out[z] = lut[masks[z]]
+    return out
+
+
 def trim_cells(masks, keep_z, min_planes: int):
     """Zero every voxel outside keep_z (first, last; inclusive), then cells spanning
     fewer than min_planes Z planes; renumber the rest 1..n."""
@@ -239,8 +301,21 @@ def run_one(model, node: str, img_path: Path, out_dir: Path, params: dict,
                 if img.ndim != 3:
                     raise ValueError(f"expected a (Z, Y, X) volume, got shape {img.shape}")
 
-                print(f"  running model.eval (params: {params})")
-                masks, flows, _styles = model.eval(img, **params)
+                align = ALIGN_PLANES.get(node, False) and params.get("stitch_threshold", 0) > 0 \
+                    and not params.get("do_3D", False)
+                if align:
+                    print(f"  running model.eval per plane, joined after aligning planes (params: {params})")
+                    masks, flows, _styles = model.eval(img, **{**params, "stitch_threshold": 0.0})
+                    offsets = plane_offsets(img)
+                    step = np.abs(np.diff(offsets, axis=0)).max(axis=1)
+                    print(f"  plane alignment: {int((step >= 2).sum())} neighbouring pairs moved >= 2 px, "
+                          f"largest {int(step.max())} px")
+                    from cellpose.utils import fill_holes_and_remove_small_masks
+                    masks = stitch_aligned(masks, offsets, params["stitch_threshold"])
+                    masks = fill_holes_and_remove_small_masks(masks, min_size=params.get("min_size", 15))
+                else:
+                    print(f"  running model.eval (params: {params})")
+                    masks, flows, _styles = model.eval(img, **params)
                 n_raw = int(masks.max()) if masks.size else 0
                 print(f"  ROIs found: {n_raw}")
                 min_planes = MIN_PLANES.get(node, 0)
@@ -279,6 +354,8 @@ def run_one(model, node: str, img_path: Path, out_dir: Path, params: dict,
                     "eval_params": params,
                     "n_rois": n_rois,
                     "n_rois_before_trim": n_raw,
+                    "align_planes": align,
+                    "plane_offsets_yx": offsets.tolist() if align else None,
                     "keep_z": list(keep_z),
                     "min_planes": min_planes,
                     "cellpose_version": getattr(cellpose, "version", None),
@@ -376,6 +453,7 @@ def main(argv: list | None = None) -> int:
         print(f"           params: {eval_params_for(node, scope)}")
         print(f"           model:  {model_for(node)}")
         print(f"           min planes: {MIN_PLANES.get(node, 0)}")
+        print(f"           align planes before joining: {ALIGN_PLANES.get(node, False)}")
         keep_z = load_depth_range(out_dir, path)
         print(f"           depth range: "
               f"{f'planes {keep_z[0]}-{keep_z[1]}' if keep_z else 'NOT SET'}")

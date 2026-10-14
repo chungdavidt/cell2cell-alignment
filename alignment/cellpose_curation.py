@@ -47,7 +47,8 @@ stitch  Takes batch_cellpose.py's output from a run with do_3D False and
         3D cells spanning fewer than each --min-planes value, and scores every
         pair on the curated planes. Writes stitch_<YYYYMMDD_HHMMSS>/stitch.json.
         Run it on a batch made with MIN_PLANES 0: cells the batch already
-        dropped are not in its output to re-join.
+        dropped are not in its output to re-join. Planes are aligned before
+        joining when batch_cellpose.ALIGN_PLANES is on for the node (--no-align).
 
 --skip-planes leaves curated planes out of score, train and stitch.
 
@@ -708,6 +709,10 @@ def cmd_stitch(args) -> int:
         return 0
 
     from cellpose.utils import fill_holes_and_remove_small_masks, stitch3D
+    from batch_cellpose import ALIGN_PLANES, plane_offsets, stitch_aligned
+    align = ALIGN_PLANES.get(args.node, False) and not args.no_align
+    offsets = plane_offsets(tifffile.imread(manifest["tiff"])) if align else None
+    print(f"Align planes before joining: {align}")
     vol = tifffile.imread(str(masks_path))
     if list(vol.shape) != list(manifest["shape_zyx"]):
         sys.exit(f"Masks shape {vol.shape}, curated volume {manifest['shape_zyx']}")
@@ -723,7 +728,8 @@ def cmd_stitch(args) -> int:
     print(f"\n  {'stitch':>6} {'min':>4} {'cells':>6} {'F1':>6} {'found':>9} {'extra':>6} "
           f"{'3D cells found':>15} {'of them >50 planes':>19}")
     for t in thresholds:
-        st = fill_holes_and_remove_small_masks(stitch3D(flat.copy(), stitch_threshold=t), min_size=8)
+        joined = stitch_aligned(flat, offsets, t) if align else stitch3D(flat.copy(), stitch_threshold=t)
+        st = fill_holes_and_remove_small_masks(joined, min_size=8)
         span = plane_spans(st)
         labs = np.fromiter(span.keys(), dtype=np.int64, count=len(span))
         lens = np.fromiter(span.values(), dtype=np.int64, count=len(span))
@@ -906,6 +912,8 @@ def main(argv: list | None = None) -> int:
     st.add_argument("--masks", default=None, help="Stitched masks tif. Default: the node's batch_cellpose.py output.")
     st.add_argument("--thresholds", default="0.25,0.4,0.5,0.6,0.75",
                     help="Overlap (IoU) needed to join outlines on neighbouring planes. Default 0.25,0.4,0.5,0.6,0.75.")
+    st.add_argument("--no-align", action="store_true",
+                    help="Join without aligning planes, even if batch_cellpose.ALIGN_PLANES is on for the node.")
     st.add_argument("--min-planes", default="1,3,5,7",
                     help="Drop 3D cells spanning fewer planes. Default 1,3,5,7.")
 
