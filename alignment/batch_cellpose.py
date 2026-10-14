@@ -68,12 +68,17 @@ EVAL_PARAMS = {
 #   "block_stack_red": {"normalize": {"percentile": [1, 99.9], "tile_norm_blocksize": 100}},
 EVAL_OVERRIDES: dict[str, dict] = {
     "block_stack_red": {},
-    # cellpose_curation.py grid best (score_grid_20261014_121838). Its flow 0.6 is
-    # left out: cellpose 4.1.1 skips the flow_threshold check when do_3D is True.
+    # cellpose_curation.py grid best (score_grid_20261014_121838), run the way it was
+    # scored: each plane in 2D, normalized on its own, then outlines on neighbouring
+    # planes joined into one cell where they overlap by IoU >= 0.25 (cellpose's
+    # stitch3D default). do_3D scored F1 0.396 on the training planes (score_3d_20261014_151905).
     "invivo_red": {
+        "do_3D": False,
+        "stitch_threshold": 0.25,
         "diameter": 20,
         "cellprob_threshold": -1.0,
-        "normalize": {"normalize": True, "norm3D": True, "invert": False, "lowhigh": None,
+        "flow_threshold": 0.6,
+        "normalize": {"normalize": True, "norm3D": False, "invert": False, "lowhigh": None,
                       "percentile": [0.1, 99.9], "sharpen_radius": 0, "smooth_radius": 0,
                       "tile_norm_blocksize": 0, "tile_norm_smooth3D": 1},
     },
