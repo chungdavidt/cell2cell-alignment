@@ -615,8 +615,9 @@ def cmd_train(args) -> int:
         w = csv.writer(f)
         w.writerow(["epoch", "train_loss", "test_loss"])
         for e, tr in enumerate(np.asarray(train_losses)):
-            te = np.asarray(test_losses)[e] if test_losses is not None and len(test_losses) > e else ""
-            w.writerow([e, float(tr), te if te == "" else float(te)])
+            # train_seg fills test_loss only on epoch 0, 5 and every 10th; the rest stay 0.
+            te = np.asarray(test_losses)[e] if test_losses is not None and len(test_losses) > e else 0
+            w.writerow([e, float(tr), float(te) if te else ""])
 
     record = {"node": args.node, "model": str(model_path), "epochs": args.epochs,
               "learning_rate": args.learning_rate, "weight_decay": 0.1,
