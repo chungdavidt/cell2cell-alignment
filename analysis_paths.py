@@ -110,6 +110,44 @@ def two_p_scope(node: str) -> "tuple[str, str]":
     return getattr(local_config, "SCOPE", ""), "SCOPE"
 
 
+# Derived copies the graph ingests in place of an input sampled finer than SCOPE.
+TWO_P_DOWNSAMPLED_SUBDIR = "2p_downsampled"
+CONFOCAL_SUBDIR = "confocal"
+
+
+def downsampled_2p_path(raw: Path) -> Optional[Path]:
+    """`<ANALYSIS_ROOT>/preprocessing/2p_downsampled/<stem>.tif` for a 2P TIFF
+    (preprocessing/downsample_2p_stacks.py writes it, with `<stem>.json` beside
+    it naming its source); None when ANALYSIS_ROOT is unset."""
+    root = analysis_subdir(PREPROCESSING_SUBDIR)
+    return None if root is None else root / TWO_P_DOWNSAMPLED_SUBDIR / f"{Path(raw).stem}.tif"
+
+
+def confocal_label(channel: str) -> str:
+    """'tdTom-T2' -> 'tdtom': the dye part of a ZEN channel name, lowercase."""
+    return re.sub(r"[^a-z0-9]", "", channel.split("-")[0].lower())
+
+
+def confocal_output_dir(channel: str) -> Optional[Path]:
+    """`<ANALYSIS_ROOT>/preprocessing/confocal/<label>/`, where
+    prepare_confocal_sections.py writes slice{k}_confocal_<label>_part{n}.tif."""
+    root = analysis_subdir(PREPROCESSING_SUBDIR)
+    return None if root is None else root / CONFOCAL_SUBDIR / confocal_label(channel)
+
+
+CONFOCAL_TIF_RE = re.compile(r"slice(\d+)_confocal_([a-z0-9]+)_part(\d+)\.tif")
+
+
+def confocal_tifs(directory) -> "list[Path]":
+    """Confocal sub-stack images in `directory`, ordered by section then part."""
+    hits = []
+    for p in Path(directory).glob("slice*_confocal_*_part*.tif"):
+        m = CONFOCAL_TIF_RE.fullmatch(p.name)
+        if m:
+            hits.append((int(m.group(1)), int(m.group(3)), p))
+    return [p for _, _, p in sorted(hits)]
+
+
 def _preprocessing_roots() -> "tuple[Path, ...]":
     """Every root a relative SUBSLICE_DIR is resolved against, from preprocessing_config.
 

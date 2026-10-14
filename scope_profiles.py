@@ -201,6 +201,31 @@ def downsample_xy(scope: str, var_name: str = "SCOPE") -> float:
     return get_profile(scope, var_name)['xy_um_per_px'] / EXVIVO_UM_PER_PX
 
 
+def downsample_factor(source: str, target: str, source_var: str = "SCOPE",
+                      target_var: str = "SCOPE", tolerance: float = 0.005) -> float:
+    """
+    XY factor taking an image on `source`'s pitch onto `target`'s, as a divisor
+    (new = old / factor); 1.0 when the two agree within `tolerance` (relative).
+
+    Images are only ever downsampled: a source coarser than the target raises.
+    Z is not resampled, so a Z step that differs raises too.
+    """
+    s, t = get_profile(source, source_var), get_profile(target, target_var)
+    if abs(s['z_um_per_px'] - t['z_um_per_px']) > 1e-9:
+        raise ValueError(
+            f"{source_var} {source!r} has Z {s['z_um_per_px']} µm but {target_var} "
+            f"{target!r} has {t['z_um_per_px']} µm; only XY is resampled.")
+    factor = t['xy_um_per_px'] / s['xy_um_per_px']
+    if abs(factor - 1.0) < tolerance:
+        return 1.0
+    if factor < 1.0:
+        raise ValueError(
+            f"{source_var} {source!r} ({s['xy_um_per_px']} µm/px) is coarser than "
+            f"{target_var} {target!r} ({t['xy_um_per_px']} µm/px): reaching it would be "
+            f"an upsample, and images are only downsampled.")
+    return factor
+
+
 def identify_scope(xy_um_per_px: float, tolerance: float = 0.05) -> Optional[str]:
     """
     Profile key whose XY pitch is nearest `xy_um_per_px`, if within `tolerance`

@@ -23,8 +23,8 @@ S1.1 with --inspect, 2026-10-14). Per sub-stack:
   3. project   max over the z planes.
   4. pitch     CONFOCAL_SCOPE is the declared pitch; each section's XML Scaling
                must agree within 5% or the run stops.
-  5. downsample to SCOPE's pitch (the graph grid, the in vivo stack's), by the
-               same resize as downsample_subslices_cellmask.py: bilinear with
+  5. downsample to SCOPE's pitch (the graph grid, the in vivo stack's), by
+               utilities.resize (step 3's resize, copied): bilinear with
                anti-aliasing, target shape round(native / factor), dtype kept.
                A confocal coarser than SCOPE stops the run: images are only
                ever downsampled.
@@ -68,10 +68,9 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import local_config  # noqa: E402
-from analysis_paths import analysis_subdir, PREPROCESSING_SUBDIR  # noqa: E402
+from analysis_paths import confocal_label, confocal_output_dir  # noqa: E402
 from scope_profiles import assert_matches_metadata, get_profile  # noqa: E402
 
-CONFOCAL_SUBDIR = "confocal"
 SECTION_RE = re.compile(r"^S(\d+)\.(\d+)$")
 TILE_RE = re.compile(
     r"^(?P<sec>.+?)_h\d+s\d+t\d+z(?P<z>\d+)c(?P<c>\d+)"
@@ -125,11 +124,6 @@ def read_zen_xml(path: Path) -> dict:
     return {"scaling_um": scaling, "size": size, "channels": channels}
 
 
-def channel_label(name: str) -> str:
-    """'tdTom-T2' -> 'tdtom': the dye part of a ZEN channel name, lowercase."""
-    return re.sub(r"[^a-z0-9]", "", name.split("-")[0].lower())
-
-
 # ---------------------------------------------------------------------------
 # Sections and tiles
 # ---------------------------------------------------------------------------
@@ -158,31 +152,6 @@ def section_tiles(tile_dir: Path, section: str, channel: int) -> dict:
             (p, int(m.group("x")), int(m.group("y")),
              int(m.group("w")), int(m.group("h")), int(m.group("m"))))
     return dict(sorted(by_z.items()))
-
-
-# ---------------------------------------------------------------------------
-# Resize -- copied from downsample_subslices_cellmask.imresize_bilinear (step 3),
-# which cannot be imported here: its module imports preprocessing_config, and
-# that raises with DATA_ROOT blank.
-# ---------------------------------------------------------------------------
-
-def imresize_bilinear(image, output_shape: tuple):
-    """Bilinear resize with anti-aliasing, original dtype kept (step 3's)."""
-    import numpy as np
-    original_dtype = image.dtype
-    try:
-        from skimage.transform import resize
-        result = resize(image, output_shape, order=1, preserve_range=True,
-                        anti_aliasing=True)
-    except ImportError:
-        from scipy.ndimage import zoom
-        zoom_factors = (output_shape[0] / image.shape[0],
-                        output_shape[1] / image.shape[1])
-        result = zoom(image.astype(np.float64), zoom_factors, order=1)
-    if np.issubdtype(original_dtype, np.integer):
-        result = np.clip(result, np.iinfo(original_dtype).min,
-                         np.iinfo(original_dtype).max)
-    return result.astype(original_dtype)
 
 
 def read_tiff_as_is(path: Path):
@@ -308,8 +277,8 @@ def main():
                  f"that would be an upsample, and images are only downsampled.")
     factor = target_xy / conf_xy
 
-    out_root = analysis_subdir(PREPROCESSING_SUBDIR)
-    if out_root is None:
+    out_dir = confocal_output_dir(channel_name)
+    if out_dir is None:
         sys.exit("ANALYSIS_ROOT is blank in local_config.py.")
 
     sections = discover_sections(confocal_dir)
@@ -330,8 +299,7 @@ def main():
     print(f"downsample:     native / {factor:.6f}")
     print(f"sub-stacks:     {len(sections)} over sections {sorted({s[0] for s in sections})}")
 
-    label = channel_label(channel_name)
-    out_dir = out_root / CONFOCAL_SUBDIR / label
+    label = confocal_label(channel_name)
     print(f"output:         {out_dir}")
     if args.dry_run:
         print("DRY RUN -- no pixels read, nothing written")
@@ -362,7 +330,7 @@ def main():
         if (size.get("SizeX"), size.get("SizeY")) != (canvas_w, canvas_h):
             sys.exit(f"{name}: tiles span {canvas_w} x {canvas_h} but the XML image is "
                      f"{size.get('SizeX')} x {size.get('SizeY')} (SizeX x SizeY)")
-        out_hw = (round(canvas_h / factor), round(canvas_w / factor))
+        out_hw = (round(canvas_h / factor), round(canvas_w / factor))  # step 3's rule
         z_um = meta["scaling_um"].get("Z")
         out_path = out_dir / f"slice{slide}_confocal_{label}_part{n}.tif"
         print(f"\n  {name} -> {out_path.stem}: c{idx} {channel_name}")
@@ -389,6 +357,7 @@ def main():
             continue
 
         import tifffile
+        from utilities.resize import imresize_bilinear
         native, gray_error = build_projection(tiles_by_z, (canvas_h, canvas_w))
         if gray_error > GRAYSCALE_MAX_ERROR:
             sys.exit(f"{name}: c{idx} tiles are not grayscale (mean |G-R| or |B-R| "

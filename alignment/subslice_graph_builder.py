@@ -87,6 +87,11 @@ SUBSLICE_RAW_CHANNELS = [
 # every pixel size below. Validated at first use, not at import, so a module
 # import (or --help) does not require a complete config.
 SCOPE = getattr(local_config, "SCOPE", "")
+# Confocal sub-stacks: prepare_confocal_sections.py writes them under
+# <ANALYSIS_ROOT>/preprocessing/confocal/<label>/ from CONFOCAL_DIR; blank = none.
+CONFOCAL_DIR = getattr(local_config, "CONFOCAL_DIR", "")
+CONFOCAL_CHANNEL = getattr(local_config, "CONFOCAL_CHANNEL", "")
+
 # The block's scope when it was sampled at another pitch; blank = SCOPE.
 BLOCK_STACK_SCOPE = getattr(local_config, "BLOCK_STACK_SCOPE", "") or SCOPE
 BLOCK_STACK_SCOPE_VAR = ("BLOCK_STACK_SCOPE"
@@ -112,6 +117,9 @@ import orientation
 from analysis_paths import (
     align_tif_slice,
     align_tifs,
+    confocal_output_dir,
+    confocal_tifs,
+    downsampled_2p_path,
     hyb_downsampled_dir,
     analysis_subdir,
     PreprocessingOutputMissing,
@@ -121,6 +129,7 @@ from analysis_paths import (
 )
 from scope_profiles import (
     assert_matches_metadata,
+    downsample_factor,
     get_profile,
     is_plausible_xy,
     spacing_zyx,
@@ -342,6 +351,86 @@ def spacing_for_tiff(tiff_path: Union[str, Path], scope: str = None,
     return (z, y, x), scope
 
 
+def graph_input(raw: Path, scope: str, var: str) -> tuple:
+    """(file to load, its scope, config name) for a 2P TIFF.
+
+    The graph's pitch is SCOPE's. A volume whose own scope is finer enters as
+    the downsampled copy preprocessing/downsample_2p_stacks.py writes; the raw
+    TIFF is not resampled here. Coarser than SCOPE raises (no upsampling).
+    """
+    if downsample_factor(scope, SCOPE, var, "SCOPE") == 1.0:
+        return raw, scope, var
+    copy = downsampled_2p_path(raw)
+    if copy is None or not copy.exists():
+        raise FileNotFoundError(
+            f"{raw.name} is sampled finer than SCOPE ({var} = {scope!r}), so the graph "
+            f"takes its downsampled copy, which is not on disk:\n  {copy}\n"
+            f"Run:  python preprocessing/downsample_2p_stacks.py")
+    sidecar = copy.with_suffix(".json")
+    source = json.loads(sidecar.read_text()).get("source") if sidecar.exists() else None
+    if source != str(raw):
+        raise ValueError(
+            f"{copy.name} was made from {source!r}, not the configured {str(raw)!r}.\n"
+            f"Re-run:  python preprocessing/downsample_2p_stacks.py --force")
+    return copy, SCOPE, "SCOPE"
+
+
+# One confocal sub-stack spans about this much of its 50 µm section (David,
+# 2026-10-14); stored as the node's Z spacing. Its measured plane span is
+# recorded separately as 'z_span_um'.
+CONFOCAL_SUBSTACK_UM = 25.0
+
+
+def add_confocal_to_graph(
+    graph: ca.Graph,
+    folder: Path,
+    orientation_code: Optional[str] = None,
+    dry_run: bool = False,
+    verbose: bool = True,
+) -> ca.Graph:
+    """Add one node per confocal sub-stack image: slice{k}_confocal_<label>_part{n}.
+
+    Images come from prepare_confocal_sections.py, already projected and on
+    SCOPE's pitch. Stored lossless (compression="label"), as the BARseq
+    sections are. No Identity edges: each sub-stack covers its own tile region,
+    so each is fitted on its own. Existing nodes are shape-checked like
+    subslices (assert_stored_shapes_match).
+    """
+    files = confocal_tifs(folder)
+    sidecar = folder / "confocal_sections.json"
+    records = {}
+    if sidecar.exists():
+        for rec in json.loads(sidecar.read_text()).get("sections", {}).values():
+            if rec.get("node"):
+                records[rec["node"]] = rec
+    present = [(f, f.stem) for f in files if f.stem in graph.nodes]
+    assert_stored_shapes_match(graph, present, verbose=verbose)
+    to_add = [f for f in files if f.stem not in graph.nodes]
+    if verbose:
+        print(f"  {len(files)} sub-stack image(s), {len(present)} already in graph, "
+              f"{len(to_add)} to add")
+    xy = spacing_zyx(SCOPE)[1]
+    for f in to_add:
+        if dry_run:
+            print(f"  would ADD: {f.stem}")
+            continue
+        img = load_single_subslice(f)
+        rec = records.get(f.stem, {})
+        z_planes = rec.get("z_planes") or []
+        z_step = rec.get("z_step_um")
+        graph.add_node(f.stem, image=img, compression="label", metadata={
+            "spacing": (CONFOCAL_SUBSTACK_UM, xy, xy),
+            "orientation": orientation_code,
+            "shape": tuple(int(n) for n in img.shape),
+            "modality": CONFOCAL_MODALITY,
+            "source": rec.get("source", str(f)),
+            "z_span_um": (z_step * (len(z_planes) - 1)) if z_step and z_planes else None,
+        })
+        if verbose:
+            print(f"  Added node: {f.stem}  shape {img.shape}  lossless")
+    return graph
+
+
 # ============================================
 # Orientation
 # ============================================
@@ -349,6 +438,7 @@ def spacing_for_tiff(tiff_path: Union[str, Path], scope: str = None,
 # Modality key in orientation.json for each set of graph nodes. The 2P keys are
 # the node base names; every BARseq subslice in a dataset shares one code.
 SUBSLICE_MODALITY = "barseq_subslice"
+CONFOCAL_MODALITY = "confocal"
 
 
 def load_orientation_codes() -> dict:
@@ -1110,9 +1200,33 @@ def build_subslice_graph(
         if hyb_dir is None:
             channels = []
 
+    # The file each 2P node is built from: the raw TIFF, or its downsampled
+    # copy when the raw is finer than SCOPE (graph_input).
+    load_from = {}
+    for node, path, scope, var in [
+        ("invivo_red", invivo_red_path, SCOPE, "SCOPE"),
+        ("invivo_green", invivo_green_path, SCOPE, "SCOPE"),
+        ("block_stack_red", block_red_path, BLOCK_STACK_SCOPE, BLOCK_STACK_SCOPE_VAR),
+        ("block_stack_green", block_green_path, BLOCK_STACK_SCOPE, BLOCK_STACK_SCOPE_VAR),
+    ]:
+        if path:
+            load_from[node] = graph_input(path, scope, var)
+
+    confocal_folder = None
+    if CONFOCAL_DIR:
+        folder = confocal_output_dir(CONFOCAL_CHANNEL) if CONFOCAL_CHANNEL else None
+        if folder is None:
+            skipped.append(("CONFOCAL_DIR", "ANALYSIS_ROOT or CONFOCAL_CHANNEL is blank"))
+        elif not confocal_tifs(folder):
+            skipped.append(("CONFOCAL_DIR",
+                            f"no slice*_confocal_*_part*.tif in {folder}\n"
+                            f"run preprocessing/prepare_confocal_sections.py"))
+        else:
+            confocal_folder = folder
+
     any_invivo = bool(invivo_red_path or invivo_green_path)
     any_block = bool(block_red_path or block_green_path)
-    if not (any_invivo or any_block or subslice_paths or channels):
+    if not (any_invivo or any_block or subslice_paths or channels or confocal_folder):
         raise FileNotFoundError(
             "Nothing configured in local_config.py is on disk yet:\n"
             + _format_skipped(skipped)
@@ -1151,10 +1265,15 @@ def build_subslice_graph(
         return ("(not on disk, skipping)" if label in skipped_labels
                 else "(not set, skipping)")
     skipped_labels = {label for label, _ in skipped}
-    print(f"  invivo  red:   {invivo_red_path   or _unused('INVIVO_PATH_RED')}")
-    print(f"  invivo  green: {invivo_green_path or _unused('INVIVO_PATH_GREEN')}")
-    print(f"  block   red:   {block_red_path    or _unused('BLOCK_STACK_PATH_RED')}")
-    print(f"  block   green: {block_green_path  or _unused('BLOCK_STACK_PATH_GREEN')}")
+    def _source(node, path, label):
+        if not path:
+            return _unused(label)
+        loaded = load_from[node][0]
+        return path if loaded == path else f"{loaded}\n                   (downsampled copy of {path.name})"
+    print(f"  invivo  red:   {_source('invivo_red', invivo_red_path, 'INVIVO_PATH_RED')}")
+    print(f"  invivo  green: {_source('invivo_green', invivo_green_path, 'INVIVO_PATH_GREEN')}")
+    print(f"  block   red:   {_source('block_stack_red', block_red_path, 'BLOCK_STACK_PATH_RED')}")
+    print(f"  block   green: {_source('block_stack_green', block_green_path, 'BLOCK_STACK_PATH_GREEN')}")
     if subslice_paths:
         for i, d in enumerate(subslice_paths):
             print(f"  subslices:     {d}" if i == 0 else f"                 {d}")
@@ -1162,6 +1281,7 @@ def build_subslice_graph(
         print(f"  subslices:     {_unused('SUBSLICE_DIR')}")
     print(f"  raw channels:  "
           f"{', '.join(channels) + f'  (hub: {channels[0]})' if channels else _unused('SUBSLICE_RAW_CHANNELS')}")
+    print(f"  confocal:      {confocal_folder or _unused('CONFOCAL_DIR')}")
     if skipped:
         print()
         print("Skipped — configured but not on disk:")
@@ -1180,6 +1300,7 @@ def build_subslice_graph(
         (["invivo"] if any_invivo else [])
         + (["block_stack"] if any_block else [])
         + ([SUBSLICE_MODALITY] if subslice_paths else [])
+        + ([CONFOCAL_MODALITY] if confocal_folder else [])
     )
     check_orientation_handedness(orientation_codes, configured_modalities)
     print()
@@ -1239,8 +1360,8 @@ def build_subslice_graph(
             elif dry_run:
                 print(f"  would ADD: invivo_red")
             else:
-                red_stack = load_invivo_stack(invivo_red_path)
-                red_spacing, _ = spacing_for_tiff(invivo_red_path)
+                red_stack = load_invivo_stack(load_from["invivo_red"][0])
+                red_spacing, _ = spacing_for_tiff(*load_from["invivo_red"])
 
         if invivo_green_path:
             if "invivo_green" in existing_nodes:
@@ -1248,8 +1369,8 @@ def build_subslice_graph(
             elif dry_run:
                 print(f"  would ADD: invivo_green")
             else:
-                green_stack = load_invivo_stack(invivo_green_path)
-                green_spacing, _ = spacing_for_tiff(invivo_green_path)
+                green_stack = load_invivo_stack(load_from["invivo_green"][0])
+                green_spacing, _ = spacing_for_tiff(*load_from["invivo_green"])
 
         if red_stack is not None or green_stack is not None:
             add_invivo_to_graph(
@@ -1277,8 +1398,8 @@ def build_subslice_graph(
             elif dry_run:
                 print(f"  would ADD: block_stack_red")
             else:
-                red_stack = load_block_stack(block_red_path)
-                red_spacing, _ = spacing_for_tiff(block_red_path, BLOCK_STACK_SCOPE, BLOCK_STACK_SCOPE_VAR)
+                red_stack = load_block_stack(load_from["block_stack_red"][0])
+                red_spacing, _ = spacing_for_tiff(*load_from["block_stack_red"])
 
         if block_green_path:
             if "block_stack_green" in existing_nodes:
@@ -1286,8 +1407,8 @@ def build_subslice_graph(
             elif dry_run:
                 print(f"  would ADD: block_stack_green")
             else:
-                green_stack = load_block_stack(block_green_path)
-                green_spacing, _ = spacing_for_tiff(block_green_path, BLOCK_STACK_SCOPE, BLOCK_STACK_SCOPE_VAR)
+                green_stack = load_block_stack(load_from["block_stack_green"][0])
+                green_spacing, _ = spacing_for_tiff(*load_from["block_stack_green"])
 
         if red_stack is not None or green_stack is not None:
             add_block_to_graph(
@@ -1328,6 +1449,16 @@ def build_subslice_graph(
             dry_run=dry_run,
         )
 
+    if confocal_folder:
+        print("\n5. Adding confocal sub-stacks")
+        print("-" * 60)
+        print(f"  From: {confocal_folder}")
+        add_confocal_to_graph(
+            g, confocal_folder,
+            orientation_code=orientation_codes.get(CONFOCAL_MODALITY),
+            dry_run=dry_run,
+        )
+
     # -------------------------------------------------------------
     # Final save + summary
     # -------------------------------------------------------------
@@ -1357,7 +1488,10 @@ def build_subslice_graph(
     n_align = sum(len(v) for v in align_nodes_by_slice(g).values())
     if n_align:
         print(f"  - {n_align} ex vivo subslices")
-    n_raw = len(g.nodes) - n_anchor - n_align
+    n_confocal = sum(1 for n in g.nodes if "_confocal_" in n)
+    if n_confocal:
+        print(f"  - {n_confocal} confocal sub-stacks")
+    n_raw = len(g.nodes) - n_anchor - n_align - n_confocal
     if n_raw:
         print(f"  - {n_raw} BARseq raw channel nodes")
     if skipped:
