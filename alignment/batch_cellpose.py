@@ -68,14 +68,22 @@ EVAL_PARAMS = {
 #   "block_stack_red": {"normalize": {"percentile": [1, 99.9], "tile_norm_blocksize": 100}},
 EVAL_OVERRIDES: dict[str, dict] = {
     "block_stack_red": {},
-    "invivo_red": {},
+    # cellpose_curation.py grid best (score_grid_20261014_121838). Its flow 0.6 is
+    # left out: cellpose 4.1.1 skips the flow_threshold check when do_3D is True.
+    "invivo_red": {
+        "diameter": 20,
+        "cellprob_threshold": -1.0,
+        "normalize": {"normalize": True, "norm3D": True, "invert": False, "lowhigh": None,
+                      "percentile": [0.1, 99.9], "sharpen_radius": 0, "smooth_radius": 0,
+                      "tile_norm_blocksize": 0, "tile_norm_smooth3D": 1},
+    },
 }
 
 # Per-node model: "" = cellpose's cpsam; otherwise a model file, e.g. one written
 # by cellpose_curation.py train.
 MODEL_PATHS: dict[str, str] = {
     "block_stack_red": "",
-    "invivo_red": "",
+    "invivo_red": r"D:\lab_local\projects\cell_type\analysis\BY95\cellpose\curation_in_vivo\train_20261014_145504\models\cpsam_in_vivo_20261014_145504",
 }
 
 
