@@ -32,6 +32,15 @@ train   Retrains cellpose's cpsam model on the curated planes, holding some out
         batch_cellpose.MODEL_PATHS. --no-holdout trains on every plane and
         scores nothing (the final model once the held-out score is known).
 
+stitch  Takes batch_cellpose.py's output from a run with do_3D False and
+        stitch_threshold > 0, splits it back into each plane's outlines, re-joins
+        them at each --thresholds value (cellpose's stitch3D: an outline joins
+        the cell on the plane above when their IoU is at least the value), drops
+        3D cells spanning fewer than each --min-planes value, and scores every
+        pair on the curated planes. Writes stitch_<YYYYMMDD_HHMMSS>/stitch.json.
+
+--skip-planes leaves curated planes out of score, train and stitch.
+
 A plane whose saved outlines are identical to the exported ones counts as not
 curated and is left out, unless named in --accept-unchanged (the default outlines
 were already right, or a --blank plane has no cells).
@@ -47,6 +56,7 @@ Usage (.cellpose-venv):
     .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py score
     .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py score --accept-unchanged 151,220
     .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py score --batch          # 3D run
+    .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py stitch --skip-planes 20,45
     .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py train --dry-run         # split
     .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py train
     .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py train --no-holdout
@@ -250,13 +260,16 @@ def load_manifest(cdir: Path) -> dict:
     return json.loads(path.read_text())
 
 
-def load_planes(cdir: Path, manifest: dict, accept: set | str) -> list[dict]:
+def load_planes(cdir: Path, manifest: dict, accept: set | str, skip: set = frozenset()) -> list[dict]:
     """Curated planes as [{z, name, image, truth}]; prints the ones left out and why."""
     import tifffile
     out = []
     print(f"Planes in {cdir}:")
     for z_str, info in sorted(manifest["planes"].items(), key=lambda kv: int(kv[0])):
         z, name = int(z_str), info["name"]
+        if z in skip:
+            print(f"  z={z:<4} {name}: left out (--skip-planes)")
+            continue
         image = tifffile.imread(str(cdir / f"{name}.tif"))
         start = tifffile.imread(str(cdir / "_start" / f"{name}_masks.tif"))
         seg_path = cdir / f"{name}_seg.npy"
@@ -430,7 +443,7 @@ def parse_accept(text: str | None) -> set | str:
 def cmd_score(args) -> int:
     cdir = curation_dir(args.node)
     manifest = load_manifest(cdir)
-    planes = load_planes(cdir, manifest, parse_accept(args.accept_unchanged))
+    planes = load_planes(cdir, manifest, parse_accept(args.accept_unchanged), parse_skip(args.skip_planes))
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if args.batch or args.masks:
@@ -513,12 +526,42 @@ def cmd_score(args) -> int:
     return 0
 
 
+def parse_skip(text: str | None) -> set:
+    return {int(t) for t in text.split(",")} if text else set()
+
+
+def batch_masks_path(args, cdir: Path, manifest: dict) -> Path:
+    if args.masks:
+        return Path(args.masks)
+    return cdir.parent / f"{Path(manifest['tiff']).stem}_masks.tif"
+
+
+def plane_spans(vol: np.ndarray) -> dict:
+    """{label: number of Z planes from its first to its last}."""
+    from scipy import ndimage
+    return {lab: sl[0].stop - sl[0].start
+            for lab, sl in enumerate(ndimage.find_objects(vol), start=1) if sl is not None}
+
+
+def print_spans(span: dict, rows: list[dict], preds: list, n_z: int) -> None:
+    """Planes spanned per 3D cell: all cells, those matching a curated cell, and
+    those on a curated plane matching none."""
+    found_ids = {lab for r in rows for lab in r["matched"]}
+    extra_ids = {int(lab) for m in preds for lab in np.unique(m) if lab > 0} - found_ids
+    groups = [("all 3D cells", list(span.values())),
+              ("matching a curated cell", [span[l] for l in found_ids]),
+              ("on a curated plane, matching none", [span[l] for l in extra_ids])]
+    bins = [(1, 1), (2, 3), (4, 6), (7, 10), (11, 20), (21, 50), (51, n_z)]
+    print("\nPlanes spanned per 3D cell:")
+    print(f"  {'':<40}" + "".join(f"{f'{a}-{b}':>9}" for a, b in bins))
+    for name, s in groups:
+        s = np.asarray(s)
+        print(f"  {f'{name} ({len(s)})':<40}" + "".join(f"{int(((s >= a) & (s <= b)).sum()):>9}" for a, b in bins))
+
+
 def score_3d(args, cdir, manifest, planes, stamp) -> int:
     import tifffile
-    if args.masks:
-        masks_path = Path(args.masks)
-    else:
-        masks_path = cdir.parent / f"{Path(manifest['tiff']).stem}_masks.tif"
+    masks_path = batch_masks_path(args, cdir, manifest)
     if not masks_path.exists():
         sys.exit(f"Masks not found: {masks_path}\nRun batch_cellpose.py --node {args.node} first.")
     print(f"\n3D masks: {masks_path}")
@@ -545,24 +588,74 @@ def score_3d(args, cdir, manifest, planes, stamp) -> int:
          "per_plane": [{"z": p["z"], **r} for p, r in zip(planes, rows)],
          "total": t}, indent=2, default=str))
     render_pages(out_dir, "3d", planes, [("curated", None), ("3D run", preds)], args.iou)
-
-    # Planes each 3D cell spans: all cells, those matching a curated cell, and
-    # those on a curated plane matching none.
-    from scipy import ndimage
-    span = {lab: sl[0].stop - sl[0].start
-            for lab, sl in enumerate(ndimage.find_objects(vol), start=1) if sl is not None}
-    found_ids = {lab for r in rows for lab in r["matched"]}
-    extra_ids = {int(lab) for m in preds for lab in np.unique(m) if lab > 0} - found_ids
-    groups = [("all 3D cells", list(span.values())),
-              ("matching a curated cell", [span[l] for l in found_ids]),
-              ("on a curated plane, matching none", [span[l] for l in extra_ids])]
-    bins = [(1, 1), (2, 3), (4, 6), (7, 10), (11, 20), (21, 50), (51, vol.shape[0])]
-    print("\nPlanes spanned per 3D cell:")
-    print(f"  {'':<36}" + "".join(f"{f'{a}-{b}':>9}" for a, b in bins))
-    for name, s in groups:
-        s = np.asarray(s)
-        print(f"  {f'{name} ({len(s)})':<36}" + "".join(f"{int(((s >= a) & (s <= b)).sum()):>9}" for a, b in bins))
+    print_spans(plane_spans(vol), rows, preds, vol.shape[0])
     print(f"Wrote score.json, 3d*.png to {out_dir}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# stitch
+# ---------------------------------------------------------------------------
+
+def cmd_stitch(args) -> int:
+    """Re-join a stitched batch run's per-plane outlines at other overlap cutoffs,
+    drop cells spanning fewer than N planes, and score each result."""
+    import tifffile
+    cdir = curation_dir(args.node)
+    manifest = load_manifest(cdir)
+    planes = load_planes(cdir, manifest, parse_accept(args.accept_unchanged), parse_skip(args.skip_planes))
+    masks_path = batch_masks_path(args, cdir, manifest)
+    if not masks_path.exists():
+        sys.exit(f"Masks not found: {masks_path}\nRun batch_cellpose.py --node {args.node} first.")
+    thresholds = [float(t) for t in args.thresholds.split(",")]
+    mins = [int(k) for k in args.min_planes.split(",")]
+    print(f"\n3D masks: {masks_path}\nStitch thresholds {thresholds}, min planes {mins}")
+    if args.dry_run:
+        return 0
+
+    from cellpose.utils import fill_holes_and_remove_small_masks, stitch3D
+    vol = tifffile.imread(str(masks_path))
+    if list(vol.shape) != list(manifest["shape_zyx"]):
+        sys.exit(f"Masks shape {vol.shape}, curated volume {manifest['shape_zyx']}")
+    # Each plane's outlines numbered 1..n on their own, as cellpose has them before stitching.
+    flat = np.zeros(vol.shape, dtype=np.int32)
+    for z in range(vol.shape[0]):
+        ids, inv = np.unique(vol[z], return_inverse=True)
+        flat[z] = inv.reshape(vol.shape[1:]) + (0 if ids[0] == 0 else 1)
+    del vol
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results = []
+    print(f"\n  {'stitch':>6} {'min':>4} {'cells':>6} {'F1':>6} {'found':>9} {'extra':>6} "
+          f"{'3D cells found':>15} {'of them >50 planes':>19}")
+    for t in thresholds:
+        st = fill_holes_and_remove_small_masks(stitch3D(flat.copy(), stitch_threshold=t), min_size=8)
+        span = plane_spans(st)
+        labs = np.fromiter(span.keys(), dtype=np.int64, count=len(span))
+        lens = np.fromiter(span.values(), dtype=np.int64, count=len(span))
+        for k in mins:
+            keep = np.zeros(int(st.max()) + 1, dtype=bool)
+            keep[labs[lens >= k]] = True
+            preds = [np.where(keep[st[p["z"]]], st[p["z"]], 0) for p in planes]
+            rows = [match(p["truth"], m, args.iou) for p, m in zip(planes, preds)]
+            tot = totals(rows)
+            found_ids = {lab for r in rows for lab in r["matched"]}
+            long_ = sum(span[l] > 50 for l in found_ids)
+            n = int((lens >= k).sum())
+            print(f"  {t:>6.2f} {k:>4} {n:>6} {tot['f1']:>6.3f} {tot['found']:>4}/{tot['n_truth']:<4} "
+                  f"{tot['extra']:>6} {len(found_ids):>15} {long_:>19}")
+            results.append({"stitch_threshold": t, "min_planes": k, "n_cells": n,
+                            "n_found_3d": len(found_ids), "n_found_3d_over_50_planes": long_,
+                            **{key: v for key, v in tot.items()}})
+        del st
+
+    out_dir = cdir / f"stitch_{stamp}"
+    out_dir.mkdir(parents=True)
+    (out_dir / "stitch.json").write_text(json.dumps(
+        {"masks": str(masks_path), "iou": args.iou, "planes": [p["z"] for p in planes],
+         "results": results}, indent=2))
+    print(f"\n'3D cells found': distinct 3D cells matching a curated cell. Fewer than 'found'\n"
+          f"means curated cells on different planes fell into one 3D cell.\nWrote {out_dir / 'stitch.json'}")
     return 0
 
 
@@ -581,7 +674,7 @@ def latest_grid_best(cdir: Path) -> dict | None:
 def cmd_train(args) -> int:
     cdir = curation_dir(args.node)
     manifest = load_manifest(cdir)
-    planes = load_planes(cdir, manifest, parse_accept(args.accept_unchanged))
+    planes = load_planes(cdir, manifest, parse_accept(args.accept_unchanged), parse_skip(args.skip_planes))
     zs = [p["z"] for p in planes]
 
     if args.no_holdout:
@@ -683,7 +776,8 @@ def main(argv: list | None = None) -> int:
     ex = sub.add_parser("export", help="Save planes and starting outlines for curation.")
     sc = sub.add_parser("score", help="Score every GRID combination, or a 3D run, against the curation.")
     tr = sub.add_parser("train", help="Retrain cpsam on the curated planes; score on held-out planes.")
-    for p in (ex, sc, tr):
+    st = sub.add_parser("stitch", help="Re-join a stitched batch run at other cutoffs; score each.")
+    for p in (ex, sc, tr, st):
         p.add_argument("--node", default="invivo_red", choices=list(TAGS),
                        help="Red 2P node. Default: invivo_red.")
         p.add_argument("--dry-run", action="store_true", help="Print the plan, run nothing.")
@@ -693,10 +787,12 @@ def main(argv: list | None = None) -> int:
     ex.add_argument("--n", type=int, default=15, help="Without --z-planes: this many evenly spaced planes.")
     ex.add_argument("--blank", action="store_true", help="No starting outlines; draw every cell by hand.")
 
-    for p in (sc, tr):
+    for p in (sc, tr, st):
         p.add_argument("--iou", type=float, default=0.5, help="Overlap needed for a found cell. Default 0.5.")
         p.add_argument("--accept-unchanged", default=None,
                        help="Z planes (comma-separated, or 'all') whose exported outlines are used as curated.")
+        p.add_argument("--skip-planes", default=None,
+                       help="Curated Z planes to leave out, comma-separated (e.g. surface planes).")
     sc.add_argument("--top", type=int, default=4, help="Combinations drawn in top*.png. Default 4.")
     sc.add_argument("--batch", action="store_true",
                     help="Score batch_cellpose.py's 3D masks for the node instead of the grid.")
@@ -708,8 +804,14 @@ def main(argv: list | None = None) -> int:
     tr.add_argument("--epochs", type=int, default=100, help="Default 100.")
     tr.add_argument("--learning-rate", type=float, default=1e-5, help="Default 1e-5.")
 
+    st.add_argument("--masks", default=None, help="Stitched masks tif. Default: the node's batch_cellpose.py output.")
+    st.add_argument("--thresholds", default="0.25,0.4,0.5,0.6,0.75",
+                    help="Overlap (IoU) needed to join outlines on neighbouring planes. Default 0.25,0.4,0.5,0.6,0.75.")
+    st.add_argument("--min-planes", default="1,3,5,7",
+                    help="Drop 3D cells spanning fewer planes. Default 1,3,5,7.")
+
     args = parser.parse_args(argv)
-    return {"export": cmd_export, "score": cmd_score, "train": cmd_train}[args.cmd](args)
+    return {"export": cmd_export, "score": cmd_score, "train": cmd_train, "stitch": cmd_stitch}[args.cmd](args)
 
 
 if __name__ == "__main__":
