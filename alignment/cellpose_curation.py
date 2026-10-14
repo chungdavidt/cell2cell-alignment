@@ -132,7 +132,7 @@ def match(truth: np.ndarray, pred: np.ndarray, iou_min: float) -> dict:
     ti, pi, inter = ti[fg], pi[fg], inter[fg]
     iou = inter / (t_area[ti] + p_area[pi] - inter)
 
-    used_t, used_p, ious = set(), set(), []
+    used_t, used_p, ious, matched = set(), set(), [], []
     for k in np.argsort(-iou, kind="stable"):
         if iou[k] < iou_min:
             break
@@ -141,12 +141,14 @@ def match(truth: np.ndarray, pred: np.ndarray, iou_min: float) -> dict:
         used_t.add(ti[k])
         used_p.add(pi[k])
         ious.append(float(iou[k]))
+        matched.append(int(p_ids[pi[k]]))
 
     n_truth = int((t_ids > 0).sum())
     n_pred = int((p_ids > 0).sum())
     found = len(ious)
     return {"found": found, "missed": n_truth - found, "extra": n_pred - found,
-            "n_truth": n_truth, "n_pred": n_pred, "iou_sum": float(sum(ious))}
+            "n_truth": n_truth, "n_pred": n_pred, "iou_sum": float(sum(ious)),
+            "matched": matched}
 
 
 def totals(rows: list[dict]) -> dict:
@@ -543,6 +545,23 @@ def score_3d(args, cdir, manifest, planes, stamp) -> int:
          "per_plane": [{"z": p["z"], **r} for p, r in zip(planes, rows)],
          "total": t}, indent=2, default=str))
     render_pages(out_dir, "3d", planes, [("curated", None), ("3D run", preds)], args.iou)
+
+    # Planes each 3D cell spans: all cells, those matching a curated cell, and
+    # those on a curated plane matching none.
+    from scipy import ndimage
+    span = {lab: sl[0].stop - sl[0].start
+            for lab, sl in enumerate(ndimage.find_objects(vol), start=1) if sl is not None}
+    found_ids = {lab for r in rows for lab in r["matched"]}
+    extra_ids = {int(lab) for m in preds for lab in np.unique(m) if lab > 0} - found_ids
+    groups = [("all 3D cells", list(span.values())),
+              ("matching a curated cell", [span[l] for l in found_ids]),
+              ("on a curated plane, matching none", [span[l] for l in extra_ids])]
+    bins = [(1, 1), (2, 3), (4, 6), (7, 10), (11, 20), (21, 50), (51, vol.shape[0])]
+    print("\nPlanes spanned per 3D cell:")
+    print(f"  {'':<36}" + "".join(f"{f'{a}-{b}':>9}" for a, b in bins))
+    for name, s in groups:
+        s = np.asarray(s)
+        print(f"  {f'{name} ({len(s)})':<36}" + "".join(f"{int(((s >= a) & (s <= b)).sum()):>9}" for a, b in bins))
     print(f"Wrote score.json, 3d*.png to {out_dir}")
     return 0
 
