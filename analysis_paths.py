@@ -10,7 +10,7 @@ All derived outputs for a subject live under one root, declared as
     <ANALYSIS_ROOT>/          e.g. .../cell_type/analysis/BY95
         preprocessing/        BARseq preprocessing outputs (OUTPUT_ROOT)
         alignment/            <subject>_graph.db
-        cellpose/             *_seg.npy, sweep_in_vivo_*, combo_in_vivo_*
+        cellpose/             *_seg.npy, *_masks.tif, *_neuroreg.mat, sweep_*, combo_*
 
 Blank or absent ``ANALYSIS_ROOT`` keeps every consumer on its previous
 data-tree-adjacent default, so existing subjects need no config change.
@@ -72,6 +72,26 @@ def subject_name() -> Optional[str]:
     """Subject label implied by ANALYSIS_ROOT's folder name (e.g. 'BY95')."""
     root = get_analysis_root()
     return None if root is None else root.name
+
+
+# Red 2P graph nodes and the local_config line that names each one's TIFF. The
+# cellpose scripts segment these by node name, so a segmentation always belongs
+# to the subject local_config describes.
+TWO_P_RED_NODES = {
+    "block_stack_red": "BLOCK_STACK_PATH_RED",
+    "invivo_red": "INVIVO_PATH_RED",
+}
+
+
+def two_p_path(node: str) -> Optional[Path]:
+    """TIFF for a red 2P node from local_config.py, or None when its line is blank."""
+    if node not in TWO_P_RED_NODES:
+        raise ValueError(f"Unknown 2P node {node!r}; known: {sorted(TWO_P_RED_NODES)}")
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+    import local_config
+    value = getattr(local_config, TWO_P_RED_NODES[node], "")
+    return Path(value) if value else None
 
 
 def _preprocessing_roots() -> "tuple[Path, ...]":

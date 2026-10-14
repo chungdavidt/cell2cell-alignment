@@ -11,14 +11,16 @@ Each non-vanilla column = vanilla + exactly one swept parameter. Vanilla
 column is cellpose defaults (``normalize=True``, ``cellprob_threshold=0.0``,
 ``flow_threshold=0.4``).
 
-Outputs go to ``<ANALYSIS_ROOT>/cellpose/sweep_in_vivo_<YYYYMMDD_HHMMSS>/``
+Outputs go to ``<ANALYSIS_ROOT>/cellpose/sweep_<tag>_<YYYYMMDD_HHMMSS>/``
 (or ``<tiff parent>/`` when ANALYSIS_ROOT is unset) — never into
-the repo.
+the repo. ``<tag>`` is ``in_vivo`` for invivo_red and ``block_stack`` for
+block_stack_red, so combo_in_vivo_2d.py --node picks up only its own node's sweeps.
 
 Usage:
     source .cellpose-venv/bin/activate          # Linux/Mac
     # .cellpose-venv\Scripts\activate            # Windows
-    python alignment/sweep_in_vivo_2d.py                               # use local_config.INVIVO_PATH
+    python alignment/sweep_in_vivo_2d.py                               # invivo_red: local_config.INVIVO_PATH_RED
+    python alignment/sweep_in_vivo_2d.py --node block_stack_red        # local_config.BLOCK_STACK_PATH_RED
     python alignment/sweep_in_vivo_2d.py --tiff <path>                 # override input
     python alignment/sweep_in_vivo_2d.py --z-planes 20,60,100,140,180  # override Z picker
     python alignment/sweep_in_vivo_2d.py --dry-run                     # print plan only
@@ -77,6 +79,10 @@ SWEEPS: list[tuple[str, list, str]] = [
     ("cellprob_threshold",  [-3.0, -1.0, 0.0, 1.0],                   "eval"),
     ("flow_threshold",      [0.4, 0.6, 0.8],                          "eval"),
 ]
+
+# Output folder tag per node. in_vivo is the pre-2026-10-14 name, kept so
+# existing sweep_in_vivo_* folders still belong to invivo_red.
+SWEEP_TAGS = {"invivo_red": "in_vivo", "block_stack_red": "block_stack"}
 
 CONTOUR_COLOR      = "#00E5E5"
 MAX_COLS_PER_PAGE  = 5          # vanilla + <=4 swept values per page
@@ -326,8 +332,12 @@ def build_plan() -> list[dict]:
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--node", default="invivo_red", choices=list(SWEEP_TAGS),
+        help="Red 2P node whose local_config TIFF is swept. Default: invivo_red.",
+    )
+    parser.add_argument(
         "--tiff", default=None,
-        help="Override input TIFF. Default: local_config.INVIVO_PATH.",
+        help="Override input TIFF. Output is still tagged by --node.",
     )
     parser.add_argument(
         "--z-planes", default=None,
@@ -349,10 +359,10 @@ def main(argv: list | None = None) -> int:
     if args.tiff:
         tiff_path = Path(args.tiff)
     else:
-        import local_config
-        if not getattr(local_config, "INVIVO_PATH_RED", None):
-            sys.exit("local_config.INVIVO_PATH_RED is empty — pass --tiff instead.")
-        tiff_path = Path(local_config.INVIVO_PATH_RED)
+        from analysis_paths import TWO_P_RED_NODES, two_p_path
+        tiff_path = two_p_path(args.node)
+        if tiff_path is None:
+            sys.exit(f"local_config.{TWO_P_RED_NODES[args.node]} is empty — pass --tiff instead.")
 
     if not tiff_path.exists():
         sys.exit(f"TIFF not found: {tiff_path}")
@@ -379,7 +389,7 @@ def main(argv: list | None = None) -> int:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     # <ANALYSIS_ROOT>/cellpose/ when configured; else beside the TIFF.
     from analysis_paths import cellpose_dir
-    out_dir = (cellpose_dir() or tiff_path.parent) / f"sweep_in_vivo_{stamp}"
+    out_dir = (cellpose_dir() or tiff_path.parent) / f"sweep_{SWEEP_TAGS[args.node]}_{stamp}"
 
     plan_rows = build_plan()
     n_non_vanilla = sum(len(r["values"]) for r in plan_rows)
@@ -416,6 +426,7 @@ def main(argv: list | None = None) -> int:
     try:
         # Write config.json upfront so it exists even if the run dies mid-sweep.
         config = {
+            "node":                   args.node,
             "tiff_path":              str(tiff_path),
             "z_planes":               list(z_indices),
             "vanilla_normalize":      VANILLA_NORMALIZE,       # bool

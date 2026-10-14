@@ -14,14 +14,16 @@ Design is agnostic: knob identity, kinds, and authoritative values come from
 the source sweep's config.json, so any future sweep with a different knob set
 works without code changes.
 
-Outputs go to ``<ANALYSIS_ROOT>/cellpose/combo_in_vivo_<YYYYMMDD_HHMMSS>/``
+Outputs go to ``<ANALYSIS_ROOT>/cellpose/combo_<tag>_<YYYYMMDD_HHMMSS>/``
 (or ``<tiff parent>/`` when ANALYSIS_ROOT is unset) — never into
-the repo.
+the repo. ``<tag>`` follows --node as in sweep_in_vivo_2d.py, and the auto-picked
+source sweep is the latest ``sweep_<tag>_*``.
 
 Usage:
     source .cellpose-venv/bin/activate          # Linux/Mac
     # .cellpose-venv\Scripts\activate            # Windows
-    python alignment/combo_in_vivo_2d.py                               # auto-pick latest sweep next to local_config.INVIVO_PATH
+    python alignment/combo_in_vivo_2d.py                               # auto-pick latest invivo_red sweep
+    python alignment/combo_in_vivo_2d.py --node block_stack_red        # auto-pick latest block_stack_red sweep
     python alignment/combo_in_vivo_2d.py --dry-run                     # auto-pick + preview
     python alignment/combo_in_vivo_2d.py --from-sweep <sweep_dir>      # explicit override
     python alignment/combo_in_vivo_2d.py --tiff <path>                 # auto-pick latest sweep next to a non-default TIFF
@@ -51,6 +53,8 @@ import matplotlib.pyplot as plt
 # ---------------------------------------------------------------------------
 
 VANILLA_SENTINEL  = "__VANILLA_NOOP__"   # in-memory marker, never written to CSV
+# Same as sweep_in_vivo_2d.SWEEP_TAGS (alignment/ has no __init__.py).
+SWEEP_TAGS = {"invivo_red": "in_vivo", "block_stack_red": "block_stack"}
 CONTOUR_COLOR     = "#00E5E5"
 MAX_COLS_PER_PAGE = 5            # vanilla + <=4 combos per page
 CELL_SIZE_INCHES  = 2.5
@@ -153,15 +157,15 @@ def render_page(out_path: Path, stack: np.ndarray, z_indices: list[int],
 # Sweep-input loading + per-knob pick logic
 # ---------------------------------------------------------------------------
 
-def find_latest_sweep(search_dir: Path) -> Path | None:
-    """Return the most-recent valid ``sweep_in_vivo_*`` dir in search_dir, or None.
+def find_latest_sweep(search_dir: Path, tag: str = "in_vivo") -> Path | None:
+    """Return the most-recent valid ``sweep_<tag>_*`` dir in search_dir, or None.
 
-    Timestamp naming (``sweep_in_vivo_YYYYMMDD_HHMMSS``) sorts lexically.
+    Timestamp naming (``sweep_<tag>_YYYYMMDD_HHMMSS``) sorts lexically.
     A dir must contain both ``summary.csv`` and ``config.json`` to be returned.
     """
     if not search_dir.is_dir():
         return None
-    candidates = sorted(search_dir.glob("sweep_in_vivo_*"),
+    candidates = sorted(search_dir.glob(f"sweep_{tag}_2*"),
                         key=lambda p: p.name, reverse=True)
     for c in candidates:
         if c.is_dir() and (c / "summary.csv").exists() and (c / "config.json").exists():
@@ -328,6 +332,11 @@ def main(argv: list | None = None) -> int:
              "local_config.INVIVO_PATH when --tiff isn't passed either.",
     )
     parser.add_argument(
+        "--node", default="invivo_red", choices=list(SWEEP_TAGS),
+        help="Red 2P node; picks the latest sweep of that node and tags the output. "
+             "Default: invivo_red.",
+    )
+    parser.add_argument(
         "--tiff", default=None,
         help="Override input TIFF. Default: source sweep's tiff_path.",
     )
@@ -367,25 +376,32 @@ def main(argv: list | None = None) -> int:
             except ImportError:
                 sys.exit("No --from-sweep passed and local_config.py not importable. "
                          "Pass --from-sweep explicitly.")
-            invivo_path = getattr(local_config, "INVIVO_PATH_RED", None)
-            if not invivo_path:
-                sys.exit("No --from-sweep passed and local_config.INVIVO_PATH_RED is empty. "
-                         "Pass --from-sweep explicitly or set INVIVO_PATH_RED.")
-            search_near = Path(invivo_path).parent
-            search_label = f"local_config.INVIVO_PATH_RED parent ({search_near})"
-        sweep_dir = find_latest_sweep(search_near)
+            from analysis_paths import TWO_P_RED_NODES, two_p_path
+            node_path = two_p_path(args.node)
+            config_name = TWO_P_RED_NODES[args.node]
+            if node_path is None:
+                sys.exit(f"No --from-sweep passed and local_config.{config_name} is empty. "
+                         f"Pass --from-sweep explicitly or set {config_name}.")
+            search_near = node_path.parent
+            search_label = f"local_config.{config_name} parent ({search_near})"
+        tag = SWEEP_TAGS[args.node]
+        sweep_dir = find_latest_sweep(search_near, tag)
         if sweep_dir is None and analysis_cellpose is not None and args.tiff:
             # Analysis tree had none — fall back to the pre-ANALYSIS_ROOT location.
             search_near = Path(args.tiff).resolve().parent
             search_label = f"--tiff parent ({search_near})"
-            sweep_dir = find_latest_sweep(search_near)
+            sweep_dir = find_latest_sweep(search_near, tag)
         if sweep_dir is None:
-            sys.exit(f"No sweep_in_vivo_* dir with summary.csv + config.json found in "
+            sys.exit(f"No sweep_{tag}_* dir with summary.csv + config.json found in "
                      f"{search_label}. Pass --from-sweep explicitly.")
         print(f"Auto-picked most recent sweep: {sweep_dir.name}")
         print(f"  (from {search_label})")
 
     summary_rows, source_cfg = load_sweep_inputs(sweep_dir)
+    # Sweeps written before 2026-10-14 carry no node; all were invivo_red.
+    source_node = source_cfg.get("node", "invivo_red")
+    if source_node != args.node:
+        sys.exit(f"Source sweep {sweep_dir.name} is of {source_node}, not --node {args.node}.")
     sweeps_config = source_cfg["sweeps"]
     vanilla_normalize      = source_cfg["vanilla_normalize"]       # bool (echoed to our config.json)
     vanilla_normalize_dict = source_cfg["vanilla_normalize_dict"]
@@ -433,7 +449,7 @@ def main(argv: list | None = None) -> int:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     # <ANALYSIS_ROOT>/cellpose/ when configured; else beside the TIFF.
     from analysis_paths import cellpose_dir
-    out_dir = (cellpose_dir() or tiff_path.parent) / f"combo_in_vivo_{stamp}"
+    out_dir = (cellpose_dir() or tiff_path.parent) / f"combo_{SWEEP_TAGS[args.node]}_{stamp}"
 
     n_combos      = len(combos)
     page_size     = MAX_COLS_PER_PAGE - 1
@@ -478,6 +494,7 @@ def main(argv: list | None = None) -> int:
     exit_code = 0
     try:
         config = {
+            "node":                   args.node,
             "tiff_path":              str(tiff_path),
             "sweep_dir":              str(sweep_dir),
             "z_planes":               list(z_indices),

@@ -15,6 +15,7 @@ That single declaration is the source of truth for pixel size everywhere:
 - the graph builder stamps ``(z, xy, xy)`` on every 2P node and
   ``(20.0, xy, xy)`` on every BARseq subslice node
 - ``validate_mnn.py`` scores centroid distances in µm with the same pitch
+- ``batch_cellpose.py`` takes cellpose's 3D ``anisotropy`` from it
 
 A TIFF's own ``XResolution`` metadata is still read where available, but only to
 CHECK the declaration — ``assert_matches_metadata()`` raises when the two
@@ -146,6 +147,16 @@ def subslice_spacing_zyx(scope: str, var_name: str = "SCOPE") -> Tuple[float, fl
     """
     p = get_profile(scope, var_name)
     return (SECTION_THICKNESS_UM, p['xy_um_per_px'], p['xy_um_per_px'])
+
+
+def cellpose_anisotropy(scope: str, var_name: str = "SCOPE") -> float:
+    """
+    cellpose's ``anisotropy`` for a 2P volume acquired on `scope`: Z step / XY pitch.
+
+    huang_lab: 1.0 / 1.1 = 0.909.
+    """
+    z, xy, _ = spacing_zyx(scope, var_name)
+    return z / xy
 
 
 def downsample_xy(scope: str, var_name: str = "SCOPE") -> float:
