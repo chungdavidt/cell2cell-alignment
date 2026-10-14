@@ -13,7 +13,8 @@ SUBSLICE_DIR and re-running adds a parallel set rather than silently keeping the
 pixels already stored under a colliding name; alignment is redone by hand.
 
 Pixel sizes come from the scope declared as SCOPE in local_config.py, via the
-shared profile table in scope_profiles.py. 2P nodes get (z, xy, xy); BARseq
+shared profile table in scope_profiles.py (the block reads BLOCK_STACK_SCOPE
+when set). 2P nodes get (z, xy, xy); BARseq
 subslice nodes get (20.0, xy, xy) — Z is the physical section thickness, and
 sections are cut in the 2P imaging plane so one pitch covers both in-plane axes.
 
@@ -86,6 +87,10 @@ SUBSLICE_RAW_CHANNELS = [
 # every pixel size below. Validated at first use, not at import, so a module
 # import (or --help) does not require a complete config.
 SCOPE = getattr(local_config, "SCOPE", "")
+# The block's scope when it was sampled at another pitch; blank = SCOPE.
+BLOCK_STACK_SCOPE = getattr(local_config, "BLOCK_STACK_SCOPE", "") or SCOPE
+BLOCK_STACK_SCOPE_VAR = ("BLOCK_STACK_SCOPE"
+                         if getattr(local_config, "BLOCK_STACK_SCOPE", "") else "SCOPE")
 
 # Node names this builder no longer writes. Presence of any in a loaded graph
 # triggers the migration guard in build_subslice_graph(). Two generations:
@@ -298,9 +303,11 @@ def load_block_stack(path: Union[str, Path]) -> np.ndarray:
     return stack
 
 
-def spacing_for_tiff(tiff_path: Union[str, Path], scope: str = None) -> tuple:
+def spacing_for_tiff(tiff_path: Union[str, Path], scope: str = None,
+                     var_name: str = "SCOPE") -> tuple:
     """
-    (Z, Y, X) spacing for a 2P TIFF, from the declared SCOPE.
+    (Z, Y, X) spacing for a 2P TIFF, from the declared SCOPE (or `scope`,
+    declared as `var_name` — BLOCK_STACK_SCOPE for the block).
 
     SCOPE is authoritative. The file's own XResolution metadata is read, but
     only to check the declaration: a plausible pixel size that disagrees with
@@ -314,16 +321,16 @@ def spacing_for_tiff(tiff_path: Union[str, Path], scope: str = None) -> tuple:
         ((z, y, x) spacing in µm/px, scope_name)
     """
     scope = SCOPE if scope is None else scope
-    profile = get_profile(scope)
+    profile = get_profile(scope, var_name)
 
     res = get_tiff_resolution(tiff_path)
     xy_meta = res.get('xy_um_per_px')
     assert_matches_metadata(
-        scope, xy_meta, source_name=Path(tiff_path).name,
+        scope, xy_meta, source_name=Path(tiff_path).name, var_name=var_name,
     )
 
-    z, y, x = spacing_zyx(scope)
-    print(f"  Scope: {scope} ({profile['description']})")
+    z, y, x = spacing_zyx(scope, var_name)
+    print(f"  Scope ({var_name}): {scope} ({profile['description']})")
     print(f"  Spacing (Z, Y, X): ({z}, {y:.4f}, {x:.4f}) µm/px")
     if xy_meta is None:
         print("    (no resolution metadata in file — nothing to cross-check)")
@@ -994,6 +1001,7 @@ def build_subslice_graph(
     # -------------------------------------------------------------
     # Fail on a blank/unknown SCOPE now, not after loading a multi-GB stack.
     get_profile(SCOPE)
+    get_profile(BLOCK_STACK_SCOPE, BLOCK_STACK_SCOPE_VAR)
 
     invivo_red_path = Path(INVIVO_PATH_RED) if INVIVO_PATH_RED else None
     invivo_green_path = Path(INVIVO_PATH_GREEN) if INVIVO_PATH_GREEN else None
@@ -1270,7 +1278,7 @@ def build_subslice_graph(
                 print(f"  would ADD: block_stack_red")
             else:
                 red_stack = load_block_stack(block_red_path)
-                red_spacing, _ = spacing_for_tiff(block_red_path)
+                red_spacing, _ = spacing_for_tiff(block_red_path, BLOCK_STACK_SCOPE, BLOCK_STACK_SCOPE_VAR)
 
         if block_green_path:
             if "block_stack_green" in existing_nodes:
@@ -1279,7 +1287,7 @@ def build_subslice_graph(
                 print(f"  would ADD: block_stack_green")
             else:
                 green_stack = load_block_stack(block_green_path)
-                green_spacing, _ = spacing_for_tiff(block_green_path)
+                green_spacing, _ = spacing_for_tiff(block_green_path, BLOCK_STACK_SCOPE, BLOCK_STACK_SCOPE_VAR)
 
         if red_stack is not None or green_stack is not None:
             add_block_to_graph(

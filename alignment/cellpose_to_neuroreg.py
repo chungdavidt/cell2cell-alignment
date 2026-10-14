@@ -38,7 +38,7 @@ import numpy as np
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
-from analysis_paths import TWO_P_RED_NODES, cellpose_dir, two_p_path
+from analysis_paths import TWO_P_RED_NODES, cellpose_dir, two_p_path, two_p_scope
 from scope_profiles import spacing_zyx
 
 PLANE_NUDGE = 1e-3   # planes
@@ -76,12 +76,11 @@ def main(argv: list | None = None) -> int:
                         help="Drop cells larger than this.")
     args = parser.parse_args(argv)
 
-    import local_config
     import tifffile
     from scipy.io import savemat
 
-    scope = getattr(local_config, "SCOPE", "")
-    z_um, xy_um, _ = spacing_zyx(scope)
+    scope, scope_var = two_p_scope(args.node)
+    z_um, xy_um, _ = spacing_zyx(scope, scope_var)
 
     tiff = two_p_path(args.node)
     if args.masks:
@@ -100,8 +99,8 @@ def main(argv: list | None = None) -> int:
     if run_json.exists():
         run = json.loads(run_json.read_text())
         if run.get("scope") != scope:
-            sys.exit(f"{run_json.name} was segmented under SCOPE {run.get('scope')!r}; "
-                     f"local_config says {scope!r}.")
+            sys.exit(f"{run_json.name} was segmented under scope {run.get('scope')!r}; "
+                     f"local_config's {scope_var} says {scope!r}.")
         if tiff is not None and run.get("input_tiff") != str(tiff):
             print(f"WARNING: {run_json.name} input {run.get('input_tiff')} is not "
                   f"local_config's {tiff}")
@@ -110,7 +109,7 @@ def main(argv: list | None = None) -> int:
     masks = tifffile.imread(str(masks_path))
     if masks.ndim != 3:
         sys.exit(f"Expected (Z, Y, X) masks, got shape {masks.shape}")
-    print(f"  shape (Z, Y, X) {masks.shape}, SCOPE {scope}: XY {xy_um} um, Z {z_um} um")
+    print(f"  shape (Z, Y, X) {masks.shape}, {scope_var} {scope}: XY {xy_um} um, Z {z_um} um")
 
     labels, cents, counts = label_centroids(masks)
     vol = counts * xy_um * xy_um * z_um

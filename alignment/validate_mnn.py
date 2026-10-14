@@ -11,10 +11,11 @@ Validates a castalign rigid alignment by:
 MVP scope. No size filter, no null shuffle, no pre-vs-post nonlinear comparison
 (see project_alignment_validation_mnn.md for the deferred publication-grade patches).
 
-Both volumes are assumed to share a voxel pitch. Distances are reported in both
-voxel and um; per-axis um is also reported because Z and XY pitches differ. The
-pitch used for the um report defaults to the scope named as SCOPE
-('huang_lab': 563.2 um FOV, 1.1000 um/px, 1 um Z) and is overridden with
+Distances are measured in the fixed node's voxels, after the transform maps the
+movable centroids into it, and reported in voxel and um; per-axis um is also
+reported because Z and XY pitches differ. The pitch used for the um report
+defaults to the fixed node's scope (BLOCK_STACK_SCOPE when set, else SCOPE;
+'huang_lab': 563.2 um FOV, 1.1000 um/px, 1 um Z) and is overridden with
 --um-per-voxel (by84/by94/by89, whose profile was deleted 2026-08-30:
 2.0,1.1055,1.1055 until their own tags are re-read).
 
@@ -42,12 +43,16 @@ from scipy.spatial import cKDTree
 # an unstated pitch.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scope_profiles import spacing_zyx, describe_profiles  # noqa: E402
+from analysis_paths import two_p_scope  # noqa: E402
 
 
-def _scope_um_per_voxel() -> tuple:
-    """(Z, Y, X) µm/voxel for the scope declared in local_config.py."""
-    import local_config
-    return spacing_zyx(getattr(local_config, "SCOPE", ""))
+def _scope_um_per_voxel(node: str = "block_stack_red") -> tuple:
+    """(Z, Y, X) µm/voxel of `node`'s scope in local_config.py.
+
+    MNN distances are measured in the fixed node's frame, so the default is
+    block_stack_red, which reads BLOCK_STACK_SCOPE when set.
+    """
+    return spacing_zyx(*two_p_scope(node))
 # Validation operates on the red (sparse) alignment channel by design — it's the
 # segmentation channel and the only side with a fitted rigid edge. Green is
 # joined via Identity in the graph but is not segmented here.
@@ -324,7 +329,7 @@ def main(argv: Optional[list] = None) -> int:
         "--um-per-voxel", default=None, metavar="Z,Y,X",
         help=(
             "Voxel pitch in µm for the µm-distance report, as Z,Y,X. Defaults "
-            "to the SCOPE declared in local_config.py:\n"
+            "to the fixed node's scope in local_config.py (BLOCK_STACK_SCOPE or SCOPE):\n"
             + describe_profiles()
         ),
     )
@@ -343,7 +348,7 @@ def main(argv: Optional[list] = None) -> int:
         if any(v <= 0 for v in um_per_voxel):
             parser.error(f"--um-per-voxel values must be positive, got {args.um_per_voxel!r}")
     else:
-        um_per_voxel = _scope_um_per_voxel()
+        um_per_voxel = _scope_um_per_voxel(args.node_fixed)
 
     project_root = Path(__file__).resolve().parent.parent
     if str(project_root) not in sys.path:
@@ -385,7 +390,7 @@ def main(argv: Optional[list] = None) -> int:
     print(f"Output dir: {out_dir}")
     print(f"Direction:  {args.node_movable} -> {args.node_fixed}")
     print(f"µm/voxel:   {um_per_voxel} (Z, Y, X)"
-          f"{'' if args.um_per_voxel else ' — from SCOPE; override with --um-per-voxel'}")
+          f"{'' if args.um_per_voxel else ' — from the fixed node scope; override with --um-per-voxel'}")
     print()
 
     out_dir.mkdir(parents=True, exist_ok=True)

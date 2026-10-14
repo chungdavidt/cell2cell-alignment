@@ -184,6 +184,8 @@ GRAPH_PATH = ""
 # Values (defined in scope_profiles.py at the project root):
 #   "li_lab"           2.34   µm/px XY, 1.0 µm Z, 1200 µm FOV    JH302 (retired)
 #   "huang_lab"        1.1000 µm/px XY, 1.0 µm Z, 563.2 µm FOV   BY95
+#   "huang_lab_bruker_512px"   1.1056 µm/px XY, 1.0 µm Z, 566.08 µm FOV   BY108 in vivo (Bruker XML)
+#   "huang_lab_bruker_1024px"  0.5528 µm/px XY, 1.0 µm Z, 566.08 µm FOV   BY108 ex vivo block
 #
 # huang_lab was 0.3910 µm/px over a 200.19 µm field until 2026-08-30, when the
 # stacks' own XResolution tag was read and said 1.1000. "huang_lab_566um"
@@ -197,3 +199,8 @@ GRAPH_PATH = ""
 # stops the run rather than silently overriding it.
 # ---------------------------------------------------------------------
 SCOPE = ""
+
+# The ex vivo block's scope, when it was sampled at a different pitch from the
+# in vivo stack (BY108: 1024 px vs 512 px over one field). Applies to the
+# block_stack_* nodes only; blank = SCOPE. BARseq is resampled to SCOPE's pitch.
+BLOCK_STACK_SCOPE = ""

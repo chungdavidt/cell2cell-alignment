@@ -115,9 +115,22 @@ except ValueError:
 check("the old 0.3910 would now RAISE against huang_lab", raised)
 
 check("huang_lab_566um is gone", 'huang_lab_566um' not in sp.MICROSCOPE_PROFILES)
-check("no two profiles collide inside identify_scope's tolerance",
+check("every profile identifies as itself (nearest within tolerance)",
       all(sp.identify_scope(p['xy_um_per_px']) == name
           for name, p in sp.MICROSCOPE_PROFILES.items()))
+check("huang_lab and huang_lab_bruker_512px are 0.51% apart and each identifies as itself",
+      sp.identify_scope(1.1000) == 'huang_lab'
+      and sp.identify_scope(1.10563372890839) == 'huang_lab_bruker_512px')
+check("the 1024 px block profile is half the 512 px pitch, same field",
+      close(sp.MICROSCOPE_PROFILES['huang_lab_bruker_1024px']['xy_um_per_px'] * 1024,
+            sp.MICROSCOPE_PROFILES['huang_lab_bruker_512px']['xy_um_per_px'] * 512))
+raised = False
+try:
+    sp.assert_matches_metadata('huang_lab_bruker_1024px', 1.10563372890839,
+                               var_name='BLOCK_STACK_SCOPE')
+except ValueError as e:
+    raised = 'BLOCK_STACK_SCOPE' in str(e)
+check("a 512 px pitch against the 1024 px block scope raises, naming BLOCK_STACK_SCOPE", raised)
 check("huang_lab resamples BARseq by 3.4375x",
       close(sp.downsample_xy('huang_lab'), 3.4375))
 

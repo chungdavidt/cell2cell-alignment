@@ -94,6 +94,22 @@ def two_p_path(node: str) -> Optional[Path]:
     return Path(value) if value else None
 
 
+def two_p_scope(node: str) -> "tuple[str, str]":
+    """(scope, config name) for a 2P node, `_red` or `_green`.
+
+    block_stack_* reads BLOCK_STACK_SCOPE, falling back to SCOPE when blank;
+    every other 2P node reads SCOPE. The config name is for error messages.
+    """
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+    import local_config
+    if node.startswith("block_stack"):
+        block = getattr(local_config, "BLOCK_STACK_SCOPE", "")
+        if block:
+            return block, "BLOCK_STACK_SCOPE"
+    return getattr(local_config, "SCOPE", ""), "SCOPE"
+
+
 def _preprocessing_roots() -> "tuple[Path, ...]":
     """Every root a relative SUBSLICE_DIR is resolved against, from preprocessing_config.
 

@@ -13,8 +13,9 @@ with cellpose 4 (cpsam) in 3D, and writes to ``<ANALYSIS_ROOT>/cellpose/``:
 ANALYSIS_ROOT is required: nothing is written next to the raw TIFFs.
 
 ``anisotropy`` is cellpose's parameter — the volume's Z step over its XY pitch —
-derived from SCOPE (huang_lab: 1.0 / 1.1 = 0.909). A TIFF whose own XResolution
-disagrees with SCOPE by more than 5% stops the run before the model loads.
+derived from SCOPE (huang_lab: 1.0 / 1.1 = 0.909); block_stack_red reads
+BLOCK_STACK_SCOPE when set. A TIFF whose own XResolution disagrees with its
+scope by more than 5% stops the run before the model loads.
 
 Depth range: each TIFF needs the Z planes worth segmenting recorded by hand
 first (``cellpose_curation.py depth``, kept in ``<ANALYSIS_ROOT>/cellpose/
@@ -47,7 +48,7 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
-from analysis_paths import TWO_P_RED_NODES, cellpose_dir, two_p_path
+from analysis_paths import TWO_P_RED_NODES, cellpose_dir, two_p_path, two_p_scope
 from scope_profiles import (
     assert_matches_metadata,
     cellpose_anisotropy,
@@ -419,8 +420,6 @@ def main(argv: list | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    import local_config
-    scope = getattr(local_config, "SCOPE", "")
     out_dir = cellpose_dir()
     if out_dir is None:
         sys.exit("ANALYSIS_ROOT is blank in local_config.py; batch_cellpose.py writes only "
@@ -447,16 +446,21 @@ def main(argv: list | None = None) -> int:
         sys.exit("Nothing to segment: no red 2P TIFF from local_config.py is on disk.")
 
     # SCOPE errors and pitch mismatches stop here, before an hour of GPU time.
-    cellpose_anisotropy(scope)
+    # block_stack_red reads BLOCK_STACK_SCOPE when set.
+    scopes = {node: two_p_scope(node) for node, _ in jobs}
     for node, path in jobs:
-        assert_matches_metadata(scope, tiff_xy_um_per_px(path), source_name=path.name)
+        scope, var = scopes[node]
+        cellpose_anisotropy(scope, var)
+        assert_matches_metadata(scope, tiff_xy_um_per_px(path), source_name=path.name,
+                                var_name=var)
 
     print(f"Output dir: {out_dir}")
-    print(f"SCOPE:      {scope}  (anisotropy {cellpose_anisotropy(scope):.4f})")
     for node, path in jobs:
+        scope, var = scopes[node]
         paths = output_paths(out_dir, path)
         state = "done" if paths["seg"].exists() and paths["masks"].exists() else "to run"
         print(f"  [{state:<6}] {node:<16} {path}")
+        print(f"           {var}: {scope}  (anisotropy {cellpose_anisotropy(scope):.4f})")
         print(f"           params: {eval_params_for(node, scope)}")
         print(f"           model:  {model_for(node)}")
         print(f"           min planes: {MIN_PLANES.get(node, 0)}")
@@ -493,6 +497,7 @@ def main(argv: list | None = None) -> int:
             t0 = time.time()
             models[name] = CellposeModel(gpu=True, pretrained_model=name)
             print(f"  loaded in {time.time() - t0:.1f}s (device={models[name].device})")
+        scope = scopes[node][0]
         r = run_one(models[name], node, path, out_dir, eval_params_for(node, scope), scope,
                     force=args.force)
         results.append((node, path, r))

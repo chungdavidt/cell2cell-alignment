@@ -8,7 +8,11 @@ cellpose venv can all import it without pulling in numpy, tifffile or castalign.
 
     SCOPE = "huang_lab"
 
-That single declaration is the source of truth for pixel size everywhere:
+A subject whose ex vivo block was sampled at a different pitch also names
+``BLOCK_STACK_SCOPE`` (blank = same as ``SCOPE``); it applies to the
+``block_stack_*`` nodes only (``analysis_paths.two_p_scope``).
+
+That declaration is the source of truth for pixel size everywhere:
 
 - preprocessing resamples the BARseq images to the scope's XY pitch
   (``DOWNSAMPLE_XY = xy_um_per_px / 0.32``)
@@ -55,6 +59,25 @@ MICROSCOPE_PROFILES = {
         'xy_um_per_px': 1.1000,     # 512 px / 563.2 µm FOV, from TIFF XResolution
         'z_um_per_px': 1.0,         # 401 planes, 400 µm deep
         'description': 'Huang lab 2P (563.2 µm FOV, 1 µm Z, 401 planes)',
+    },
+    # BY108, 2026-10-14. Prairie View 5.8.64 XML of SingleImage-10062026-1405-012
+    # (16x / NA 1.0, opticalZoom 2, 512 x 512): micronsPerPixel X = Y =
+    # 1.10563372890839, a 566.08 µm field. The OME header of a 1024 px TSeries
+    # from the same rig reads the same 1.1056 at 1024 px (a zoom-1 test). BY108's
+    # converted stacks carry no calibration tag. Z: 1 µm, David.
+    # 0.51% from 'huang_lab' (BY95's ImageJ tag), inside the 5% check either way.
+    'huang_lab_bruker_512px': {
+        'xy_um_per_px': 1.10563372890839,
+        'z_um_per_px': 1.0,
+        'description': 'Huang lab Bruker 2P, 16x zoom 2, 512 px (566.08 µm FOV, 1 µm Z)',
+    },
+    # Same zoom and field sampled at 1024 px (David: BY108's ex vivo block was
+    # taken at the in vivo zoom), so half the 512 px pitch. Derived, not read
+    # from an XML: the block's own XML was not kept.
+    'huang_lab_bruker_1024px': {
+        'xy_um_per_px': 1.10563372890839 / 2,
+        'z_um_per_px': 1.0,
+        'description': 'Huang lab Bruker 2P, 16x zoom 2, 1024 px (566.08 µm FOV, 1 µm Z)',
     },
 }
 
@@ -125,7 +148,7 @@ def get_profile(scope: str, var_name: str = "SCOPE") -> dict:
 def describe_profiles() -> str:
     """Indented one-line-per-scope listing, for error messages."""
     return "\n".join(
-        f"    {name:<16} XY {p['xy_um_per_px']:>7.4f} µm/px, Z {p['z_um_per_px']:>4} µm"
+        f"    {name:<24} XY {p['xy_um_per_px']:>7.4f} µm/px, Z {p['z_um_per_px']:>4} µm"
         f"   ({p['description']})"
         for name, p in MICROSCOPE_PROFILES.items()
     )
@@ -170,14 +193,18 @@ def downsample_xy(scope: str, var_name: str = "SCOPE") -> float:
 
 def identify_scope(xy_um_per_px: float, tolerance: float = 0.05) -> Optional[str]:
     """
-    Profile key whose XY pitch matches `xy_um_per_px` within `tolerance`
-    (relative), or None if none does.
+    Profile key whose XY pitch is nearest `xy_um_per_px`, if within `tolerance`
+    (relative); None if none is.
+
+    Nearest, not first: 'huang_lab' and 'huang_lab_bruker_512px' are 0.51%
+    apart, so a first-match scan would name whichever was listed first.
     """
-    for name, profile in MICROSCOPE_PROFILES.items():
-        expected = profile['xy_um_per_px']
-        if abs(xy_um_per_px - expected) / expected < tolerance:
-            return name
-    return None
+    errors = {
+        name: abs(xy_um_per_px - p['xy_um_per_px']) / p['xy_um_per_px']
+        for name, p in MICROSCOPE_PROFILES.items()
+    }
+    best = min(errors, key=errors.get)
+    return best if errors[best] < tolerance else None
 
 
 def is_plausible_xy(xy_um_per_px: float) -> bool:

@@ -11,7 +11,7 @@ Blank is a convention, not an omission: for OUTPUT_ROOT, HYB_ROOT and
 GRAPH_PATH it means "derive it", and each says below what it derives to. SCOPE
 is the exception — it is authoritative, and blank is a hard error.
 
-Switching subjects: ANALYSIS_ROOT, DATA_ROOT, SCOPE, the four 2P paths, and
+Switching subjects: ANALYSIS_ROOT, DATA_ROOT, SCOPE (+ BLOCK_STACK_SCOPE), the four 2P paths, and
 SUBSLICE_DIR's cutoff. Nothing in the notebook or the graph builder changes.
 """
 
@@ -29,10 +29,17 @@ ANALYSIS_ROOT = r"D:\lab_local\projects\cell_type\analysis\BY108"
 # spacings, and validate_mnn's µm scale. TIFF XResolution is read only to check
 # it, and a disagreement is a hard error.
 #   "huang_lab"   1.1000 µm/px XY, 1.0 µm Z   BY95 (563.2 µm FOV)
-# BY108: assumed huang_lab, not yet checked against its stacks' XResolution.
+#   "huang_lab_bruker_512px"   1.1056 µm/px XY, 1.0 µm Z, 566.08 µm FOV  (Bruker XML)
+#   "huang_lab_bruker_1024px"  0.5528 µm/px XY, same field at 1024 px
+# BY108's stacks carry no calibration tag; the pitch is from the rig's Prairie
+# View XML for 16x zoom 2 at 512 px (in vivo), halved for the 1024 px block.
 # by84/by94/by89 named "huang_lab_566um", deleted 2026-08-30 — re-derive
 # their pitch from their own XResolution tags before running them again.
-SCOPE = "huang_lab"
+SCOPE = "huang_lab_bruker_512px"
+
+# The ex vivo block's scope when it was sampled at another pitch; applies to
+# the block_stack_* nodes only. Blank = SCOPE. BARseq is resampled to SCOPE's.
+BLOCK_STACK_SCOPE = "huang_lab_bruker_1024px"
 
 # ---------------------------------------------------------------------
 # Per-brain thresholds

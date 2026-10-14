@@ -367,8 +367,7 @@ def render_pages(out_dir: Path, stem: str, planes: list[dict],
 
 def cmd_export(args) -> int:
     import tifffile
-    import local_config
-    from analysis_paths import TWO_P_RED_NODES, two_p_path
+    from analysis_paths import TWO_P_RED_NODES, two_p_path, two_p_scope
 
     tiff = Path(args.tiff) if args.tiff else two_p_path(args.node)
     if tiff is None:
@@ -415,7 +414,7 @@ def cmd_export(args) -> int:
     (cdir / "_start").mkdir(parents=True, exist_ok=True)
     if manifest is None:
         manifest = {"node": args.node, "tiff": str(tiff), "shape_zyx": list(shape),
-                    "scope": getattr(local_config, "SCOPE", ""),
+                    "scope": two_p_scope(args.node)[0],
                     "start_eval": vanilla_kwargs(), "planes": {}}
 
     model = None
