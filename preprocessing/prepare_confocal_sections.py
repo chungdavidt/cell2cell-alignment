@@ -184,6 +184,21 @@ def imresize_bilinear(image, output_shape: tuple):
     return result.astype(original_dtype)
 
 
+def read_rgb_tile(path: Path):
+    """A tile as an (H, W, 3) array. ZEN writes these LZW-compressed; tifffile
+    needs the imagecodecs package for LZW, so without it Pillow decodes them."""
+    import numpy as np
+    import tifffile
+    try:
+        return tifffile.imread(str(path))
+    except ValueError as e:
+        if "imagecodecs" not in str(e):
+            raise
+    from PIL import Image
+    with Image.open(path) as im:
+        return np.asarray(im.convert("RGB"))
+
+
 def build_projection(tiles_by_z: dict, canvas_hw: tuple, weights: tuple):
     """Stitch each z plane from its tiles (max in overlaps), then max over z.
 
@@ -193,13 +208,12 @@ def build_projection(tiles_by_z: dict, canvas_hw: tuple, weights: tuple):
     one channel rendered in that colour.
     """
     import numpy as np
-    import tifffile
     comp = max(range(3), key=lambda i: weights[i])
     canvas = None
     errors = []
     for z, tiles in tiles_by_z.items():
         for path, x0, y0, w, h, _ in tiles:
-            rgb = tifffile.imread(str(path))
+            rgb = read_rgb_tile(path)
             if rgb.ndim != 3 or rgb.shape[-1] != 3:
                 raise ValueError(f"{path.name}: expected (H, W, 3) RGB, got {rgb.shape}")
             if rgb.shape[:2] != (h, w):
