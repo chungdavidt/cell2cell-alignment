@@ -9,13 +9,15 @@ Input is a ZEN TIFF export (local_config.CONFOCAL_DIR), one per section:
     S1.1.tiff_files/             tiles, one per z plane, channel and mosaic tile:
         S1.1_h0s0t0z{z}c{c}x{x0}-{w}y{y0}-{h}m{m}.tiff
 
-The stitched S{n}.tiff merges the channels into one RGB (tdTomato's orange and
-DAPI's magenta both feed R), so it cannot give one channel back. The tiles hold
-one channel each, rendered in that channel's colour. Per section:
+The stitched S{n}.tiff merges the channels into one RGB in their display
+colours (tdTomato #FF4100 and DAPI #FF00FF both feed R), so it cannot give one
+channel back; a Fiji "Split Channels" red plane of it is tdTomato + DAPI. The
+tiles hold one channel each, written as grayscale RGB (R = G = B; measured on
+S1.1 with --inspect, 2026-10-14). Per sub-stack:
 
   1. channel   CONFOCAL_CHANNEL is looked up by name among the image's channels
-               in the XML; its index is the tiles' c{c} and its colour picks the
-               RGB component that carries the intensity (tdTomato #FF4100 -> R).
+               in the XML; its index is the tiles' c{c}. Tiles must be grayscale
+               (R = G = B) or the run stops; R is taken.
   2. stitch    each tile is pasted at the offset in its filename (x{x0}, y{y0});
                overlaps take the max. The canvas must equal the XML's SizeX/SizeY.
   3. project   max over the z planes.
@@ -27,15 +29,20 @@ one channel each, rendered in that channel's colour. Per section:
                A confocal coarser than SCOPE stops the run: images are only
                ever downsampled.
 
-Section order: S{slide}.{n} sorted by slide then n is the cutting order
-(David, 2026-10-14), numbered slice1, slice2, ... in that order.
+Naming: S{k} is physical section k (50 µm); S{k}.{n} are ~25 µm z sub-stacks
+of it, each imaged over its own tile region (David, 2026-10-14; section 4 was
+not flat, so its sub-stacks may overlap in depth). Each sub-stack is its own
+image and its own graph node, never merged: S{k}.{n} -> slice{k}_confocal_{label}_part{n}.
 
 Values are ZEN's 8-bit display rendering, not the 16-bit acquisition; no .czi
 was kept.
 
+Values are 8-bit and tdTomato tiles reach 255: ZEN's display scaling clipped
+the brightest pixels in the export.
+
 Output, under <ANALYSIS_ROOT>/preprocessing/confocal/{label}/:
-    slice{N}_confocal_{label}.tif     2D, dtype of the tiles
-    confocal_sections.json            per section: source, slice number, tiles,
+    slice{k}_confocal_{label}_part{n}.tif   2D, dtype of the tiles
+    confocal_sections.json            per sub-stack: source, section, part, tiles,
                                       z planes, pitches, factor, shapes
 
 Reads CONFOCAL_DIR only; writes nothing next to it. Does not import
@@ -69,9 +76,9 @@ SECTION_RE = re.compile(r"^S(\d+)\.(\d+)$")
 TILE_RE = re.compile(
     r"^(?P<sec>.+?)_h\d+s\d+t\d+z(?P<z>\d+)c(?P<c>\d+)"
     r"x(?P<x>\d+)-(?P<w>\d+)y(?P<y>\d+)-(?P<h>\d+)m(?P<m>\d+)\.tiff?$")
-# Mean |component - value * weight| above this (8-bit levels) means the tile is
-# not a single channel rendered in the XML colour.
-COLOUR_FIT_MAX_ERROR = 2.0
+# Mean |G - R| or |B - R| above this (8-bit levels) means the tile is not
+# grayscale, i.e. not one channel on its own.
+GRAYSCALE_MAX_ERROR = 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -116,12 +123,6 @@ def read_zen_xml(path: Path) -> dict:
             colour = next((c.text for c in ch if _local(c.tag) == "Color"), None)
             channels[k] = {"name": ch.get("Name"), "colour": colour}
     return {"scaling_um": scaling, "size": size, "channels": channels}
-
-
-def colour_weights(argb: str) -> tuple:
-    """(R, G, B) weights in [0, 1] from ZEN's #AARRGGBB."""
-    h = argb.lstrip("#")[-6:]
-    return tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
 
 
 def channel_label(name: str) -> str:
@@ -208,16 +209,13 @@ def read_rgb_tile(path: Path):
     return np.asarray(a)
 
 
-def build_projection(tiles_by_z: dict, canvas_hw: tuple, weights: tuple):
+def build_projection(tiles_by_z: dict, canvas_hw: tuple):
     """Stitch each z plane from its tiles (max in overlaps), then max over z.
 
-    Returns (image, colour-fit error): the intensity is the RGB component with
-    the largest colour weight; the error is the mean |other component -
-    value * its weight| over nonzero pixels, which is ~0 when the tile really is
-    one channel rendered in that colour.
+    Returns (image, grayscale error): the intensity is R; the error is the
+    largest per-tile mean |G - R| or |B - R|, ~0 for a grayscale tile.
     """
     import numpy as np
-    comp = max(range(3), key=lambda i: weights[i])
     canvas = None
     errors = []
     for z, tiles in tiles_by_z.items():
@@ -227,15 +225,11 @@ def build_projection(tiles_by_z: dict, canvas_hw: tuple, weights: tuple):
                 raise ValueError(f"{path.name}: expected (H, W, 3) RGB, got {rgb.shape}")
             if rgb.shape[:2] != (h, w):
                 raise ValueError(f"{path.name}: shape {rgb.shape[:2]} but name says {(h, w)}")
-            val = rgb[..., comp]
+            val = rgb[..., 0]
             if canvas is None:
                 canvas = np.zeros(canvas_hw, dtype=val.dtype)
-            nz = val > 0
-            if nz.any():
-                v = val[nz].astype(np.float64)
-                for i in range(3):
-                    if i != comp:
-                        errors.append(np.abs(rgb[..., i][nz] - v * weights[i]).mean())
+            r = val.astype(np.int16)
+            errors += [np.abs(rgb[..., i].astype(np.int16) - r).mean() for i in (1, 2)]
             region = canvas[y0:y0 + h, x0:x0 + w]
             np.maximum(region, val, out=region)
     return canvas, (max(errors) if errors else 0.0)
@@ -285,7 +279,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--section", nargs="+", metavar="S1.1",
-                    help="only these sections (slice numbers still count every section)")
+                    help="only these sub-stacks")
     ap.add_argument("--channel", default=None,
                     help="ZEN channel name; default local_config.CONFOCAL_CHANNEL")
     ap.add_argument("--dry-run", action="store_true",
@@ -334,7 +328,7 @@ def main():
     print(f"CONFOCAL_SCOPE: {conf_scope}  ({conf_xy} um/px)")
     print(f"SCOPE (graph):  {graph_scope}  ({target_xy} um/px)")
     print(f"downsample:     native / {factor:.6f}")
-    print(f"sections:       {len(sections)}, numbered in cutting order")
+    print(f"sub-stacks:     {len(sections)} over sections {sorted({s[0] for s in sections})}")
 
     label = channel_label(channel_name)
     out_dir = out_root / CONFOCAL_SUBDIR / label
@@ -344,7 +338,7 @@ def main():
 
     wanted = set(args.section) if args.section else None
     records = []
-    for number, (slide, n, name, xml, tile_dir) in enumerate(sections, start=1):
+    for slide, n, name, xml, tile_dir in sections:
         if wanted is not None and name not in wanted:
             continue
         meta = read_zen_xml(xml)
@@ -353,7 +347,6 @@ def main():
         if idx is None:
             sys.exit(f"{name}: no channel {channel_name!r}; channels in {xml.name}: "
                      f"{ {k: ch['name'] for k, ch in meta['channels'].items()} }")
-        weights = colour_weights(meta["channels"][idx]["colour"])
         xy_meta = meta["scaling_um"].get("X")
         assert_matches_metadata(conf_scope, xy_meta, source_name=xml.name,
                                 var_name="CONFOCAL_SCOPE")
@@ -371,15 +364,15 @@ def main():
                      f"{size.get('SizeX')} x {size.get('SizeY')} (SizeX x SizeY)")
         out_hw = (round(canvas_h / factor), round(canvas_w / factor))
         z_um = meta["scaling_um"].get("Z")
-        out_path = out_dir / f"slice{number}_confocal_{label}.tif"
-        print(f"\n  {name} -> slice{number}: c{idx} {channel_name} "
-              f"(colour {meta['channels'][idx]['colour']}, component {'RGB'[max(range(3), key=lambda i: weights[i])]})")
+        out_path = out_dir / f"slice{slide}_confocal_{label}_part{n}.tif"
+        print(f"\n  {name} -> {out_path.stem}: c{idx} {channel_name}")
         print(f"    XML pitch {xy_meta:.5f} um/px, z planes {sorted(tiles_by_z)} "
               f"({z_um:g} um apart), tiles per z {tiles_per_z}")
         print(f"    canvas {canvas_h} x {canvas_w} -> {out_hw[0]} x {out_hw[1]}  ({out_path.name})")
 
         record = {
-            "section": name, "slice": number, "source_xml": str(xml),
+            "source": name, "section": slide, "part": n, "node": out_path.stem,
+            "source_xml": str(xml),
             "channel": channel_name, "channel_index": idx,
             "z_planes": sorted(tiles_by_z), "z_step_um": z_um,
             "tiles_per_z": tiles_per_z, "projection": "max over z; max in tile overlaps",
@@ -396,24 +389,26 @@ def main():
             continue
 
         import tifffile
-        native, colour_error = build_projection(tiles_by_z, (canvas_h, canvas_w), weights)
-        if colour_error > COLOUR_FIT_MAX_ERROR:
-            sys.exit(f"{name}: tiles do not look like {channel_name} alone in colour "
-                     f"{meta['channels'][idx]['colour']} (mean error {colour_error:.2f} levels)")
+        native, gray_error = build_projection(tiles_by_z, (canvas_h, canvas_w))
+        if gray_error > GRAYSCALE_MAX_ERROR:
+            sys.exit(f"{name}: c{idx} tiles are not grayscale (mean |G-R| or |B-R| "
+                     f"{gray_error:.2f} levels), so they are not {channel_name} alone")
         small = imresize_bilinear(native, out_hw)
         out_dir.mkdir(parents=True, exist_ok=True)
         tifffile.imwrite(str(out_path), small)
-        record["colour_fit_error"] = round(float(colour_error), 3)
+        record["grayscale_error"] = round(float(gray_error), 3)
         record["native_max"] = int(native.max())
+        record["native_saturated_fraction"] = round(float((native == 255).mean()), 5)
         records.append(record)
-        print(f"    wrote {out_path.name}  {small.shape} {small.dtype}, "
-              f"native max {native.max()}, colour fit error {colour_error:.2f}")
+        print(f"    wrote {out_path.name}  {small.shape} {small.dtype}, native max "
+              f"{native.max()} ({100 * record['native_saturated_fraction']:.3f}% at 255), "
+              f"grayscale error {gray_error:.2f}")
 
     if args.dry_run or not records:
         return
     sidecar = out_dir / "confocal_sections.json"
     previous = json.loads(sidecar.read_text()).get("sections", {}) if sidecar.exists() else {}
-    previous.update({r["section"]: r for r in records})
+    previous.update({r["source"]: r for r in records})
     sidecar.write_text(json.dumps({
         "written": datetime.now().isoformat(timespec="seconds"),
         "confocal_dir": str(confocal_dir), "sections": previous,
