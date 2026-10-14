@@ -16,7 +16,8 @@ ANALYSIS_ROOT is required: nothing is written next to the raw TIFFs.
 derived from SCOPE (huang_lab: 1.0 / 1.1 = 0.909). A TIFF whose own XResolution
 disagrees with SCOPE by more than 5% stops the run before the model loads.
 
-MODEL_PATHS swaps cpsam for a retrained model per node (cellpose_curation.py
+MIN_PLANES drops cells spanning fewer Z planes, after stitching, before
+anything is written. MODEL_PATHS swaps cpsam for a retrained model per node (cellpose_curation.py
 train prints the line). EVAL_PARAMS are cellpose's defaults, which beat the cellprob/flow/diameter/
 sharpen variants on visual QC in the 2026-04-16 by94 sweep. EVAL_OVERRIDES
 changes them for one node only; tune with sweep_in_vivo_2d.py --node <node>
@@ -70,11 +71,13 @@ EVAL_OVERRIDES: dict[str, dict] = {
     "block_stack_red": {},
     # cellpose_curation.py grid best (score_grid_20261014_121838), run the way it was
     # scored: each plane in 2D, normalized on its own, then outlines on neighbouring
-    # planes joined into one cell where they overlap by IoU >= 0.25 (cellpose's
-    # stitch3D default). do_3D scored F1 0.396 on the training planes (score_3d_20261014_151905).
+    # planes joined into one cell where they overlap by IoU >= 0.5. do_3D scored F1
+    # 0.396 on the training planes (score_3d_20261014_151905). 0.5 from
+    # cellpose_curation.py stitch (stitch_20261014_153517): at 0.25, 18 cells spanned
+    # over 50 planes; at 0.5, 5.
     "invivo_red": {
         "do_3D": False,
-        "stitch_threshold": 0.25,
+        "stitch_threshold": 0.5,
         "diameter": 20,
         "cellprob_threshold": -1.0,
         "flow_threshold": 0.6,
@@ -82,6 +85,13 @@ EVAL_OVERRIDES: dict[str, dict] = {
                       "percentile": [0.1, 99.9], "sharpen_radius": 0, "smooth_radius": 0,
                       "tile_norm_blocksize": 0, "tile_norm_smooth3D": 1},
     },
+}
+
+# Per-node: drop cells spanning fewer Z planes than this after stitching (0 = keep
+# all). Most stitched outlines that match no curated cell span 1-6 planes.
+MIN_PLANES: dict[str, int] = {
+    "block_stack_red": 0,
+    "invivo_red": 3,
 }
 
 # Per-node model: "" = cellpose's cpsam; otherwise a model file, e.g. one written
@@ -156,6 +166,19 @@ def write_masks_tif(path: Path, masks) -> None:
     tifffile.imwrite(str(path), masks.astype(dtype), compression="zlib")
 
 
+def drop_short_cells(masks, min_planes: int):
+    """Zero cells spanning fewer than min_planes Z planes; renumber the rest 1..n."""
+    import numpy as np
+    from scipy import ndimage
+    keep = np.zeros(int(masks.max()) + 1, dtype=bool)
+    for lab, sl in enumerate(ndimage.find_objects(masks), start=1):
+        if sl is not None and sl[0].stop - sl[0].start >= min_planes:
+            keep[lab] = True
+    kept = np.where(keep[masks], masks, 0)
+    _, inv = np.unique(kept, return_inverse=True)
+    return inv.reshape(masks.shape).astype(masks.dtype)
+
+
 def model_for(node: str) -> str:
     return MODEL_PATHS.get(node) or "cpsam"
 
@@ -190,9 +213,14 @@ def run_one(model, node: str, img_path: Path, out_dir: Path, params: dict,
 
                 print(f"  running model.eval (params: {params})")
                 masks, flows, _styles = model.eval(img, **params)
-
+                n_raw = int(masks.max()) if masks.size else 0
+                print(f"  ROIs found: {n_raw}")
+                min_planes = MIN_PLANES.get(node, 0)
+                if min_planes > 1 and n_raw:
+                    masks = drop_short_cells(masks, min_planes)
+                    print(f"  dropped cells spanning < {min_planes} planes: {n_raw - int(masks.max())}")
                 n_rois = int(masks.max()) if masks.size else 0
-                print(f"  ROIs found: {n_rois}")
+                print(f"  ROIs kept: {n_rois}")
 
                 # cellpose names the seg file <stem>_seg.npy beside its
                 # file_names argument, so point that at the output dir.
@@ -217,6 +245,8 @@ def run_one(model, node: str, img_path: Path, out_dir: Path, params: dict,
                     "scope": scope,
                     "eval_params": params,
                     "n_rois": n_rois,
+                    "n_rois_before_min_planes": n_raw,
+                    "min_planes": min_planes,
                     "cellpose_version": getattr(cellpose, "version", None),
                     "model": model_for(node),
                     "written": datetime.now().isoformat(timespec="seconds"),
@@ -311,6 +341,7 @@ def main(argv: list | None = None) -> int:
         print(f"  [{state:<6}] {node:<16} {path}")
         print(f"           params: {eval_params_for(node, scope)}")
         print(f"           model:  {model_for(node)}")
+        print(f"           min planes: {MIN_PLANES.get(node, 0)}")
     for node, _ in jobs:
         if model_for(node) != "cpsam" and not Path(model_for(node)).exists():
             sys.exit(f"MODEL_PATHS[{node!r}] not found: {model_for(node)}")
