@@ -184,19 +184,28 @@ def imresize_bilinear(image, output_shape: tuple):
     return result.astype(original_dtype)
 
 
-def read_rgb_tile(path: Path):
-    """A tile as an (H, W, 3) array. ZEN writes these LZW-compressed; tifffile
-    needs the imagecodecs package for LZW, so without it Pillow decodes them."""
+def read_tiff_as_is(path: Path):
+    """A TIFF's pixels in its own layout. ZEN writes LZW; tifffile needs the
+    imagecodecs package for LZW, so without it Pillow decodes the file."""
     import numpy as np
     import tifffile
     try:
-        return tifffile.imread(str(path))
+        return np.asarray(tifffile.imread(str(path)))
     except ValueError as e:
         if "imagecodecs" not in str(e):
             raise
     from PIL import Image
     with Image.open(path) as im:
-        return np.asarray(im.convert("RGB"))
+        return np.asarray(im)
+
+
+def read_rgb_tile(path: Path):
+    """A tile as an (H, W, 3) array."""
+    import numpy as np
+    a = read_tiff_as_is(path)
+    if a.ndim == 3 and a.shape[-1] == 4:
+        a = a[..., :3]
+    return np.asarray(a)
 
 
 def build_projection(tiles_by_z: dict, canvas_hw: tuple, weights: tuple):
@@ -232,6 +241,42 @@ def build_projection(tiles_by_z: dict, canvas_hw: tuple, weights: tuple):
     return canvas, (max(errors) if errors else 0.0)
 
 
+def inspect_section(name: str, tile_dir: Path, confocal_dir: Path) -> None:
+    """How R, G and B relate in one section's tiles, its stitched TIFF and any
+    Fiji split files ("<name>.tiff (red).tif" ...): per file, the mean of each
+    component over pixels where any is nonzero, G/R and B/R ratios, and the
+    R-G and R-B correlations. Grayscale gives ratios 1 and correlation 1; a
+    single channel in colour (r, g, b) gives ratios g/r and b/r."""
+    import numpy as np
+    files = []
+    for z in (0, 1):
+        for c in (0, 1):
+            hit = sorted(p for p in tile_dir.glob(f"{name}_h0s0t0z{z}c{c}*m0.tif*")
+                         if p.suffix.lower() in (".tif", ".tiff"))
+            files += hit[:1]
+    files += [confocal_dir / f"{name}.tiff"]
+    files += sorted(confocal_dir.glob(f"{name}.tiff (*).tif"))
+    for p in files:
+        if not p.exists():
+            continue
+        a = read_tiff_as_is(p)
+        print(f"\n  {p.name}: shape {a.shape} {a.dtype}")
+        if a.ndim != 3 or a.shape[-1] != 3:
+            v = a[a > 0].astype(np.float64)
+            print(f"    single plane: nonzero {v.size}, mean {v.mean() if v.size else 0:.1f}, "
+                  f"max {a.max()}")
+            continue
+        r, g, b = (a[..., i].astype(np.float64) for i in range(3))
+        nz = (r > 0) | (g > 0) | (b > 0)
+        r, g, b = r[nz], g[nz], b[nz]
+        def corr(x, y):
+            return float(np.corrcoef(x, y)[0, 1]) if x.std() and y.std() else float("nan")
+        print(f"    mean R {r.mean():.1f}  G {g.mean():.1f}  B {b.mean():.1f}   "
+              f"max {int(r.max())} {int(g.max())} {int(b.max())}")
+        print(f"    G/R {g.sum() / max(r.sum(), 1):.3f}  B/R {b.sum() / max(r.sum(), 1):.3f}   "
+              f"corr(R,G) {corr(r, g):.3f}  corr(R,B) {corr(r, b):.3f}  corr(G,B) {corr(g, b):.3f}")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -246,6 +291,9 @@ def main():
     ap.add_argument("--dry-run", action="store_true",
                     help="report sections, tiles, pitches and shapes; read no pixels")
     ap.add_argument("--force", action="store_true", help="overwrite existing outputs")
+    ap.add_argument("--inspect", metavar="S1.1",
+                    help="print how R, G, B relate in this section's tiles, stitched "
+                         "TIFF and Fiji split files; writes nothing")
     args = ap.parse_args()
 
     confocal_dir = getattr(local_config, "CONFOCAL_DIR", "")
@@ -273,6 +321,13 @@ def main():
     sections = discover_sections(confocal_dir)
     if not sections:
         sys.exit(f"No S{{slide}}.{{n}}.tiff_metadata.xml in {confocal_dir}")
+    if args.inspect:
+        hit = [s for s in sections if s[2] == args.inspect]
+        if not hit:
+            sys.exit(f"No section {args.inspect}; have {[s[2] for s in sections]}")
+        print(f"Inspecting {args.inspect} (reads pixels, writes nothing)")
+        inspect_section(args.inspect, hit[0][4], confocal_dir)
+        return
 
     print(f"CONFOCAL_DIR:   {confocal_dir}")
     print(f"channel:        {channel_name}")
