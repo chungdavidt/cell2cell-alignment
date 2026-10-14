@@ -229,11 +229,15 @@ def shift_plane(a, dy: int, dx: int):
 
 
 def stitch_aligned(masks, offsets, stitch_threshold: float):
-    """Join per-plane outlines (each plane labelled 1..n on its own) into 3D cells
-    after moving plane z by -offsets[z]; returns labels in the input frame. An
-    outline moved entirely off the edge becomes its own cell."""
+    """Join per-plane outlines into 3D cells after moving plane z by -offsets[z];
+    returns labels in the input frame. An outline moved entirely off the edge
+    becomes its own cell."""
     import numpy as np
     from cellpose.utils import stitch3D
+    # stitch3D builds a dense (largest label on plane z+1 + 1) x (largest on plane
+    # z + 1) table per pair; renumber each plane 1..n so it stays small.
+    masks = np.stack([np.unique(np.concatenate([[0], p.ravel()]), return_inverse=True)[1][1:]
+                      .reshape(p.shape) for p in masks]).astype(np.int32)
     aligned = np.stack([shift_plane(masks[z], -int(oy), -int(ox))
                         for z, (oy, ox) in enumerate(offsets)]).astype(np.int32)
     st = stitch3D(aligned.copy(), stitch_threshold=stitch_threshold)
