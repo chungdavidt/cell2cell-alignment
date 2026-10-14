@@ -305,7 +305,10 @@ def run_one(model, node: str, img_path: Path, out_dir: Path, params: dict,
                     and not params.get("do_3D", False)
                 if align:
                     print(f"  running model.eval per plane, joined after aligning planes (params: {params})")
-                    masks, flows, _styles = model.eval(img, **{**params, "stitch_threshold": 0.0})
+                    # cellpose 4.1.1 reads a stack as planes only when stitch_threshold > 0
+                    # (at 0 it takes the array as one 2D image). IoU never exceeds 1, so
+                    # 2.0 joins nothing: every outline comes back as its own label.
+                    masks, flows, _styles = model.eval(img, **{**params, "stitch_threshold": 2.0})
                     offsets = plane_offsets(img)
                     step = np.abs(np.diff(offsets, axis=0)).max(axis=1)
                     print(f"  plane alignment: {int((step >= 2).sum())} neighbouring pairs moved >= 2 px, "
