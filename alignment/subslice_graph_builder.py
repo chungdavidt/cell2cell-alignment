@@ -357,6 +357,8 @@ def graph_input(raw: Path, scope: str, var: str) -> tuple:
     The graph's pitch is SCOPE's. A volume whose own scope is finer enters as
     the downsampled copy preprocessing/downsample_2p_stacks.py writes; the raw
     TIFF is not resampled here. Coarser than SCOPE raises (no upsampling).
+    A missing copy raises FileNotFoundError, which build_subslice_graph turns
+    into a skip; a copy whose .json names another source raises ValueError.
     """
     if downsample_factor(scope, SCOPE, var, "SCOPE") == 1.0:
         return raw, scope, var
@@ -1202,15 +1204,36 @@ def build_subslice_graph(
 
     # The file each 2P node is built from: the raw TIFF, or its downsampled
     # copy when the raw is finer than SCOPE (graph_input).
+    # A missing copy is skipped like a missing file (its green with it); a copy
+    # made from another source still raises.
     load_from = {}
-    for node, path, scope, var in [
-        ("invivo_red", invivo_red_path, SCOPE, "SCOPE"),
-        ("invivo_green", invivo_green_path, SCOPE, "SCOPE"),
-        ("block_stack_red", block_red_path, BLOCK_STACK_SCOPE, BLOCK_STACK_SCOPE_VAR),
-        ("block_stack_green", block_green_path, BLOCK_STACK_SCOPE, BLOCK_STACK_SCOPE_VAR),
+    for node, label, path, scope, var in [
+        ("invivo_red", "INVIVO_PATH_RED", invivo_red_path, SCOPE, "SCOPE"),
+        ("invivo_green", "INVIVO_PATH_GREEN", invivo_green_path, SCOPE, "SCOPE"),
+        ("block_stack_red", "BLOCK_STACK_PATH_RED", block_red_path,
+         BLOCK_STACK_SCOPE, BLOCK_STACK_SCOPE_VAR),
+        ("block_stack_green", "BLOCK_STACK_PATH_GREEN", block_green_path,
+         BLOCK_STACK_SCOPE, BLOCK_STACK_SCOPE_VAR),
     ]:
-        if path:
+        if not path:
+            continue
+        if node.endswith("_green") and node.replace("_green", "_red") not in load_from:
+            red_label = label.replace("GREEN", "RED")
+            if any(l == red_label for l, _ in skipped):
+                skipped.append((label, f"its red channel ({red_label}) is skipped"))
+                continue
+        try:
             load_from[node] = graph_input(path, scope, var)
+        except FileNotFoundError as e:
+            skipped.append((label, str(e)))
+    if "invivo_red" not in load_from:
+        invivo_red_path = None
+    if "invivo_green" not in load_from:
+        invivo_green_path = None
+    if "block_stack_red" not in load_from:
+        block_red_path = None
+    if "block_stack_green" not in load_from:
+        block_green_path = None
 
     confocal_folder = None
     if CONFOCAL_DIR:
@@ -1524,9 +1547,10 @@ the config value and can ingest more than one in a single run:
     python alignment/subslice_graph_builder.py --raw-channels MSCARLET
     python alignment/subslice_graph_builder.py --dry-run             # report, write nothing
 
-Anything local_config.py names that is not on disk yet (a 2P file, the
-SUBSLICE_DIR folder or its ALIGN tifs, the raw channel folder) is skipped with
-a warning, so a 2P-only graph builds before any BARseq is processed. -d and
+Anything local_config.py names that is not on disk yet (a 2P file or its
+downsampled copy, the SUBSLICE_DIR folder or its ALIGN tifs, the raw channel
+folder, the confocal output) is skipped with a warning, so a graph builds from
+whatever exists. A downsampled copy made from a different file still stops. -d and
 --raw-channels values are explicit and raise instead.
 
 --force-rebuild WIPES the .db and every fitted edge, including the hand-made
