@@ -157,3 +157,18 @@ BLOCK_STACK_PATH_GREEN = r""
 # In-vivo 2P stack.
 INVIVO_PATH_RED = r"D:\lab_local\projects\cell_type\data\20261006 BY108\BY108 invivo red.tif"
 INVIVO_PATH_GREEN = r""
+
+# ---------------------------------------------------------------------
+# Confocal sections (preprocessing/prepare_confocal_sections.py)
+# ---------------------------------------------------------------------
+
+# ZEN TIFF export: S{slide}.{n}.tiff_metadata.xml + S{slide}.{n}.tiff_files/ per
+# section. Read-only. Blank = no confocal sections for this subject.
+CONFOCAL_DIR = r"D:\lab_local\projects\cell_type\data\20261006 BY108\BY108 confocal"
+
+# Pitch of the confocal export, a profile in scope_profiles.py; each section's
+# ZEN XML Scaling is checked against it. Downsampled to SCOPE's pitch.
+CONFOCAL_SCOPE = "zeiss_lsm_zoom0.6_1024px"
+
+# ZEN channel name to project: the 2P red counterpart.
+CONFOCAL_CHANNEL = "tdTom-T2"

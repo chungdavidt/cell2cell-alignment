@@ -79,6 +79,16 @@ MICROSCOPE_PROFILES = {
         'z_um_per_px': 1.0,
         'description': 'Huang lab Bruker 2P, 16x zoom 2, 1024 px (566.08 µm FOV, 1 µm Z)',
     },
+    # BY108 confocal sections, 2026-10-14. ZEN XML of S1.1 (Zeiss LSM, frame
+    # 1024 px over 1064.83 µm, zoom 0.6): Scaling X = Y = 1.03988 µm/px. z is the
+    # plane step of that stack (18.35 µm); the sections are max-projected, so it
+    # describes the acquisition, not a node. prepare_confocal_sections.py checks
+    # every section's XML against this.
+    'zeiss_lsm_zoom0.6_1024px': {
+        'xy_um_per_px': 1.03988,
+        'z_um_per_px': 18.35,
+        'description': 'Zeiss LSM confocal, zoom 0.6, 1024 px frame (1064.83 µm), BY108 sections',
+    },
 }
 
 # Accepted SCOPE spellings that are not profile keys. Empty since 2026-08-30:

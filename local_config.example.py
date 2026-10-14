@@ -204,3 +204,16 @@ SCOPE = ""
 # in vivo stack (BY108: 1024 px vs 512 px over one field). Applies to the
 # block_stack_* nodes only; blank = SCOPE. BARseq is resampled to SCOPE's pitch.
 BLOCK_STACK_SCOPE = ""
+
+# ---------------------------------------------------------------------
+# Confocal sections (preprocessing/prepare_confocal_sections.py)
+#
+# A ZEN TIFF export, one S{slide}.{n}.tiff_metadata.xml + S{slide}.{n}.tiff_files/
+# per section, projected over z and downsampled to SCOPE's pitch. Blank
+# CONFOCAL_DIR = none. CONFOCAL_SCOPE is the export's pitch (profile in
+# scope_profiles.py, checked against each section's XML); CONFOCAL_CHANNEL is
+# the ZEN channel name matching the 2P red (BY108: "tdTom-T2").
+# ---------------------------------------------------------------------
+CONFOCAL_DIR = ""
+CONFOCAL_SCOPE = ""
+CONFOCAL_CHANNEL = ""
