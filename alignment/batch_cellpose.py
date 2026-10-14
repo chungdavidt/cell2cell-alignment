@@ -16,7 +16,8 @@ ANALYSIS_ROOT is required: nothing is written next to the raw TIFFs.
 derived from SCOPE (huang_lab: 1.0 / 1.1 = 0.909). A TIFF whose own XResolution
 disagrees with SCOPE by more than 5% stops the run before the model loads.
 
-EVAL_PARAMS are cellpose's defaults, which beat the cellprob/flow/diameter/
+MODEL_PATHS swaps cpsam for a retrained model per node (cellpose_curation.py
+train prints the line). EVAL_PARAMS are cellpose's defaults, which beat the cellprob/flow/diameter/
 sharpen variants on visual QC in the 2026-04-16 by94 sweep. EVAL_OVERRIDES
 changes them for one node only; tune with sweep_in_vivo_2d.py --node <node>
 first, and judge by the overlay on the raw image, not by ROI count.
@@ -68,6 +69,13 @@ EVAL_PARAMS = {
 EVAL_OVERRIDES: dict[str, dict] = {
     "block_stack_red": {},
     "invivo_red": {},
+}
+
+# Per-node model: "" = cellpose's cpsam; otherwise a model file, e.g. one written
+# by cellpose_curation.py train.
+MODEL_PATHS: dict[str, str] = {
+    "block_stack_red": "",
+    "invivo_red": "",
 }
 
 
@@ -135,6 +143,10 @@ def write_masks_tif(path: Path, masks) -> None:
     tifffile.imwrite(str(path), masks.astype(dtype), compression="zlib")
 
 
+def model_for(node: str) -> str:
+    return MODEL_PATHS.get(node) or "cpsam"
+
+
 def run_one(model, node: str, img_path: Path, out_dir: Path, params: dict,
             scope: str, force: bool = False) -> dict:
     """Run cellpose 3D on one TIFF. status in {"skipped", "success", "error"}."""
@@ -193,7 +205,7 @@ def run_one(model, node: str, img_path: Path, out_dir: Path, params: dict,
                     "eval_params": params,
                     "n_rois": n_rois,
                     "cellpose_version": getattr(cellpose, "version", None),
-                    "model": "cpsam",
+                    "model": model_for(node),
                     "written": datetime.now().isoformat(timespec="seconds"),
                 }
                 with open(paths["json"], "w") as f:
@@ -285,6 +297,10 @@ def main(argv: list | None = None) -> int:
         state = "done" if paths["seg"].exists() and paths["masks"].exists() else "to run"
         print(f"  [{state:<6}] {node:<16} {path}")
         print(f"           params: {eval_params_for(node, scope)}")
+        print(f"           model:  {model_for(node)}")
+    for node, _ in jobs:
+        if model_for(node) != "cpsam" and not Path(model_for(node)).exists():
+            sys.exit(f"MODEL_PATHS[{node!r}] not found: {model_for(node)}")
     if args.dry_run:
         return 0
     if not args.force and all(
@@ -293,19 +309,20 @@ def main(argv: list | None = None) -> int:
         print("All done; --force re-runs.")
         return 0
 
-    print()
-    print("Loading cpsam model...")
-    t0 = time.time()
     from cellpose.models import CellposeModel
-    model = CellposeModel(gpu=True, pretrained_model="cpsam")
-    print(f"  loaded in {time.time() - t0:.1f}s (device={model.device})")
-
+    models: dict[str, object] = {}
     results = []
     t_batch = time.time()
     for i, (node, path) in enumerate(jobs, start=1):
         print("-" * 72)
         print(f"[{i}/{len(jobs)}] {node}: {path.name}")
-        r = run_one(model, node, path, out_dir, eval_params_for(node, scope), scope,
+        name = model_for(node)
+        if name not in models:
+            print(f"Loading model {name}...")
+            t0 = time.time()
+            models[name] = CellposeModel(gpu=True, pretrained_model=name)
+            print(f"  loaded in {time.time() - t0:.1f}s (device={models[name].device})")
+        r = run_one(models[name], node, path, out_dir, eval_params_for(node, scope), scope,
                     force=args.force)
         results.append((node, path, r))
 

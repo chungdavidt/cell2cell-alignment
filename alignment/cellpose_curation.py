@@ -23,6 +23,15 @@ score   Runs every combination in GRID on the curated planes and compares each
         ``score --batch`` (or ``--masks <path>``) scores a 3D run of
         batch_cellpose.py on the same planes instead of running the grid.
 
+train   Retrains cellpose's cpsam model on the curated planes, holding some out
+        (every 4th by depth, or --test-planes). Scores cpsam and the retrained
+        model on the held-out planes only, each with the default settings and
+        with the latest score_grid_* best settings, and writes the model,
+        losses.csv, scores.json and heldout*.png into
+        ``curation_<tag>/train_<YYYYMMDD_HHMMSS>/``. Prints the line for
+        batch_cellpose.MODEL_PATHS. --no-holdout trains on every plane and
+        scores nothing (the final model once the held-out score is known).
+
 A plane whose saved outlines are identical to the exported ones counts as not
 curated and is left out, unless named in --accept-unchanged (the default outlines
 were already right, or a --blank plane has no cells).
@@ -31,13 +40,16 @@ The grid runs cellpose in 2D, one plane at a time; batch_cellpose.py runs 3D on 
 whole volume, so score its output with --batch after the full run.
 
 Usage (.cellpose-venv):
-    .cellpose-venv\\Scripts\\python.exe alignment\\cellpose_curation.py export --z-planes 120,151,180,220
-    .cellpose-venv\\Scripts\\python.exe alignment\\cellpose_curation.py export --n 15        # evenly spaced
-    .cellpose-venv\\Scripts\\python.exe -m cellpose                                          # open a z*.tif, fix, Ctrl+S
-    .cellpose-venv\\Scripts\\python.exe alignment\\cellpose_curation.py score --dry-run
-    .cellpose-venv\\Scripts\\python.exe alignment\\cellpose_curation.py score
-    .cellpose-venv\\Scripts\\python.exe alignment\\cellpose_curation.py score --accept-unchanged 151,220
-    .cellpose-venv\\Scripts\\python.exe alignment\\cellpose_curation.py score --batch          # 3D run
+    .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py export --z-planes 120,151,180,220
+    .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py export --n 15        # evenly spaced
+    .cellpose-venv\Scripts\python.exe -m cellpose                                          # open a z*.tif, fix, Ctrl+S
+    .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py score --dry-run
+    .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py score
+    .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py score --accept-unchanged 151,220
+    .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py score --batch          # 3D run
+    .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py train --dry-run         # split
+    .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py train
+    .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py train --no-holdout
     add --node block_stack_red to any of these for the ex vivo block
 """
 from __future__ import annotations
@@ -536,6 +548,112 @@ def score_3d(args, cdir, manifest, planes, stamp) -> int:
 
 
 # ---------------------------------------------------------------------------
+# train
+# ---------------------------------------------------------------------------
+
+def latest_grid_best(cdir: Path) -> dict | None:
+    runs = sorted(cdir.glob("score_grid_*/best.json"))
+    if not runs:
+        return None
+    best = json.loads(runs[-1].read_text())
+    return {"source": str(runs[-1]), "params": best["best_params"]}
+
+
+def cmd_train(args) -> int:
+    cdir = curation_dir(args.node)
+    manifest = load_manifest(cdir)
+    planes = load_planes(cdir, manifest, parse_accept(args.accept_unchanged))
+    zs = [p["z"] for p in planes]
+
+    if args.no_holdout:
+        test_z = []
+    elif args.test_planes:
+        test_z = sorted({int(s) for s in args.test_planes.split(",")})
+        if set(test_z) - set(zs):
+            sys.exit(f"--test-planes {sorted(set(test_z) - set(zs))} are not curated planes.")
+    else:
+        test_z = zs[1::4]
+    train = [p for p in planes if p["z"] not in test_z]
+    test = [p for p in planes if p["z"] in test_z]
+    if not train:
+        sys.exit("No planes left to train on.")
+    print(f"\nTrain: {len(train)} planes, {sum(n_cells(p['truth']) for p in train)} cells  "
+          f"z {[p['z'] for p in train]}")
+    print(f"Held out: {len(test)} planes, {sum(n_cells(p['truth']) for p in test)} cells  "
+          f"z {[p['z'] for p in test]}")
+    grid = latest_grid_best(cdir)
+    if test:
+        print(f"Grid best settings: {combo_label(grid['params']) if grid else 'none (no score_grid_* run)'}")
+    print(f"Epochs {args.epochs}, learning rate {args.learning_rate}")
+    if args.dry_run:
+        return 0
+
+    import torch
+    from cellpose import train as cp_train
+    from cellpose.models import CellposeModel
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = cdir / f"train_{stamp}"
+    out_dir.mkdir(parents=True)
+    print(f"Output: {out_dir}\nLoading cpsam model...")
+    model = CellposeModel(gpu=True, pretrained_model="cpsam")
+    t0 = time.time()
+    model_path, train_losses, test_losses = cp_train.train_seg(
+        model.net,
+        train_data=[p["image"] for p in train], train_labels=[p["truth"] for p in train],
+        test_data=[p["image"] for p in test] or None,
+        test_labels=[p["truth"] for p in test] or None,
+        learning_rate=args.learning_rate, weight_decay=0.1, n_epochs=args.epochs,
+        min_train_masks=1, save_path=str(out_dir),
+        model_name=f"cpsam_{TAGS[args.node]}_{stamp}")
+    model_path = Path(model_path)
+    print(f"Trained in {(time.time() - t0) / 60:.1f} min: {model_path}")
+    del model
+    torch.cuda.empty_cache()
+
+    with open(out_dir / "losses.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["epoch", "train_loss", "test_loss"])
+        for e, tr in enumerate(np.asarray(train_losses)):
+            te = np.asarray(test_losses)[e] if test_losses is not None and len(test_losses) > e else ""
+            w.writerow([e, float(tr), te if te == "" else float(te)])
+
+    record = {"node": args.node, "model": str(model_path), "epochs": args.epochs,
+              "learning_rate": args.learning_rate, "weight_decay": 0.1,
+              "train_planes": [p["z"] for p in train], "test_planes": [p["z"] for p in test],
+              "iou": args.iou, "grid_best": grid, "scores": {}}
+
+    if test:
+        settings = [("default settings", vanilla_kwargs())]
+        if grid:
+            settings.append(("grid best settings", build_kwargs(grid["params"])))
+        columns = [("curated", None)]
+        for model_name, label in (("cpsam", "cpsam"), (str(model_path), "retrained")):
+            m = CellposeModel(gpu=True, pretrained_model=model_name)
+            for s_label, kw in settings:
+                preds = [m.eval(p["image"], **kw)[0] for p in test]
+                t = totals([match(p["truth"], pr, args.iou) for p, pr in zip(test, preds)])
+                key = f"{label}, {s_label}"
+                record["scores"][key] = t
+                columns.append((key, preds))
+            del m
+            torch.cuda.empty_cache()
+
+        print(f"\nHeld-out planes {[p['z'] for p in test]} (IoU >= {args.iou}):")
+        for key, t in record["scores"].items():
+            print(f"  {key:<34} F1 {t['f1']:.3f}  found {t['found']}/{t['n_truth']}  "
+                  f"missed {t['missed']}  extra {t['extra']}")
+        if grid:
+            print("  (the grid best settings were chosen on all curated planes, held-out ones included)")
+        render_pages(out_dir, "heldout", test, columns, args.iou)
+
+    (out_dir / "scores.json").write_text(json.dumps(record, indent=2, default=str))
+    print(f"\nFor MODEL_PATHS in alignment/batch_cellpose.py:\n    \"{args.node}\": r\"{model_path}\",")
+    print(f"Wrote losses.csv, scores.json{', heldout*.png' if test else ''} to {out_dir}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
@@ -544,7 +662,8 @@ def main(argv: list | None = None) -> int:
 
     ex = sub.add_parser("export", help="Save planes and starting outlines for curation.")
     sc = sub.add_parser("score", help="Score every GRID combination, or a 3D run, against the curation.")
-    for p in (ex, sc):
+    tr = sub.add_parser("train", help="Retrain cpsam on the curated planes; score on held-out planes.")
+    for p in (ex, sc, tr):
         p.add_argument("--node", default="invivo_red", choices=list(TAGS),
                        help="Red 2P node. Default: invivo_red.")
         p.add_argument("--dry-run", action="store_true", help="Print the plan, run nothing.")
@@ -554,16 +673,23 @@ def main(argv: list | None = None) -> int:
     ex.add_argument("--n", type=int, default=15, help="Without --z-planes: this many evenly spaced planes.")
     ex.add_argument("--blank", action="store_true", help="No starting outlines; draw every cell by hand.")
 
-    sc.add_argument("--iou", type=float, default=0.5, help="Overlap needed for a found cell. Default 0.5.")
-    sc.add_argument("--accept-unchanged", default=None,
-                    help="Z planes (comma-separated, or 'all') whose exported outlines are used as curated.")
+    for p in (sc, tr):
+        p.add_argument("--iou", type=float, default=0.5, help="Overlap needed for a found cell. Default 0.5.")
+        p.add_argument("--accept-unchanged", default=None,
+                       help="Z planes (comma-separated, or 'all') whose exported outlines are used as curated.")
     sc.add_argument("--top", type=int, default=4, help="Combinations drawn in top*.png. Default 4.")
     sc.add_argument("--batch", action="store_true",
                     help="Score batch_cellpose.py's 3D masks for the node instead of the grid.")
     sc.add_argument("--masks", default=None, help="Score this 3D masks tif instead of the grid.")
 
+    tr.add_argument("--test-planes", default=None,
+                    help="Held-out Z planes, comma-separated. Default: every 4th curated plane by depth.")
+    tr.add_argument("--no-holdout", action="store_true", help="Train on every curated plane, score nothing.")
+    tr.add_argument("--epochs", type=int, default=100, help="Default 100.")
+    tr.add_argument("--learning-rate", type=float, default=1e-5, help="Default 1e-5.")
+
     args = parser.parse_args(argv)
-    return cmd_export(args) if args.cmd == "export" else cmd_score(args)
+    return {"export": cmd_export, "score": cmd_score, "train": cmd_train}[args.cmd](args)
 
 
 if __name__ == "__main__":
