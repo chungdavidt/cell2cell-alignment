@@ -18,7 +18,7 @@ block_stack_red, so combo_in_vivo_2d.py --node picks up only its own node's swee
 
 Usage:
     source .cellpose-venv/bin/activate          # Linux/Mac
-    # .cellpose-venv\Scripts\activate            # Windows
+    # .cellpose-venv\\Scripts\\activate           # Windows
     python alignment/sweep_in_vivo_2d.py                               # invivo_red: local_config.INVIVO_PATH_RED
     python alignment/sweep_in_vivo_2d.py --node block_stack_red        # local_config.BLOCK_STACK_PATH_RED
     python alignment/sweep_in_vivo_2d.py --tiff <path>                 # override input

@@ -11,4 +11,5 @@
 # Nothing here is installed editable, so a moved env needs no repair at all;
 # invoke it as `.cellpose-venv\Scripts\python.exe <script>`.
 cellpose[gui]
+matplotlib  # sweep_in_vivo_2d.py, combo_in_vivo_2d.py: not pulled in by cellpose[gui]
 numpy<2  # defensive pin: cellpose 3.x install failed with numpy 2 (reason this env exists)

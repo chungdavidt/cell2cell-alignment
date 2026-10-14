@@ -21,7 +21,7 @@ source sweep is the latest ``sweep_<tag>_*``.
 
 Usage:
     source .cellpose-venv/bin/activate          # Linux/Mac
-    # .cellpose-venv\Scripts\activate            # Windows
+    # .cellpose-venv\\Scripts\\activate           # Windows
     python alignment/combo_in_vivo_2d.py                               # auto-pick latest invivo_red sweep
     python alignment/combo_in_vivo_2d.py --node block_stack_red        # auto-pick latest block_stack_red sweep
     python alignment/combo_in_vivo_2d.py --dry-run                     # auto-pick + preview
