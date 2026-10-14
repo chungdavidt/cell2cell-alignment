@@ -16,8 +16,11 @@ ANALYSIS_ROOT is required: nothing is written next to the raw TIFFs.
 derived from SCOPE (huang_lab: 1.0 / 1.1 = 0.909). A TIFF whose own XResolution
 disagrees with SCOPE by more than 5% stops the run before the model loads.
 
-MIN_PLANES drops cells spanning fewer Z planes, after stitching, before
-anything is written. MODEL_PATHS swaps cpsam for a retrained model per node (cellpose_curation.py
+Depth range: each TIFF needs the Z planes worth segmenting recorded by hand
+first (``cellpose_curation.py depth``, kept in ``<ANALYSIS_ROOT>/cellpose/
+depth_ranges.json`` by TIFF file name). Cells outside it are zeroed after
+stitching; a TIFF with no range stops the run. MIN_PLANES then drops cells
+spanning fewer Z planes. Both happen before anything is written. MODEL_PATHS swaps cpsam for a retrained model per node (cellpose_curation.py
 train prints the line). EVAL_PARAMS are cellpose's defaults, which beat the cellprob/flow/diameter/
 sharpen variants on visual QC in the 2026-04-16 by94 sweep. EVAL_OVERRIDES
 changes them for one node only; tune with sweep_in_vivo_2d.py --node <node>
@@ -166,10 +169,35 @@ def write_masks_tif(path: Path, masks) -> None:
     tifffile.imwrite(str(path), masks.astype(dtype), compression="zlib")
 
 
-def drop_short_cells(masks, min_planes: int):
-    """Zero cells spanning fewer than min_planes Z planes; renumber the rest 1..n."""
+DEPTH_RANGES = "depth_ranges.json"
+
+
+def load_depth_range(out_dir: Path, tiff: Path):
+    """(first, last) Z plane to keep for this TIFF, inclusive; None if not set."""
+    path = out_dir / DEPTH_RANGES
+    if not path.exists():
+        return None
+    entry = json.loads(path.read_text()).get(Path(tiff).name)
+    return tuple(entry["keep_z"]) if entry else None
+
+
+def save_depth_range(out_dir: Path, tiff: Path, first: int, last: int) -> None:
+    path = out_dir / DEPTH_RANGES
+    ranges = json.loads(path.read_text()) if path.exists() else {}
+    ranges[Path(tiff).name] = {"keep_z": [first, last], "tiff": str(tiff),
+                               "set": datetime.now().isoformat(timespec="seconds")}
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(ranges, indent=2))
+
+
+def trim_cells(masks, keep_z, min_planes: int):
+    """Zero every voxel outside keep_z (first, last; inclusive), then cells spanning
+    fewer than min_planes Z planes; renumber the rest 1..n."""
     import numpy as np
     from scipy import ndimage
+    masks = masks.copy()
+    masks[:keep_z[0]] = 0
+    masks[keep_z[1] + 1:] = 0
     keep = np.zeros(int(masks.max()) + 1, dtype=bool)
     for lab, sl in enumerate(ndimage.find_objects(masks), start=1):
         if sl is not None and sl[0].stop - sl[0].start >= min_planes:
@@ -216,9 +244,14 @@ def run_one(model, node: str, img_path: Path, out_dir: Path, params: dict,
                 n_raw = int(masks.max()) if masks.size else 0
                 print(f"  ROIs found: {n_raw}")
                 min_planes = MIN_PLANES.get(node, 0)
-                if min_planes > 1 and n_raw:
-                    masks = drop_short_cells(masks, min_planes)
-                    print(f"  dropped cells spanning < {min_planes} planes: {n_raw - int(masks.max())}")
+                keep_z = load_depth_range(out_dir, img_path)
+                if n_raw:
+                    masks = trim_cells(masks, keep_z, 0)
+                    n_depth = int(masks.max())
+                    print(f"  dropped cells outside planes {keep_z[0]}-{keep_z[1]}: {n_raw - n_depth}")
+                    if min_planes > 1:
+                        masks = trim_cells(masks, keep_z, min_planes)
+                        print(f"  dropped cells spanning < {min_planes} planes: {n_depth - int(masks.max())}")
                 n_rois = int(masks.max()) if masks.size else 0
                 print(f"  ROIs kept: {n_rois}")
 
@@ -245,7 +278,8 @@ def run_one(model, node: str, img_path: Path, out_dir: Path, params: dict,
                     "scope": scope,
                     "eval_params": params,
                     "n_rois": n_rois,
-                    "n_rois_before_min_planes": n_raw,
+                    "n_rois_before_trim": n_raw,
+                    "keep_z": list(keep_z),
                     "min_planes": min_planes,
                     "cellpose_version": getattr(cellpose, "version", None),
                     "model": model_for(node),
@@ -342,11 +376,19 @@ def main(argv: list | None = None) -> int:
         print(f"           params: {eval_params_for(node, scope)}")
         print(f"           model:  {model_for(node)}")
         print(f"           min planes: {MIN_PLANES.get(node, 0)}")
-    for node, _ in jobs:
+        keep_z = load_depth_range(out_dir, path)
+        print(f"           depth range: "
+              f"{f'planes {keep_z[0]}-{keep_z[1]}' if keep_z else 'NOT SET'}")
+    for node, path in jobs:
         if model_for(node) != "cpsam" and not Path(model_for(node)).exists():
             sys.exit(f"MODEL_PATHS[{node!r}] not found: {model_for(node)}")
     if args.dry_run:
         return 0
+    for node, path in jobs:
+        if load_depth_range(out_dir, path) is None:
+            sys.exit(f"No depth range for {path.name}. Look at the planes and record the ones to keep:\n"
+                     f"  .cellpose-venv\\Scripts\\python.exe alignment\\cellpose_curation.py depth --node {node}\n"
+                     f"  .cellpose-venv\\Scripts\\python.exe alignment\\cellpose_curation.py depth --node {node} --keep FIRST-LAST")
     if not args.force and all(
             all(p.exists() for p in (output_paths(out_dir, path)[k] for k in ("seg", "masks")))
             for _, path in jobs):

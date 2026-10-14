@@ -1,6 +1,14 @@
 r"""
 Hand-curated cellpose outlines, and every parameter combination scored against them.
 
+depth   First step for a new TIFF. Without --keep, draws every --every'th plane
+        (default 10) into ``<ANALYSIS_ROOT>/cellpose/depth_<tag>/planes_every<N>.png``
+        to judge by eye which planes hold cells (surface junk, dim deep planes).
+        ``--keep FIRST-LAST`` (or ``all``) records the planes to keep in
+        ``<ANALYSIS_ROOT>/cellpose/depth_ranges.json``. batch_cellpose.py refuses
+        a TIFF with no range and zeroes cells outside it; export picks planes
+        inside it; score, train and stitch leave curated planes outside it out.
+
 export  Saves chosen Z planes of a red 2P volume as single-plane TIFFs, each with
         cellpose's default 2D outlines as ``<plane>_seg.npy`` beside it, into
         ``<ANALYSIS_ROOT>/cellpose/curation_<tag>/``. Opening a plane TIFF in the
@@ -38,6 +46,8 @@ stitch  Takes batch_cellpose.py's output from a run with do_3D False and
         the cell on the plane above when their IoU is at least the value), drops
         3D cells spanning fewer than each --min-planes value, and scores every
         pair on the curated planes. Writes stitch_<YYYYMMDD_HHMMSS>/stitch.json.
+        Run it on a batch made with MIN_PLANES 0: cells the batch already
+        dropped are not in its output to re-join.
 
 --skip-planes leaves curated planes out of score, train and stitch.
 
@@ -49,6 +59,8 @@ The grid runs cellpose in 2D, one plane at a time; batch_cellpose.py runs 3D on 
 whole volume, so score its output with --batch after the full run.
 
 Usage (.cellpose-venv):
+    .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py depth                 # look
+    .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py depth --keep 50-400   # record
     .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py export --z-planes 120,151,180,220
     .cellpose-venv\Scripts\python.exe alignment\cellpose_curation.py export --n 15        # evenly spaced
     .cellpose-venv\Scripts\python.exe -m cellpose                                          # open a z*.tif, fix, Ctrl+S
@@ -263,12 +275,17 @@ def load_manifest(cdir: Path) -> dict:
 def load_planes(cdir: Path, manifest: dict, accept: set | str, skip: set = frozenset()) -> list[dict]:
     """Curated planes as [{z, name, image, truth}]; prints the ones left out and why."""
     import tifffile
+    from batch_cellpose import load_depth_range
+    keep_z = load_depth_range(cdir.parent, Path(manifest["tiff"]))
     out = []
     print(f"Planes in {cdir}:")
     for z_str, info in sorted(manifest["planes"].items(), key=lambda kv: int(kv[0])):
         z, name = int(z_str), info["name"]
         if z in skip:
             print(f"  z={z:<4} {name}: left out (--skip-planes)")
+            continue
+        if keep_z and not keep_z[0] <= z <= keep_z[1]:
+            print(f"  z={z:<4} {name}: left out (outside depth range {keep_z[0]}-{keep_z[1]})")
             continue
         image = tifffile.imread(str(cdir / f"{name}.tif"))
         start = tifffile.imread(str(cdir / "_start" / f"{name}_masks.tif"))
@@ -371,14 +388,16 @@ def cmd_export(args) -> int:
     if len(shape) != 3:
         sys.exit(f"Expected a (Z, Y, X) volume, got shape {shape}")
     n_planes = shape[0]
+    from batch_cellpose import load_depth_range
+    first, last = load_depth_range(cdir.parent, tiff) or (0, n_planes - 1)
 
     if args.z_planes:
         zs = sorted({int(s) for s in args.z_planes.split(",")})
     else:
-        zs = sorted({int(round(v)) for v in np.linspace(0, n_planes - 1, args.n + 2)[1:-1]})
-    bad = [z for z in zs if not 0 <= z < n_planes]
+        zs = sorted({int(round(v)) for v in np.linspace(first, last, args.n + 2)[1:-1]})
+    bad = [z for z in zs if not first <= z <= last]
     if bad:
-        sys.exit(f"Z planes {bad} outside [0, {n_planes}).")
+        sys.exit(f"Z planes {bad} outside {first}-{last} (depth range, or the volume).")
 
     have = set(int(z) for z in manifest["planes"]) if manifest else set()
     new = [z for z in zs if z not in have]
@@ -594,6 +613,81 @@ def score_3d(args, cdir, manifest, planes, stamp) -> int:
 
 
 # ---------------------------------------------------------------------------
+# depth
+# ---------------------------------------------------------------------------
+
+def cmd_depth(args) -> int:
+    import tifffile
+    from analysis_paths import TWO_P_RED_NODES, cellpose_dir, two_p_path
+    from batch_cellpose import load_depth_range, save_depth_range
+
+    tiff = Path(args.tiff) if args.tiff else two_p_path(args.node)
+    if tiff is None:
+        sys.exit(f"local_config.{TWO_P_RED_NODES[args.node]} is blank; pass --tiff.")
+    if not tiff.exists():
+        sys.exit(f"TIFF not found: {tiff}")
+    root = cellpose_dir()
+    if root is None:
+        sys.exit("ANALYSIS_ROOT is blank in local_config.py.")
+    with tifffile.TiffFile(str(tiff)) as tf:
+        shape = tuple(tf.series[0].shape)
+    n_planes = shape[0]
+    current = load_depth_range(root, tiff)
+    print(f"Volume: {tiff}  shape (Z, Y, X) {shape}")
+    print(f"Depth range now: {f'planes {current[0]}-{current[1]}' if current else 'not set'}")
+
+    if args.keep:
+        if args.keep == "all":
+            first, last = 0, n_planes - 1
+        else:
+            try:
+                first, last = (int(v) for v in args.keep.split("-"))
+            except ValueError:
+                sys.exit(f"--keep {args.keep!r}: expected FIRST-LAST, e.g. 50-400, or 'all'.")
+        if not 0 <= first <= last < n_planes:
+            sys.exit(f"--keep {first}-{last} must lie in 0-{n_planes - 1}, first <= last.")
+        if args.dry_run:
+            print(f"Would set planes {first}-{last}.")
+            return 0
+        save_depth_range(root, tiff, first, last)
+        print(f"Set planes {first}-{last} in {root / 'depth_ranges.json'}")
+        return 0
+
+    zs = list(range(0, n_planes, args.every))
+    out_dir = root / f"depth_{TAGS[args.node]}"
+    png = out_dir / f"planes_every{args.every}.png"
+    print(f"Drawing {len(zs)} planes (every {args.every}) into {png}")
+    if args.dry_run:
+        return 0
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    stack = tifffile.imread(str(tiff))
+    cols = 8
+    rows = math.ceil(len(zs) / cols)
+    tile = 2.0
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * tile, rows * tile), squeeze=False)
+    for ax in axes.flat:
+        ax.axis("off")
+    for ax, z in zip(axes.flat, zs):
+        img = stack[z].astype(np.float32)
+        lo, hi = np.percentile(img, [1, 99.5])
+        ax.imshow(img, cmap="gray", vmin=lo, vmax=max(hi, lo + 1))
+        out = current is not None and not current[0] <= z <= current[1]
+        ax.set_title(f"z={z}{'  (outside range)' if out else ''}", fontsize=8,
+                     color="red" if out else "black")
+    fig.suptitle(f"{tiff.name}: every {args.every}th plane, each scaled to its own 1-99.5 percentile",
+                 fontsize=10)
+    fig.tight_layout()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fig.savefig(png, dpi=DPI)
+    plt.close(fig)
+    print(f"Wrote {png}\nThen record the planes to keep:\n"
+          f"  .cellpose-venv\\Scripts\\python.exe alignment\\cellpose_curation.py depth --node {args.node} --keep FIRST-LAST")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # stitch
 # ---------------------------------------------------------------------------
 
@@ -777,7 +871,8 @@ def main(argv: list | None = None) -> int:
     sc = sub.add_parser("score", help="Score every GRID combination, or a 3D run, against the curation.")
     tr = sub.add_parser("train", help="Retrain cpsam on the curated planes; score on held-out planes.")
     st = sub.add_parser("stitch", help="Re-join a stitched batch run at other cutoffs; score each.")
-    for p in (ex, sc, tr, st):
+    dp = sub.add_parser("depth", help="Draw planes to judge by eye; --keep records the Z planes to segment.")
+    for p in (ex, sc, tr, st, dp):
         p.add_argument("--node", default="invivo_red", choices=list(TAGS),
                        help="Red 2P node. Default: invivo_red.")
         p.add_argument("--dry-run", action="store_true", help="Print the plan, run nothing.")
@@ -804,6 +899,10 @@ def main(argv: list | None = None) -> int:
     tr.add_argument("--epochs", type=int, default=100, help="Default 100.")
     tr.add_argument("--learning-rate", type=float, default=1e-5, help="Default 1e-5.")
 
+    dp.add_argument("--tiff", default=None, help="Volume instead of the node's local_config TIFF.")
+    dp.add_argument("--every", type=int, default=10, help="Draw every Nth plane. Default 10.")
+    dp.add_argument("--keep", default=None, help="Record the planes to keep: FIRST-LAST (inclusive) or 'all'.")
+
     st.add_argument("--masks", default=None, help="Stitched masks tif. Default: the node's batch_cellpose.py output.")
     st.add_argument("--thresholds", default="0.25,0.4,0.5,0.6,0.75",
                     help="Overlap (IoU) needed to join outlines on neighbouring planes. Default 0.25,0.4,0.5,0.6,0.75.")
@@ -811,7 +910,8 @@ def main(argv: list | None = None) -> int:
                     help="Drop 3D cells spanning fewer planes. Default 1,3,5,7.")
 
     args = parser.parse_args(argv)
-    return {"export": cmd_export, "score": cmd_score, "train": cmd_train, "stitch": cmd_stitch}[args.cmd](args)
+    return {"export": cmd_export, "score": cmd_score, "train": cmd_train, "stitch": cmd_stitch,
+            "depth": cmd_depth}[args.cmd](args)
 
 
 if __name__ == "__main__":
