@@ -4,7 +4,7 @@ Downsample any 2P stack sampled finer than SCOPE to SCOPE's pitch, for the graph
 
 castalign fits in voxels, so every node in a fit has to sit on one pitch; the
 graph's is SCOPE's (the in vivo stack). A 2P volume whose own scope is finer
-(BY108's ex vivo block: 1024 px, 0.553 µm/px, declared as BLOCK_STACK_SCOPE)
+(declared as BLOCK_STACK_SCOPE)
 enters the graph as a downsampled copy written here; the raw TIFF is untouched
 and stays what cellpose and NeuroReg read. Images are only ever downsampled: a
 volume coarser than SCOPE stops the run (scope_profiles.downsample_factor).

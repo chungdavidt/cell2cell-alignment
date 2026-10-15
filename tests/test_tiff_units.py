@@ -121,16 +121,17 @@ check("every profile identifies as itself (nearest within tolerance)",
 check("huang_lab and huang_lab_bruker_512px are 0.51% apart and each identifies as itself",
       sp.identify_scope(1.1000) == 'huang_lab'
       and sp.identify_scope(1.10563372890839) == 'huang_lab_bruker_512px')
-check("the 1024 px block profile is half the 512 px pitch, same field",
-      close(sp.MICROSCOPE_PROFILES['huang_lab_bruker_1024px']['xy_um_per_px'] * 1024,
-            sp.MICROSCOPE_PROFILES['huang_lab_bruker_512px']['xy_um_per_px'] * 512))
+check("huang_lab_bruker_1024px is gone (BY108 block shares the 512 px pitch)",
+      'huang_lab_bruker_1024px' not in sp.MICROSCOPE_PROFILES)
+check("downsample_factor: same pitch gives 1.0",
+      sp.downsample_factor('huang_lab_bruker_512px', 'huang_lab_bruker_512px') == 1.0)
 raised = False
 try:
-    sp.assert_matches_metadata('huang_lab_bruker_1024px', 1.10563372890839,
+    sp.assert_matches_metadata('huang_lab_bruker_512px', 1.10563372890839 / 2,
                                var_name='BLOCK_STACK_SCOPE')
 except ValueError as e:
     raised = 'BLOCK_STACK_SCOPE' in str(e)
-check("a 512 px pitch against the 1024 px block scope raises, naming BLOCK_STACK_SCOPE", raised)
+check("a half pitch against a declared block scope raises, naming BLOCK_STACK_SCOPE", raised)
 check("huang_lab resamples BARseq by 3.4375x",
       close(sp.downsample_xy('huang_lab'), 3.4375))
 
