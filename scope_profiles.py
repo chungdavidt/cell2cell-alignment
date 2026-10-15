@@ -71,13 +71,14 @@ MICROSCOPE_PROFILES = {
         'z_um_per_px': 1.0,
         'description': 'Huang lab Bruker 2P, 16x zoom 2, 512 px (566.08 µm FOV, 1 µm Z)',
     },
-    # BY108's ex vivo block is 1024 px at this same pitch over twice the field
-    # (1132 µm, zoom 1), so it needs no profile of its own: BLOCK_STACK_SCOPE is
-    # blank. A 'huang_lab_bruker_1024px' at 1.1056 / 2 (same-zoom assumption)
-    # existed for part of 2026-10-14 and was deleted: it put block somas at
-    # 4.5-6 µm, where David measured 8.1-10.8 px on the raw stack (9-12 µm at
-    # 1.1056, matching the confocal and BY95), and the rig's 1024 px TSeries OME
-    # header reads 1.1056 at 1024 px.
+    # Same zoom and field sampled at 1024 px (David: BY108's ex vivo block was
+    # taken at the in vivo zoom), so half the 512 px pitch. Derived, not read
+    # from an XML: the block's own XML was not kept.
+    'huang_lab_bruker_1024px': {
+        'xy_um_per_px': 1.10563372890839 / 2,
+        'z_um_per_px': 1.0,
+        'description': 'Huang lab Bruker 2P, 16x zoom 2, 1024 px (566.08 µm FOV, 1 µm Z)',
+    },
     # BY108 confocal sections, 2026-10-14. ZEN XML of S1.1 (Zeiss LSM, frame
     # 1024 px over 1064.83 µm, zoom 0.6): Scaling X = Y = 1.03988 µm/px. z is the
     # plane step of that stack (18.35 µm); the sections are max-projected, so it

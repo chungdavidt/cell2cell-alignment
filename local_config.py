@@ -30,17 +30,16 @@ ANALYSIS_ROOT = r"D:\lab_local\projects\cell_type\analysis\BY108"
 # it, and a disagreement is a hard error.
 #   "huang_lab"   1.1000 µm/px XY, 1.0 µm Z   BY95 (563.2 µm FOV)
 #   "huang_lab_bruker_512px"   1.1056 µm/px XY, 1.0 µm Z, 566.08 µm FOV  (Bruker XML)
+#   "huang_lab_bruker_1024px"  0.5528 µm/px XY, same field at 1024 px
 # BY108's stacks carry no calibration tag; the pitch is from the rig's Prairie
-# View XML for 16x zoom 2 at 512 px (in vivo). The 1024 px block has the same
-# pitch over twice the field (OME header of a 1024 px run; block soma sizes
-# agree, 2026-10-14), so BLOCK_STACK_SCOPE is blank.
+# View XML for 16x zoom 2 at 512 px (in vivo), halved for the 1024 px block.
 # by84/by94/by89 named "huang_lab_566um", deleted 2026-08-30 — re-derive
 # their pitch from their own XResolution tags before running them again.
 SCOPE = "huang_lab_bruker_512px"
 
 # The ex vivo block's scope when it was sampled at another pitch; applies to
 # the block_stack_* nodes only. Blank = SCOPE. BARseq is resampled to SCOPE's.
-BLOCK_STACK_SCOPE = ""
+BLOCK_STACK_SCOPE = "huang_lab_bruker_1024px"
 
 # ---------------------------------------------------------------------
 # Per-brain thresholds
