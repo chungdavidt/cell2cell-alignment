@@ -23,7 +23,8 @@ S1.1 with --inspect, 2026-10-14). Per sub-stack:
   3. project   max over the z planes.
   4. pitch     CONFOCAL_SCOPE is the declared pitch; each section's XML Scaling
                must agree within 5% or the run stops.
-  5. downsample to SCOPE's pitch (the graph grid, the in vivo stack's), by
+  5. downsample by SCOPE's pitch / CONFOCAL_SCOPE's pitch, times
+               CONFOCAL_EXTRA_DOWNSAMPLE (local_config, default 1), by
                utilities.resize (step 3's resize, copied): bilinear with
                anti-aliasing, target shape round(native / factor), dtype kept.
                A confocal coarser than SCOPE stops the run: images are only
@@ -275,7 +276,12 @@ def main():
     if conf_xy > target_xy:
         sys.exit(f"CONFOCAL_SCOPE {conf_xy} um/px is coarser than SCOPE {target_xy}: "
                  f"that would be an upsample, and images are only downsampled.")
-    factor = target_xy / conf_xy
+    pitch_factor = target_xy / conf_xy
+    # Extra downsample on top of the pitch ratio, per subject; labels unchanged.
+    extra = float(getattr(local_config, "CONFOCAL_EXTRA_DOWNSAMPLE", 1.0))
+    if extra < 1.0:
+        sys.exit(f"CONFOCAL_EXTRA_DOWNSAMPLE = {extra} would upsample; images are only downsampled.")
+    factor = pitch_factor * extra
 
     out_dir = confocal_output_dir(channel_name)
     if out_dir is None:
@@ -296,7 +302,8 @@ def main():
     print(f"channel:        {channel_name}")
     print(f"CONFOCAL_SCOPE: {conf_scope}  ({conf_xy} um/px)")
     print(f"SCOPE (graph):  {graph_scope}  ({target_xy} um/px)")
-    print(f"downsample:     native / {factor:.6f}")
+    print(f"downsample:     native / {factor:.6f}  (pitch ratio {pitch_factor:.6f} x "
+          f"CONFOCAL_EXTRA_DOWNSAMPLE {extra:g})")
     print(f"sub-stacks:     {len(sections)} over sections {sorted({s[0] for s in sections})}")
 
     label = confocal_label(channel_name)
@@ -346,7 +353,8 @@ def main():
             "tiles_per_z": tiles_per_z, "projection": "max over z; max in tile overlaps",
             "native_um_per_px": xy_meta, "confocal_scope": conf_scope,
             "target_um_per_px": target_xy, "graph_scope": graph_scope,
-            "factor": factor, "native_shape": [canvas_h, canvas_w],
+            "factor": factor, "pitch_factor": pitch_factor, "extra_downsample": extra,
+            "native_shape": [canvas_h, canvas_w],
             "output_shape": list(out_hw), "output": str(out_path),
         }
         if args.dry_run:

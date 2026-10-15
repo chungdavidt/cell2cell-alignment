@@ -217,3 +217,7 @@ BLOCK_STACK_SCOPE = ""
 CONFOCAL_DIR = ""
 CONFOCAL_SCOPE = ""
 CONFOCAL_CHANNEL = ""
+
+# Extra downsample of the confocal images fed to the graph, on top of the
+# SCOPE / CONFOCAL_SCOPE pitch ratio; labels are not changed. 1 = none.
+CONFOCAL_EXTRA_DOWNSAMPLE = 1.0

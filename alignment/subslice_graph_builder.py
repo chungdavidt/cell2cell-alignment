@@ -427,6 +427,7 @@ def add_confocal_to_graph(
             "modality": CONFOCAL_MODALITY,
             "source": rec.get("source", str(f)),
             "z_span_um": (z_step * (len(z_planes) - 1)) if z_step and z_planes else None,
+            "extra_downsample": rec.get("extra_downsample", 1.0),
         })
         if verbose:
             print(f"  Added node: {f.stem}  shape {img.shape}  lossless")

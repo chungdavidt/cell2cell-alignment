@@ -172,3 +172,10 @@ CONFOCAL_SCOPE = "zeiss_lsm_zoom0.6_1024px"
 
 # ZEN channel name to project: the 2P red counterpart.
 CONFOCAL_CHANNEL = "tdTom-T2"
+
+# Extra downsample of the confocal images fed to the graph, on top of
+# SCOPE / CONFOCAL_SCOPE (1.063 for BY108). Labels stay as they are. BY108:
+# somas measure 10-16 µm on the confocal at ZEN's 1.04 µm/px but 4.5-7 µm on
+# the 2P at its labels, so the confocal is shrunk 2x more to match the 2P in
+# voxels (David, 2026-10-14). Blank/absent = 1.
+CONFOCAL_EXTRA_DOWNSAMPLE = 2.0
