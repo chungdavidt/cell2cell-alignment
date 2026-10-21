@@ -4,8 +4,9 @@ TEMPORARY. Copy section stacks with scale bars burned into every plane.
 
 Visualization only, like add_align_scale_bars.py. Reads a composite written by
 stack_sections.py, burns the bars `stitch_slices.py` burns into the whole-slice
-TIFs into every section plane of every channel, and writes the copy to a folder
-of its own. The source stack and its _offsets.json are read and never written.
+TIFs into every section plane of every channel, and writes the copy beside it
+as <stack>_scalebar.tif. The source stack and its _offsets.json are read and
+never written.
 
 Input, under <OUTPUT_ROOT>/section_stacks/ (a path, or a bare filename there):
 
@@ -13,7 +14,8 @@ Input, under <OUTPUT_ROOT>/section_stacks/ (a path, or a bare filename there):
 
 Output:
 
-    <OUTPUT_ROOT>/section_stacks_scalebar/sections_{source}_..._.tif
+    <OUTPUT_ROOT>/section_stacks/sections_{source}_..._scalebar.tif
+    <OUTPUT_ROOT>/section_stacks/sections_{source}_..._scalebar_offsets.json   (copy; same geometry)
 
 with the source's ImageJ metadata carried over: per-channel LUTs and display
 ranges, slice labels, composite mode, XY calibration and Z spacing.
@@ -38,6 +40,7 @@ Usage:
 """
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -66,7 +69,7 @@ from utilities.image_io import get_tiff_resolution, get_file_size_mb
 
 # Not in preprocessing_config: temporary, and no pipeline step reads it.
 INPUT_DIR = Path(OUTPUT_ROOT) / "section_stacks"
-OUTPUT_DIR = Path(OUTPUT_ROOT) / "section_stacks_scalebar"
+SUFFIX = "_scalebar"
 
 # Relative tolerance between the stack's calibration tag and this config's
 # pitch; the tag is a rational, so not bit-exact.
@@ -94,6 +97,8 @@ def resolve_stacks(names):
             raise FileNotFoundError(
                 f"No section stack {name!r}: not a file, and not in {INPUT_DIR}"
             )
+        if path.stem.endswith("_scalebar"):
+            raise ValueError(f"{path.name} already carries scale bars; pass the stack it was made from")
         paths.append(path)
     return paths
 
@@ -131,7 +136,7 @@ def report_geometry(um_per_px):
 
 
 def add_bars_to_stack(path, dry_run=False):
-    out_path = OUTPUT_DIR / path.name
+    out_path = path.with_name(path.stem + SUFFIX + ".tif")
     if out_path.resolve() == path.resolve():
         raise ValueError(f"Output is the input: {out_path}")
 
@@ -181,7 +186,6 @@ def add_bars_to_stack(path, dry_run=False):
         del src
         return
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     metadata = {"axes": "ZCYX"}
     metadata.update({k: ij[k] for k in CARRIED_METADATA if k in ij})
     dst = tifffile.memmap(
@@ -193,6 +197,9 @@ def add_bars_to_stack(path, dry_run=False):
             dst[z, c, y0:y1, x0:x1][sub] = levels[c]
     dst.flush()
     del dst, src
+    offsets = path.with_name(path.stem + "_offsets.json")
+    if offsets.exists():
+        shutil.copy2(offsets, out_path.with_name(out_path.stem + "_offsets.json"))
     print(f"  wrote {out_path} ({get_file_size_mb(out_path):.0f} MB)")
 
 
@@ -210,7 +217,7 @@ def main():
 
     paths = resolve_stacks(args.stacks)
     print(f"Input:  {INPUT_DIR}")
-    print(f"Output: {OUTPUT_DIR}")
+    print(f"Output: {INPUT_DIR}, as <stack>{SUFFIX}.tif")
     print(f"Stacks: {len(paths)}")
     for path in paths:
         add_bars_to_stack(path, dry_run=args.dry_run)
