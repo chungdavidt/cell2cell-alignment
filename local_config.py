@@ -1,7 +1,7 @@
 """
-Local configuration — machine-specific paths. Subject: BY108.
+Local configuration — machine-specific paths. Subject: BY95.
 
-BY95's values are in git at e5e9aa2.
+BY108's values are in git at fff35c4; BY95's were restored from e5e9aa2.
 
 TRACKED IN GIT since 81dc5d8, not gitignored. Paths here travel between the
 WSL edit host and the Windows execution host, and every edit shows as a repo
@@ -22,7 +22,7 @@ SUBSLICE_DIR's cutoff. Nothing in the notebook or the graph builder changes.
 # One root for every derived output — preprocessing/, alignment/, cellpose/,
 # plus orientation.json at its top level. Its folder name is the subject label
 # ("BY108"), which is what names the graph .db.
-ANALYSIS_ROOT = r"D:\lab_local\projects\cell_type\analysis\BY108"
+ANALYSIS_ROOT = r"D:\lab_local\projects\cell_type\analysis\BY95"
 
 # Microscope that acquired this subject's data; profiles in scope_profiles.py.
 # Source of truth for every pixel size — the BARseq resample factor, node
@@ -35,11 +35,11 @@ ANALYSIS_ROOT = r"D:\lab_local\projects\cell_type\analysis\BY108"
 # View XML for 16x zoom 2 at 512 px (in vivo), halved for the 1024 px block.
 # by84/by94/by89 named "huang_lab_566um", deleted 2026-08-30 — re-derive
 # their pitch from their own XResolution tags before running them again.
-SCOPE = "huang_lab_bruker_512px"
+SCOPE = "huang_lab"
 
 # The ex vivo block's scope when it was sampled at another pitch; applies to
 # the block_stack_* nodes only. Blank = SCOPE. BARseq is resampled to SCOPE's.
-BLOCK_STACK_SCOPE = "huang_lab_bruker_1024px"
+BLOCK_STACK_SCOPE = ""
 
 # ---------------------------------------------------------------------
 # Per-brain thresholds
@@ -61,16 +61,16 @@ BLOCK_STACK_SCOPE = "huang_lab_bruker_1024px"
 # --lab-genes checks a candidate against a pass rate the lab reports. 0/0 leaves
 # marker detection ungated on transcriptome quality — a different question from
 # this one, not a different answer to it.
-# BY108 has no BARseq: unset. BY95 was 20 / 5 / 3.
-QC_MIN_READS = None
-QC_MIN_GENES = None
+# BY108 has no BARseq: unset there.
+QC_MIN_READS = 20
+QC_MIN_GENES = 5
 
 # mScarlet rolony floor for a cell to be DRAWN into the alignment TIF.
 # A registration knob: the fit is stored as frame parameters on the grid, so it
 # applies to cells that were never drawn. Pick it by eye with
 # check_rolony_cutoff.py, then set it here — it is the "ge" in SUBSLICE_DIR
 # below, and each value writes its own folder rather than overwriting.
-ALIGN_MIN_ROLONIES = None
+ALIGN_MIN_ROLONIES = 3
 
 # ---------------------------------------------------------------------
 # Raw input (read-only)
@@ -79,7 +79,7 @@ ALIGN_MIN_ROLONIES = None
 # Blank = no BARseq for this subject yet: preprocessing will not run, and the
 # graph builder skips SUBSLICE_DIR and SUBSLICE_RAW_CHANNELS and builds from the
 # 2P paths alone.
-DATA_ROOT = r""
+DATA_ROOT = r"D:\lab_local\projects\cell_type\data\050526 BY95\allen_transcriptomics\BY95"
 
 # Per-FOV raw directory (the MAX_Pos*_*_* folders).
 # Blank -> auto-detect; BY95 resolves to <DATA_ROOT>/hyb_raw_files.
@@ -95,7 +95,7 @@ HYB_ROOT = r""
 # before this moved a level deeper — not read, not overwritten.
 OUTPUT_ROOT = r""
 
-# Blank -> <ANALYSIS_ROOT>/alignment/BY108_graph.db.
+# Blank -> <ANALYSIS_ROOT>/alignment/BY95_graph.db.
 GRAPH_PATH = r""
 
 # ---------------------------------------------------------------------
@@ -125,7 +125,7 @@ GRAPH_PATH = r""
 # so switching cutoffs ADDS a parallel node set to an existing graph rather than
 # replacing one. The old set keeps its own alignment; the new one is aligned by
 # hand. force_rebuild=True is the reset.
-SUBSLICE_DIR = r""
+SUBSLICE_DIR = r"qc20_5_ge5"
 
 
 # BARseq raw fluorescence channels to carry into the graph beside the
@@ -147,16 +147,16 @@ SUBSLICE_DIR = r""
 # The flip side: two independent fits on two renders of the same section are
 # then contradictory, and BFS resolves by path length. Fit one node per section.
 # Stored losslessly, unlike the 2P volumes -- these are uint16 fluorescence.
-SUBSLICE_RAW_CHANNELS = []
+SUBSLICE_RAW_CHANNELS = ["MSCARLET"]
 
 
 # Ex-vivo block, 2P volume of the tissue before slicing.
-BLOCK_STACK_PATH_RED = r"D:\lab_local\projects\cell_type\data\20261006 BY108\BY108 exvivo red.tif"
-BLOCK_STACK_PATH_GREEN = r""
+BLOCK_STACK_PATH_RED = r"D:\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo red.tif"
+BLOCK_STACK_PATH_GREEN = r"D:\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo green.tif"
 
 # In-vivo 2P stack.
-INVIVO_PATH_RED = r"D:\lab_local\projects\cell_type\data\20261006 BY108\BY108 invivo red.tif"
-INVIVO_PATH_GREEN = r""
+INVIVO_PATH_RED = r"D:\lab_local\projects\cell_type\data\050526 BY95\BY95 invivo run two crosstalk removed red.tif"
+INVIVO_PATH_GREEN = r"D:\lab_local\projects\cell_type\data\050526 BY95\BY95 invivo run two crosstalk removed green.tif"
 
 # ---------------------------------------------------------------------
 # Confocal sections (preprocessing/prepare_confocal_sections.py)
@@ -164,7 +164,7 @@ INVIVO_PATH_GREEN = r""
 
 # ZEN TIFF export: S{slide}.{n}.tiff_metadata.xml + S{slide}.{n}.tiff_files/ per
 # section. Read-only. Blank = no confocal sections for this subject.
-CONFOCAL_DIR = r"D:\lab_local\projects\cell_type\data\20261006 BY108\BY108 confocal"
+CONFOCAL_DIR = r""
 
 # Pitch of the confocal export, a profile in scope_profiles.py; each section's
 # ZEN XML Scaling is checked against it. Downsampled to SCOPE's pitch.
