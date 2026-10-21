@@ -1,43 +1,47 @@
 #!/usr/bin/env python3
 """
-TEMPORARY. Copy one folder of subslice ALIGN tifs with scale bars burned in.
+Copy one folder of ALIGN tifs with scale bars burned in, into its _scalebar/.
 
-Visualization only, like add_subslice_scale_bars.py. Reads the ALIGN tifs that
-generate_alignment_tif.py wrote into one render folder, burns the bars
-`stitch_slices.py` burns into the whole-slice TIFs, and writes the copies to a
-folder of their own. The render folder is read and never written.
+Visualization only. Reads the ALIGN tifs that generate_alignment_tif.py wrote
+into one render folder, burns the bars `stitch_slices.py` burns into the
+whole-slice TIFs, and writes the copies to a `_scalebar/` subfolder of that
+render folder. The ALIGN tifs themselves are read and never written.
+generate_alignment_tif.py calls this after every render (unless --no-scale-bars
+or --out); run it by hand for a folder rendered before that.
 
-Input, one render folder (a path, or its leaf name looked up under both
-subslice ALIGN roots):
+Input, one render folder (a path, or its leaf name looked up under the subslice
+and whole-slice ALIGN roots):
 
     <OUTPUT_ROOT>/subslice_align_{mscarlet,gcamp}/{leaf}/slice{N}_subslice_ALIGN_{leaf}.tif
+    <OUTPUT_ROOT>/slice_align_{mscarlet,gcamp}/{leaf}/slice{N}_ALIGN_{leaf}.tif
 
-Output:
+Output, beside them:
 
-    <OUTPUT_ROOT>/subslice_align_scalebar/{leaf}/slice{N}_subslice_SCALEBAR_{leaf}.tif
+    {leaf}/_scalebar/slice{N}_subslice_SCALEBAR_{leaf}.tif     (subslice)
+    {leaf}/_scalebar/slice{N}_SCALEBAR_{leaf}.tif              (whole slice)
 
-plus a copy of the folder's align_render.json, so the copies carry the settings
-they were rendered with.
+plus a copy of the folder's align_render.json.
 
 The copies must never become graph nodes: a bar would be fitted as cells. The
-builder ingests only `slice*_subslice_ALIGN*.tif` (analysis_paths.ALIGN_TIF_GLOB)
-and resolves a relative SUBSLICE_DIR only under the roots in
-analysis_paths._preprocessing_roots (step 4's overlays, subslice_align_{mscarlet,gcamp}/,
-subslice_align/). The copies match neither: `SCALEBAR` replaces `ALIGN` in the
-name and the root is subslice_align_scalebar/. Pointing SUBSLICE_DIR at
-this folder by absolute path makes the builder raise on a folder with no ALIGN
-tifs.
+builder globs `slice*_subslice_ALIGN*.tif` (analysis_paths.ALIGN_TIF_GLOB) in the
+SUBSLICE_DIR folder itself, never its subfolders, and the copies match neither
+that pattern nor SLICE_ALIGN_TIF_GLOB: `SCALEBAR` replaces `ALIGN`. Pointing
+SUBSLICE_DIR at a _scalebar/ folder makes the builder raise on a folder with no
+ALIGN tifs.
 
-Pitch: an ALIGN tif is drawn on step 3's downsampled canvas for its slice,
-HYB_DOWNSAMPLED_DIR/slice{N}_subslice_CELLMASK.h5, and step 3 stored the pitch it
-used in that file's metadata (TARGET_XY_UM_PER_PX = SCOPE's um/px, reached from
-0.32 um/px by DOWNSAMPLE_XY). The bars use that recorded value, per slice. It
-raises if the record is missing, if it disagrees with this config's
-TARGET_XY_UM_PER_PX, if the ALIGN tif's shape is not that canvas's, or if the
-render folder is not under this config's OUTPUT_ROOT -- each means local_config
-is set to a different brain than the folder came from. At BY95's 1.1 um/px the
-bars are 18/91/227 px; a bar that does not fit a canvas is skipped with a
-message (none on BY95, whose narrowest subslice is 931 px).
+Pitch: an ALIGN tif is drawn on the downsampled canvas of its section, and the
+script that wrote that canvas stored the pitch in its metadata:
+
+    subslice   HYB_DOWNSAMPLED_DIR/slice{N}_subslice_CELLMASK.h5   TARGET_XY_UM_PER_PX  (step 3)
+    slice      HYB_SLICE_DOWNSAMPLED_DIR/slice{N}_CELLMASK.h5      um_per_px  (stitch_slices.py --downsample)
+
+The bars use that recorded value, per slice: 0.32 um/px x DOWNSAMPLE_XY, i.e.
+SCOPE's pitch. It raises if the record is missing, if it disagrees with this
+config's TARGET_XY_UM_PER_PX, if the ALIGN tif's shape is not that canvas's, or
+if the render folder is not under this config's OUTPUT_ROOT -- each means
+local_config is set to a different brain than the folder came from. At BY95's
+1.1 um/px the bars are 18/91/227 px; a bar that does not fit a canvas is skipped
+with a message (none on BY95 subslices, the narrowest of which is 931 px).
 
 Each axis was resized to round(n / DOWNSAMPLE_XY) px, so the true pitch differs
 from the nominal by under half a pixel over the canvas: <0.06% on a 931 px one.
@@ -48,7 +52,7 @@ from the nominal by under half a pixel over the canvas: <0.06% on a 931 px one.
 Usage:
     python add_align_scale_bars.py mscarlet_qc0_3_ge0_sat5 --dry-run
     python add_align_scale_bars.py mscarlet_qc0_3_ge0_sat5 --slice 22
-    python add_align_scale_bars.py "D:\\...\\subslice_align_mscarlet\\mscarlet_qc0_3_ge0_sat5"
+    python add_align_scale_bars.py "D:\\...\\slice_align_gcamp\\gcamp_qc0_3_ge0_sat5"
 """
 
 import argparse
@@ -62,11 +66,16 @@ for _p in (str(_ROOT), str(_HERE)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import h5py
+
 from preprocessing_config import (
     OUTPUT_ROOT,
     HYB_DOWNSAMPLED_DIR,
+    HYB_SLICE_DOWNSAMPLED_DIR,
     SUBSLICE_ALIGN_MSCARLET_DIR,
     SUBSLICE_ALIGN_GCAMP_DIR,
+    SLICE_ALIGN_MSCARLET_DIR,
+    SLICE_ALIGN_GCAMP_DIR,
     TARGET_XY_UM_PER_PX,
 )
 from stitch_slices import (
@@ -77,7 +86,6 @@ from stitch_slices import (
     SCALE_BAR_LABEL_SCALE,
 )
 from analysis_paths import align_tifs, align_tif_slice
-from utilities.mat_io import load_cellmask_h5
 from utilities.image_io import (
     imread_tiff,
     imwrite_tiff,
@@ -85,14 +93,20 @@ from utilities.image_io import (
 )
 
 
-# Not in preprocessing_config: temporary, and no pipeline step reads it.
-OUTPUT_PARENT = Path(OUTPUT_ROOT) / "subslice_align_scalebar"
+SCALEBAR_SUBDIR = "_scalebar"
 
-ALIGN_ROOTS = (SUBSLICE_ALIGN_MSCARLET_DIR, SUBSLICE_ALIGN_GCAMP_DIR)
+ALIGN_ROOTS = (SUBSLICE_ALIGN_MSCARLET_DIR, SUBSLICE_ALIGN_GCAMP_DIR,
+               SLICE_ALIGN_MSCARLET_DIR, SLICE_ALIGN_GCAMP_DIR)
 
 RENDER_SIDECAR = "align_render.json"
 
-# Relative tolerance between step 3's recorded pitch and this config's.
+# Where each source's canvas record lives, its filename, and its pitch key.
+CANVAS_RECORDS = {
+    "subslice": (HYB_DOWNSAMPLED_DIR, "slice{n}_subslice_CELLMASK.h5", "TARGET_XY_UM_PER_PX"),
+    "slice": (HYB_SLICE_DOWNSAMPLED_DIR, "slice{n}_CELLMASK.h5", "um_per_px"),
+}
+
+# Relative tolerance between the recorded pitch and this config's.
 PITCH_RTOL = 1e-6
 
 
@@ -115,31 +129,47 @@ def resolve_render_dir(render):
                      + "".join(f"  {h}\n" for h in hits))
 
 
-def step3_pitch(slice_id, shape):
-    """um/px step 3 recorded for this slice's canvas; raises on any mismatch."""
-    path = Path(HYB_DOWNSAMPLED_DIR) / f"slice{slice_id}_subslice_CELLMASK.h5"
-    cellmask, meta = load_cellmask_h5(path)
-    if cellmask.shape != tuple(shape[:2]):
+def render_source(input_dir):
+    """(source, ALIGN tif paths): whichever of the two filename forms the folder holds."""
+    found = {s: align_tifs(input_dir, s) for s in ("subslice", "slice")}
+    held = [s for s, paths in found.items() if paths]
+    if not held:
+        raise FileNotFoundError(f"No ALIGN tifs in {input_dir}")
+    if len(held) > 1:
+        raise ValueError(f"{input_dir} holds both subslice and whole-slice ALIGN tifs")
+    return held[0], found[held[0]]
+
+
+def recorded_pitch(slice_id, shape, source):
+    """um/px recorded for this slice's canvas; raises on any mismatch."""
+    folder, pattern, key = CANVAS_RECORDS[source]
+    path = Path(folder) / pattern.format(n=slice_id)
+    if not path.exists():
+        raise FileNotFoundError(f"Slice {slice_id}: canvas record not found: {path}")
+    with h5py.File(path, "r") as f:
+        canvas = tuple(f["cellmask"].shape)
+        meta = f.get("metadata")
+        pitch = float(meta[key][()]) if meta is not None and key in meta else None
+    if canvas != tuple(shape[:2]):
         raise ValueError(
-            f"Slice {slice_id}: ALIGN tif is {shape[1]} x {shape[0]} but step 3's "
-            f"canvas is {cellmask.shape[1]} x {cellmask.shape[0]}:\n  {path}\n"
-            f"  The render predates the current step 3 output; re-render it."
+            f"Slice {slice_id}: ALIGN tif is {shape[1]} x {shape[0]} but its canvas "
+            f"is {canvas[1]} x {canvas[0]}:\n  {path}\n"
+            f"  The render predates the current canvas; re-render it."
         )
-    pitch = meta.get('TARGET_XY_UM_PER_PX')
     if pitch is None:
-        raise ValueError(f"Slice {slice_id}: no TARGET_XY_UM_PER_PX in {path}")
+        raise ValueError(f"Slice {slice_id}: no {key} in {path}")
     if abs(pitch - TARGET_XY_UM_PER_PX) > PITCH_RTOL * TARGET_XY_UM_PER_PX:
         raise ValueError(
-            f"Slice {slice_id}: step 3 drew this canvas at {pitch} um/px, but this "
+            f"Slice {slice_id}: the canvas was drawn at {pitch} um/px, but this "
             f"config's SCOPE gives {TARGET_XY_UM_PER_PX} um/px.\n"
             f"  local_config.py is set to a different brain or scope than this render."
         )
-    return float(pitch)
+    return pitch
 
 
 def report_geometry(um_per_px):
     """The bar geometry in pixels at this pitch, once, before any file."""
-    print(f"Scale bars at {um_per_px:.4f} um/px (step 3's record):")
+    print(f"Scale bars at {um_per_px:.4f} um/px:")
     thickness = max(1, int(round(SCALE_BAR_THICKNESS_UM / um_per_px)))
     for length_um in sorted(SCALE_BAR_LENGTHS_UM):
         print(f"  {length_um:g} um -> {int(round(length_um / um_per_px))} px")
@@ -159,18 +189,11 @@ def add_align_scale_bars(render, targets=None, dry_run=False):
             f"  OUTPUT_ROOT:   {OUTPUT_ROOT}\n"
             f"  Set local_config.py to the brain this render belongs to."
         )
-    output_dir = OUTPUT_PARENT / leaf
-    if output_dir.resolve() == input_dir.resolve():
-        raise ValueError(
-            f"Output directory is the input directory: {output_dir}\n"
-            f"  This script must never write into a render folder."
-        )
+    output_dir = input_dir / SCALEBAR_SUBDIR
 
-    paths = align_tifs(input_dir)
-    if not paths:
-        raise FileNotFoundError(f"No slice*_subslice_ALIGN*.tif in {input_dir}")
+    source, paths = render_source(input_dir)
     if targets is not None:
-        by_slice = {align_tif_slice(p): p for p in paths}
+        by_slice = {align_tif_slice(p, source): p for p in paths}
         missing = sorted(set(targets) - set(by_slice))
         if missing:
             raise ValueError(
@@ -180,33 +203,34 @@ def add_align_scale_bars(render, targets=None, dry_run=False):
             )
         paths = [by_slice[s] for s in sorted(targets)]
 
-    print(f"Input:  {input_dir}")
+    print(f"Input:  {input_dir} ({source} ALIGN tifs)")
     print(f"Output: {output_dir}")
     print(f"Slices: {len(paths)}\n")
     report_geometry(TARGET_XY_UM_PER_PX)
 
     if not dry_run:
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(exist_ok=True)
         sidecar = input_dir / RENDER_SIDECAR
         if sidecar.exists():
             shutil.copy2(sidecar, output_dir / RENDER_SIDECAR)
         else:
-            print(f"note: {input_dir.name} has no {RENDER_SIDECAR}; none copied\n")
+            print(f"note: {leaf} has no {RENDER_SIDECAR}; none copied\n")
 
+    stem = "subslice_SCALEBAR" if source == "subslice" else "SCALEBAR"
     # The dry run draws on each image and discards it, so its "does not fit"
     # decisions are the real run's.
     written = 0
     for i, path in enumerate(paths):
-        slice_id = align_tif_slice(path)
+        slice_id = align_tif_slice(path, source)
         image = imread_tiff(path)
         print(f"[{i+1}/{len(paths)}] Slice {slice_id}: "
               f"{image.shape[1]} x {image.shape[0]} {image.dtype}")
-        um_per_px = step3_pitch(slice_id, image.shape)
+        um_per_px = recorded_pitch(slice_id, image.shape, source)
         occluded, painted = draw_scale_bars(image, um_per_px)
         print(f"    scale bars covered {occluded}/{painted} nonzero px")
         if dry_run:
             continue
-        out_path = output_dir / f"slice{slice_id}_subslice_SCALEBAR_{leaf}.tif"
+        out_path = output_dir / f"slice{slice_id}_{stem}_{leaf}.tif"
         imwrite_tiff(out_path, image)
         written += 1
         print(f"    {get_file_size_mb(out_path):.1f} MB")
@@ -219,7 +243,7 @@ def add_align_scale_bars(render, targets=None, dry_run=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Copy one render folder of subslice ALIGN tifs with scale bars burned in",
+        description="Copy one render folder of ALIGN tifs with scale bars into its _scalebar/",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

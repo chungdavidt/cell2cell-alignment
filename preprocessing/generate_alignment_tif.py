@@ -97,6 +97,11 @@ settings it was rendered with; a run whose settings differ refuses to write
 there. The graph builder copies the same record into node metadata and raises
 when a folder no longer matches the nodes built from it.
 
+Each run also writes copies with scale bars burned in to <folder>/_scalebar/
+(add_align_scale_bars.py), named SCALEBAR instead of ALIGN so no glob that
+finds ALIGN tifs finds them; the ALIGN tifs carry no bars. --no-scale-bars
+skips it, and --out writes none.
+
 Usage:
     python preprocessing/generate_alignment_tif.py --min-rolonies 3
     python preprocessing/generate_alignment_tif.py --min-rolonies 10 --slices 22 24
@@ -326,6 +331,8 @@ def main():
     ap.add_argument("--slices", "-s", type=int, nargs="+", default=None,
                     help="specific slice IDs")
     ap.add_argument("--out", default=None, help="output directory override")
+    ap.add_argument("--no-scale-bars", action="store_false", dest="scale_bars",
+                    help="skip the _scalebar/ copies (add_align_scale_bars.py)")
     args = ap.parse_args()
 
     marker = args.marker
@@ -532,6 +539,16 @@ def main():
     print(f"\n{out_dir}")
     print("--min-rolonies here is a registration parameter only. It changes what you")
     print("can see while fitting, never where the transform sends anything.")
+
+    # Copies with scale bars in <out_dir>/_scalebar/; the ALIGN tifs above are
+    # untouched. --out may sit outside OUTPUT_ROOT, where the canvas-record
+    # check in add_align_scale_bars cannot vouch for the pitch.
+    if args.scale_bars and args.out is None:
+        from add_align_scale_bars import add_align_scale_bars
+        print("\n" + "=" * 60)
+        add_align_scale_bars(out_dir, targets={r[0] for r in written})
+    elif args.scale_bars:
+        print("\n--out given: no _scalebar/ copies written")
 
 
 if __name__ == "__main__":
