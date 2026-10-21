@@ -79,7 +79,9 @@ CARRIED_METADATA = ("spacing", "unit", "mode", "Labels", "LUTs", "Ranges")
 def resolve_stacks(names):
     """Stack paths from `names` (paths or filenames in INPUT_DIR); none = all."""
     if not names:
-        paths = sorted(p for p in INPUT_DIR.glob("sections_*.tif"))
+        # *_scalebar stacks (crop_section_stack_to_subslices.py) already carry bars.
+        paths = sorted(p for p in INPUT_DIR.glob("sections_*.tif")
+                       if not p.stem.endswith("_scalebar"))
         if not paths:
             raise FileNotFoundError(f"No sections_*.tif in {INPUT_DIR}")
         return paths
