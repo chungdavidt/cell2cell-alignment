@@ -36,11 +36,11 @@ raises if the record is missing, if it disagrees with this config's
 TARGET_XY_UM_PER_PX, if the ALIGN tif's shape is not that canvas's, or if the
 render folder is not under this config's OUTPUT_ROOT -- each means local_config
 is set to a different brain than the folder came from. At BY95's 1.1 um/px the
-250 um bar is 227 px, so on the narrowest subslices (one FOV, ~270 px) it does
-not fit and is skipped with a message.
+bars are 18/91/227 px; a bar that does not fit a canvas is skipped with a
+message (none on BY95, whose narrowest subslice is 931 px).
 
 Each axis was resized to round(n / DOWNSAMPLE_XY) px, so the true pitch differs
-from the nominal by under half a pixel over the canvas: <0.2% on a 270 px one.
+from the nominal by under half a pixel over the canvas: <0.06% on a 931 px one.
 
 `draw_scale_bars` and every SCALE_BAR_* constant are imported from
 `stitch_slices.py` rather than copied, so a retune reaches every bar.
