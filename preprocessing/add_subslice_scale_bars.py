@@ -16,6 +16,8 @@ Output:
 
     <OUTPUT_ROOT>/HYB_subslice_stitched_tif_scalebar/slice{N}_subslice_{CHANNEL}.tif
 
+Each copy is an ImageJ TIFF calibrated at 0.32 um/px, so ImageJ opens it in um.
+
 The input files are read and never written: the bars are drawn into the array in
 memory and only the copy is saved. `slice{N}_subslice_CELLMASK.h5` is not copied
 at all -- it is a uint32 label array where a bar would be a fake cell, and
@@ -51,6 +53,7 @@ for _p in (str(_ROOT), str(_HERE)):
         sys.path.insert(0, _p)
 
 import numpy as np
+import tifffile
 
 from preprocessing_config import (
     HYB_STITCHED_DIR,
@@ -66,7 +69,6 @@ from stitch_slices import (
 )
 from utilities.image_io import (
     imread_tiff,
-    imwrite_tiff,
     get_tiff_info,
     get_file_size_mb,
 )
@@ -182,7 +184,9 @@ def add_subslice_scale_bars(targets=None, dry_run=False):
             image = imread_tiff(path)
             occluded, painted = draw_scale_bars(image, UM_PER_PX)
             out_path = OUTPUT_DIR / path.name
-            imwrite_tiff(out_path, image)
+            tifffile.imwrite(out_path, image, imagej=True,
+                             resolution=(1 / UM_PER_PX, 1 / UM_PER_PX),
+                             metadata={"unit": "um"})
             written += 1
             print(f"    {channel}: {image.shape[1]} x {image.shape[0]}, "
                   f"{get_file_size_mb(out_path):.1f} MB"

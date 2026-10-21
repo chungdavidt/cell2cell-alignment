@@ -20,7 +20,8 @@ Output, beside them:
     {leaf}/_scalebar/slice{N}_subslice_SCALEBAR_{leaf}.tif     (subslice)
     {leaf}/_scalebar/slice{N}_SCALEBAR_{leaf}.tif              (whole slice)
 
-plus a copy of the folder's align_render.json.
+plus a copy of the folder's align_render.json. Each copy is an ImageJ TIFF
+calibrated at its slice's recorded pitch, so ImageJ opens it in um.
 
 The copies must never become graph nodes: a bar would be fitted as cells. The
 builder globs `slice*_subslice_ALIGN*.tif` (analysis_paths.ALIGN_TIF_GLOB) in the
@@ -67,6 +68,7 @@ for _p in (str(_ROOT), str(_HERE)):
         sys.path.insert(0, _p)
 
 import h5py
+import tifffile
 
 from preprocessing_config import (
     OUTPUT_ROOT,
@@ -88,7 +90,6 @@ from stitch_slices import (
 from analysis_paths import align_tifs, align_tif_slice
 from utilities.image_io import (
     imread_tiff,
-    imwrite_tiff,
     get_file_size_mb,
 )
 
@@ -231,7 +232,9 @@ def add_align_scale_bars(render, targets=None, dry_run=False):
         if dry_run:
             continue
         out_path = output_dir / f"slice{slice_id}_{stem}_{leaf}.tif"
-        imwrite_tiff(out_path, image)
+        tifffile.imwrite(out_path, image, imagej=True,
+                         resolution=(1 / um_per_px, 1 / um_per_px),
+                         metadata={"unit": "um"})
         written += 1
         print(f"    {get_file_size_mb(out_path):.1f} MB")
 

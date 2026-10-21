@@ -104,11 +104,12 @@ def read_record(path, keys, fovs=False):
     return out
 
 
-def subslice_footprint(n, dy, dx):
-    """(y0, x0, y1, x1) of slice n's subslice in stack coordinates, as floats.
+def subslice_footprint(n, dy, dx, section_shape):
+    """(y0, x0, y1, x1, n_shared_fovs): slice n's subslice in stack coordinates.
 
-    None when the section has no step 3 subslice. Raises when the shared FOV
-    placements or the downsample factors disagree.
+    None when the section has no step 3 subslice. Raises when the slice record
+    is not the canvas the stack was built from, or the shared FOV placements or
+    the downsample factors disagree.
     """
     sub_path = Path(HYB_DOWNSAMPLED_DIR) / f"slice{n}_subslice_CELLMASK.h5"
     if not sub_path.exists():
@@ -118,6 +119,13 @@ def subslice_footprint(n, dy, dx):
                      ("min_x", "min_y", "downsample_xy"), fovs=True)
     full = read_record(Path(HYB_STITCHED_DIR) / f"slice{n}_subslice_CELLMASK.h5",
                        ("min_x", "min_y"), fovs=True)
+
+    if list(sl["shape"]) != list(section_shape):
+        raise ValueError(
+            f"Slice {n}: stitch_slices.py's canvas is {sl['shape']} but the stack "
+            f"placed a {tuple(section_shape)} section; the whole slices were "
+            f"re-stitched after the stack was built."
+        )
 
     factors = {"step 3": float(sub["DOWNSAMPLE_XY"]),
                "stitch_slices.py": float(sl["downsample_xy"]),
@@ -180,7 +188,7 @@ def crop_stack(path, pad_um=0.0, dry_run=False):
     footprints = {}
     no_subslice = []
     for sec in offsets["sections"]:
-        fp = subslice_footprint(sec["slice"], sec["dy"], sec["dx"])
+        fp = subslice_footprint(sec["slice"], sec["dy"], sec["dx"], sec["shape"])
         if fp is None:
             no_subslice.append(sec["slice"])
         else:
