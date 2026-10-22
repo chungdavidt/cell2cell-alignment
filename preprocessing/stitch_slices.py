@@ -146,9 +146,10 @@ SCALE_BAR_SPACING_UM = 40.0
 SCALE_BAR_THICKNESS_UM = 6.0
 
 # Label height as a multiple of the bar thickness, so every label is the same
-# size too, and doubling the thickness doubles the text with it. 6.0 puts it at
-# 110 px against a 19 px bar.
-SCALE_BAR_LABEL_SCALE = 6.0
+# size too, and doubling the thickness doubles the text with it. 18.0 puts it at
+# 90 px against a 5 px bar at 1.1 um/px, 342 px against 19 px at 0.32 um/px.
+# Was 6.0 until 2026-10-21: 30 px labels were unreadable on the 1.1 um/px stacks.
+SCALE_BAR_LABEL_SCALE = 18.0
 
 
 # Scalable fonts tried in order, by the bare names PIL resolves against the
