@@ -74,6 +74,9 @@ CONFIDENT = 0.45
 TENTATIVE = 0.20
 MIN_CELLS_FOR_COMPOSITION = 500
 MARKS = {2: "", 1: " \u00b7", 0: " ?"}
+# readout slots with stale gene labels, dropped by index: 111 GCaMP ("Slc17a7"),
+# 112 unknown channel ("Gad1"), 113 mScarlet ("Slc30a3")
+NON_GENE_COLUMNS = [111, 112, 113]
 
 
 def style():
@@ -86,6 +89,12 @@ def style():
 
 
 # --------------------------------------------------------------------- input
+def feature_mask(genes, exclude):
+    feat = np.array([not str(g).lower().startswith("unused") for g in genes]) & (genes != "Actb")
+    feat[list(exclude)] = False
+    return feat
+
+
 def load_mat(path, struct_name="filt_neurons"):
     m = sio.loadmat(path, struct_as_record=False, squeeze_me=False)
     s = m[struct_name][0, 0]
@@ -97,7 +106,7 @@ def load_mat(path, struct_name="filt_neurons"):
             "orig_slice": s.orig_slice.ravel()}
 
 
-def recluster(d, resolution=0.5, n_pcs=25, n_neighbors=15, seed=0):
+def recluster(d, exclude, resolution=0.5, n_pcs=25, n_neighbors=15, seed=0):
     """Reproduce the 12-cluster partition from the raw matrix."""
     import igraph as ig
     import leidenalg as la
@@ -107,7 +116,7 @@ def recluster(d, resolution=0.5, n_pcs=25, n_neighbors=15, seed=0):
     tot = np.asarray(E.sum(1)).ravel()
     ndet = np.diff(E.indptr)
     keep = (tot >= 20) & (ndet >= 5) & (~np.isnan(d["slice"]))
-    feat = np.array([not str(g).lower().startswith("unused") for g in genes]) & (genes != "Actb")
+    feat = feature_mask(genes, exclude)
 
     X = E[keep][:, feat].tocsr()
     tc = np.asarray(X.sum(1)).ravel()
@@ -138,7 +147,7 @@ def recluster(d, resolution=0.5, n_pcs=25, n_neighbors=15, seed=0):
     })
 
 
-def align(d, assign):
+def align(d, assign, exclude):
     """Row-align the .mat to the assignment table on cell_id; return log-norm matrix."""
     row_of = pd.Series(np.arange(len(d["id"])), index=d["id"])
     missing = ~assign["cell_id"].isin(row_of.index)
@@ -147,7 +156,7 @@ def align(d, assign):
                          % int(missing.sum()))
     rows = row_of.loc[assign["cell_id"].values].values
     genes = d["genes"]
-    feat = np.array([not str(g).lower().startswith("unused") for g in genes]) & (genes != "Actb")
+    feat = feature_mask(genes, exclude)
     X = d["E"][rows][:, feat].tocsr()
     tc = np.asarray(X.sum(1)).ravel()
     Xl = (sp.diags(np.median(tc) / np.maximum(tc, 1)) @ X).tocsr()
@@ -314,6 +323,8 @@ def main():
     ap.add_argument("--struct", default="filt_neurons", help="name of the MATLAB struct")
     ap.add_argument("--n-sections", type=int, default=9,
                     help="how many of the largest sections to show in the detail figures")
+    ap.add_argument("--exclude-columns", type=int, nargs="*", default=NON_GENE_COLUMNS,
+                    help="0-indexed expmat columns that are not genes (default: %(default)s)")
     args = ap.parse_args()
 
     if not args.recluster and not args.assignments:
@@ -324,10 +335,12 @@ def main():
 
     print("loading %s" % args.mat)
     d = load_mat(args.mat, args.struct)
+    print("  excluding columns %s: %s" % (args.exclude_columns,
+          ", ".join(str(d["genes"][i]) for i in args.exclude_columns)))
 
     if args.recluster:
         print("reclustering (Leiden, resolution 0.5, 25 PCs, 15-NN)")
-        assign = recluster(d)
+        assign = recluster(d, args.exclude_columns)
         assign.to_csv(out("cell_cluster_assignments.csv"), index=False)
     else:
         assign = pd.read_csv(args.assignments)
@@ -335,7 +348,7 @@ def main():
     print("  %s cells, %d sections, %d clusters"
           % (format(len(assign), ","), assign["slice"].nunique(), assign["cluster"].nunique()))
 
-    Ln, gene_names = align(d, assign)
+    Ln, gene_names = align(d, assign, args.exclude_columns)
     Z, score, table, present = layer_assignment(Ln, gene_names, assign["cluster"])
     table.to_csv(out("cluster_layer_assignment.csv"), index=False)
     fig_layer_call(Z, table, present, gene_names, out("clusters_to_layers.png"))
