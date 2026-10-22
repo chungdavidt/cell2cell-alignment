@@ -28,6 +28,7 @@ Outputs (written to --outdir)
     layers_by_slice_spatial.png       9 largest sections, coloured by layer class
     layers_all_slices.png             all sections, coloured by layer class
     layers_by_slice_composition.png   layer shares per section (>=500 cells)
+    per_slice/slice{N}.png            --per-slice: clusters | layer classes, every section
 
 Requires: numpy, scipy, pandas, matplotlib
           (+ scikit-learn, leidenalg, python-igraph only for --recluster)
@@ -238,10 +239,10 @@ def fig_layer_call(Z, table, present, gene_names, path):
     plt.close(fig)
 
 
-def _section_panel(ax, d, colours, s_, flag=False):
+def _section_panel(ax, d, colours, s_, flag=False, s=1.6):
     rng = np.random.default_rng(0)
     o = rng.permutation(len(d))
-    ax.scatter(d["pos_x"].values[o], d["pos_y"].values[o], s=1.6,
+    ax.scatter(d["pos_x"].values[o], d["pos_y"].values[o], s=s,
                c=[colours[k] for k in d["_key"].values[o]], linewidths=0, rasterized=True)
     ax.set_aspect("equal")
     ax.invert_yaxis()
@@ -278,6 +279,29 @@ def fig_sections(assign, key, colours, legend, title, path, slices, ncol, figsiz
     fig.tight_layout(rect=[0, 0.05, 1, 0.945])
     fig.savefig(path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
+
+
+def fig_per_slice(assign, panels, meta, outdir, dpi=200):
+    """One PNG per section, one panel per (key, colours, labels, title); legend counts are this section's."""
+    os.makedirs(outdir, exist_ok=True)
+    for s_ in meta.index:
+        d = assign[assign["slice"] == s_].copy()
+        fig, axes = plt.subplots(1, len(panels), figsize=(7.0 * len(panels), 8.0))
+        for ax, (key, colours, labels, title) in zip(np.atleast_1d(axes), panels):
+            d["_key"] = d[key]
+            _section_panel(ax, d, colours, s_, s=4.0)
+            n_k = d[key].value_counts()
+            h = [plt.Line2D([], [], marker="o", ls="", ms=6, color=colours[k],
+                            label="%s  (%s)" % (lab, format(int(n_k[k]), ",")))
+                 for k, lab in labels.items() if k in n_k.index]
+            ax.legend(handles=h, frameon=False, fontsize=7.5, loc="upper center",
+                      bbox_to_anchor=(0.5, -0.01), ncol=2, handletextpad=0.4)
+            ax.set_title(title, fontsize=9, loc="left")
+        fig.suptitle("slice %d  (orig_slice %d)   n=%s" % (s_, int(meta.loc[s_, "orig"]),
+                     format(len(d), ",")), fontsize=10, x=0.01, ha="left")
+        fig.tight_layout()
+        fig.savefig(os.path.join(outdir, "slice%02d.png" % s_), dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
 
 
 def fig_composition(assign, groups, colours, meta, path):
@@ -325,6 +349,8 @@ def main():
                     help="how many of the largest sections to show in the detail figures")
     ap.add_argument("--exclude-columns", type=int, nargs="*", default=NON_GENE_COLUMNS,
                     help="0-indexed expmat columns that are not genes (default: %(default)s)")
+    ap.add_argument("--per-slice", action="store_true",
+                    help="also write per_slice/slice{N}.png: clusters | layer classes, one per section")
     args = ap.parse_args()
 
     if not args.recluster and not args.assignments:
@@ -403,6 +429,16 @@ def main():
                  out("layers_all_slices.png"), all_slices, ncol_all,
                  (2.4 * ncol_all, 2.45 * int(np.ceil(len(all_slices) / ncol_all)) + 1.0),
                  dpi=170, flag_below=MIN_CELLS_FOR_COMPOSITION, meta=meta)
+
+    if args.per_slice:
+        cluster_lab = {table["cluster"][i]: "%s  %s%s" % (table["cluster"][i], table["best_layer"][i],
+                                                          MARKS[table["tier"][i]]) for i in range(K)}
+        layer_lab = {g: "%s  (%s)" % (g, members[g]) for g in groups}
+        fig_per_slice(assign,
+                      [("cluster", cluster_cols, cluster_lab, "expression clusters"),
+                       ("layer_group", LAYER_COLOURS, layer_lab, "marker-based layer classes")],
+                      meta, out("per_slice"))
+        print("wrote %d per-section PNGs to %s" % (len(meta), out("per_slice")))
 
     comp = fig_composition(assign, groups, LAYER_COLOURS, meta,
                            out("layers_by_slice_composition.png"))
