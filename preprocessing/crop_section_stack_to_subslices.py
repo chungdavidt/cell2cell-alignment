@@ -33,16 +33,24 @@ every plane of every channel, at that channel's stored display maximum. In a
 tight box they can land on tissue; the occlusion line per plane says where, and
 --pad-um moves the edge out.
 
+--exclude-slices N ... drops those sections entirely: they do not size the box
+and their planes are left out of the output. The numbers go into the output
+name (`_ex58`) so an excluded run never overwrites a full one. The planes either
+side of a dropped section become neighbours while ImageJ's Z spacing stays one
+section, so depth across the gap reads short by a section per dropped plane; the
+offsets record keeps each kept section's true z_um.
+
 Output, beside the input in <OUTPUT_ROOT>/section_stacks/:
 
-    {stem}_subslicebox_scalebar.tif            Z C Y X, calibrated, metadata carried
-    {stem}_subslicebox_scalebar_offsets.json   box origin in the stack, per-section
-                                               shift and subslice footprint in the box
+    {stem}_subslicebox[_ex{N}...]_scalebar.tif            Z C Y X, calibrated, metadata carried
+    {stem}_subslicebox[_ex{N}...]_scalebar_offsets.json   box origin in the stack, per-section
+                                                          shift and subslice footprint in the box
 
 Usage:
     python preprocessing/crop_section_stack_to_subslices.py sections_slice_MSCARLET__GCAMP.tif --dry-run
     python preprocessing/crop_section_stack_to_subslices.py sections_slice_MSCARLET__GCAMP.tif
     python preprocessing/crop_section_stack_to_subslices.py sections_slice_MSCARLET__GCAMP.tif --pad-um 100
+    python preprocessing/crop_section_stack_to_subslices.py sections_slice_MSCARLET__GCAMP.tif --exclude-slices 58
 """
 
 import argparse
@@ -77,7 +85,8 @@ from add_section_stack_scale_bars import (
 )
 from utilities.image_io import get_file_size_mb
 
-SUFFIX = "_subslicebox_scalebar"
+BOX_TAG = "_subslicebox"
+SUFFIX = "_scalebar"
 
 # Relative tolerance on the recorded downsample factor; stored as a float.
 FACTOR_RTOL = 1e-9
@@ -161,7 +170,7 @@ def subslice_footprint(n, dy, dx, section_shape):
     return oy, ox, oy + h, ox + w, len(shared)
 
 
-def crop_stack(path, pad_um=0.0, dry_run=False):
+def crop_stack(path, pad_um=0.0, exclude=(), dry_run=False):
     offsets_path = path.with_name(path.stem + "_offsets.json")
     if not offsets_path.exists():
         raise FileNotFoundError(f"No offsets file beside the stack: {offsets_path}")
@@ -185,9 +194,21 @@ def crop_stack(path, pad_um=0.0, dry_run=False):
     print(f"\n{path.name}")
     print(f"  Z {Z} x C {C} x {H} x {W} {dtype}, {get_file_size_mb(path):.0f} MB")
 
+    in_stack = [sec["slice"] for sec in offsets["sections"]]
+    unknown = sorted(set(exclude) - set(in_stack))
+    if unknown:
+        raise ValueError(f"--exclude-slices {unknown} not in this stack; it holds "
+                         f"slices {in_stack[0]}..{in_stack[-1]} ({len(in_stack)})")
+    kept = [sec for sec in offsets["sections"] if sec["slice"] not in exclude]
+    if not kept:
+        raise ValueError("--exclude-slices leaves no section")
+    if exclude:
+        print(f"  excluded: slice(s) {sorted(exclude)} -- not in the box, planes dropped "
+              f"({len(kept)} of {Z} kept)")
+
     footprints = {}
     no_subslice = []
-    for sec in offsets["sections"]:
+    for sec in kept:
         fp = subslice_footprint(sec["slice"], sec["dy"], sec["dx"], sec["shape"])
         if fp is None:
             no_subslice.append(sec["slice"])
@@ -195,7 +216,7 @@ def crop_stack(path, pad_um=0.0, dry_run=False):
             footprints[sec["slice"]] = fp
     if not footprints:
         raise ValueError("No section in this stack has a step 3 subslice")
-    print(f"  subslices located: {len(footprints)} of {len(offsets['sections'])} sections "
+    print(f"  subslices located: {len(footprints)} of {len(kept)} sections "
           f"(shared FOVs checked: {sum(fp[4] for fp in footprints.values())})")
     if no_subslice:
         print(f"  no subslice (plane kept, not used for the box): {no_subslice}")
@@ -229,17 +250,19 @@ def crop_stack(path, pad_um=0.0, dry_run=False):
     sub = mask[by0:by1, bx0:bx1]
 
     src = tifffile.memmap(str(path), mode="r")
-    covered = np.zeros(Z, dtype=np.int64)
-    for z in range(Z):
-        for c in range(C):
-            covered[z] += int(np.count_nonzero(
-                src[z, c, y0 + by0:y0 + by1, x0 + bx0:x0 + bx1][sub]))
+    covered = {}
+    for sec in kept:
+        z = sec["z_index"]
+        covered[sec["slice"]] = sum(
+            int(np.count_nonzero(src[z, c, y0 + by0:y0 + by1, x0 + bx0:x0 + bx1][sub]))
+            for c in range(C))
     painted = int(sub.sum()) * C
-    hit = np.nonzero(covered)[0]
-    print(f"  bars cover nonzero px on {hit.size} of {Z} planes"
-          + (": " + ", ".join(f"z{z} {covered[z]}/{painted}" for z in hit) if hit.size else ""))
+    hit = [n for n, k in covered.items() if k]
+    print(f"  bars cover nonzero px on {len(hit)} of {len(kept)} planes"
+          + (": " + ", ".join(f"slice {n} {covered[n]}/{painted}" for n in hit) if hit else ""))
 
-    out_path = path.with_name(path.stem + SUFFIX + ".tif")
+    ex_tag = "".join(f"_ex{n}" for n in sorted(exclude))
+    out_path = path.with_name(path.stem + BOX_TAG + ex_tag + SUFFIX + ".tif")
     out_offsets = out_path.with_name(out_path.stem + "_offsets.json")
     print(f"  output: {out_path}")
     if dry_run:
@@ -248,13 +271,19 @@ def crop_stack(path, pad_um=0.0, dry_run=False):
 
     metadata = {"axes": "ZCYX"}
     metadata.update({k: ij[k] for k in CARRIED_METADATA if k in ij})
+    # Labels run section-major, one per (section, channel); keep the kept ones.
+    labels = metadata.get("Labels")
+    if labels is not None and len(labels) == Z * C:
+        metadata["Labels"] = [labels[sec["z_index"] * C + c] for sec in kept for c in range(C)]
+    elif labels is not None:
+        del metadata["Labels"]
     dst = tifffile.memmap(
-        str(out_path), shape=(Z, C, bh, bw), dtype=dtype, imagej=True,
+        str(out_path), shape=(len(kept), C, bh, bw), dtype=dtype, imagej=True,
         resolution=(1 / pitch, 1 / pitch), metadata=metadata)
-    for z in range(Z):
-        dst[z] = src[z, :, y0:y1, x0:x1]
+    for zo, sec in enumerate(kept):
+        dst[zo] = src[sec["z_index"], :, y0:y1, x0:x1]
         for c in range(C):
-            dst[z, c, by0:by1, bx0:bx1][sub] = levels[c]
+            dst[zo, c, by0:by1, bx0:bx1][sub] = levels[c]
     dst.flush()
     del dst, src
 
@@ -262,17 +291,18 @@ def crop_stack(path, pad_um=0.0, dry_run=False):
         "source_stack": path.name,
         "box_in_stack": {"y0": y0, "x0": x0, "y1": y1, "x1": x1},
         "pad_um": pad_um,
+        "excluded_slices": sorted(exclude),
         "xy_um_per_px": pitch,
         "z_um_per_section": offsets.get("z_um_per_section"),
         "box_from_stack": "box (y, x) = stack (y - y0, x - x0)",
         "box_from_section": "box (y, x) = section (y + dy - y0, x + dx - x0)",
         "sections": [
-            {"slice": sec["slice"], "z_index": sec["z_index"],
-             "dy": sec["dy"], "dx": sec["dx"],
+            {"slice": sec["slice"], "z_index": zo, "source_z_index": sec["z_index"],
+             "z_um": sec.get("z_um"), "dy": sec["dy"], "dx": sec["dx"],
              "subslice_in_box": (None if sec["slice"] not in footprints else
                                  [round(v - o, 3) for v, o in
                                   zip(footprints[sec["slice"]][:4], (y0, x0, y0, x0))])}
-            for sec in offsets["sections"]],
+            for zo, sec in enumerate(kept)],
     }
     out_offsets.write_text(json.dumps(record, indent=2) + "\n")
     print(f"  wrote {out_path.name} ({get_file_size_mb(out_path):.0f} MB) + {out_offsets.name}")
@@ -288,13 +318,16 @@ def main():
                         help="Whole-slice stack paths or filenames in section_stacks/")
     parser.add_argument("--pad-um", type=float, default=0.0,
                         help="margin around the subslice box, um (default 0)")
+    parser.add_argument("--exclude-slices", type=int, nargs="+", default=[], metavar="N",
+                        help="drop these sections: not in the box, planes left out")
     parser.add_argument("--dry-run", action="store_true",
                         help="locate subslices and report the box, write nothing")
     args = parser.parse_args()
 
     print(f"Stacks in: {INPUT_DIR}")
     for path in resolve_stacks(args.stacks):
-        crop_stack(path, pad_um=args.pad_um, dry_run=args.dry_run)
+        crop_stack(path, pad_um=args.pad_um, exclude=set(args.exclude_slices),
+                   dry_run=args.dry_run)
     if args.dry_run:
         print("\nDry run: nothing written.")
 
