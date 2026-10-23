@@ -113,12 +113,10 @@ def load_mat(path, struct_name="filt_neurons"):
             "orig_slice": s.orig_slice.ravel()}
 
 
-def recluster(d, exclude, resolution=0.5, n_pcs=25, n_neighbors=15, seed=0):
-    """Reproduce the 12-cluster partition from the raw matrix."""
-    import igraph as ig
-    import leidenalg as la
-    from sklearn.neighbors import NearestNeighbors
-
+def pc_space(d, exclude, n_pcs=25):
+    """QC (>=20 reads, >=5 genes over all columns, slice assigned), median-depth
+    log1p, per-gene z-score, PCA. Returns keep, total counts, cell PCs, gene
+    loadings (n_pcs x features), variance fraction per PC, feature names."""
     E, genes = d["E"], d["genes"]
     tot = np.asarray(E.sum(1)).ravel()
     ndet = np.diff(E.indptr)
@@ -131,8 +129,16 @@ def recluster(d, exclude, resolution=0.5, n_pcs=25, n_neighbors=15, seed=0):
     Xl.data = np.log1p(Xl.data)
     Ln = np.asarray(Xl.todense())
     M = (Ln - Ln.mean(0)) / Ln.std(0)
-    U, S, _ = np.linalg.svd(M / np.sqrt(M.shape[0] - 1), full_matrices=False)
-    cellpc = U[:, :n_pcs] * S[:n_pcs]
+    U, S, Vt = np.linalg.svd(M / np.sqrt(M.shape[0] - 1), full_matrices=False)
+    return (keep, tot, U[:, :n_pcs] * S[:n_pcs], Vt[:n_pcs], S ** 2 / (S ** 2).sum(),
+            genes[feat])
+
+
+def leiden(cellpc, resolution=0.5, n_neighbors=15, seed=0):
+    """Unweighted kNN graph -> Leiden (RB configuration); labels 0.. by descending size."""
+    import igraph as ig
+    import leidenalg as la
+    from sklearn.neighbors import NearestNeighbors
 
     nb = NearestNeighbors(n_neighbors=n_neighbors, n_jobs=-1).fit(cellpc)
     src, dst = nb.kneighbors_graph(cellpc, mode="connectivity").nonzero()
@@ -143,7 +149,13 @@ def recluster(d, exclude, resolution=0.5, n_pcs=25, n_neighbors=15, seed=0):
     o = np.argsort(-np.bincount(lab))
     rm = np.empty(lab.max() + 1, int)
     rm[o] = np.arange(len(o))
-    lab = rm[lab]
+    return rm[lab]
+
+
+def recluster(d, exclude, resolution=0.5, n_pcs=25, n_neighbors=15, seed=0):
+    """Reproduce the 12-cluster partition from the raw matrix."""
+    keep, tot, cellpc = pc_space(d, exclude, n_pcs)[:3]
+    lab = leiden(cellpc, resolution, n_neighbors, seed)
 
     return pd.DataFrame({
         "cell_id": d["id"][keep], "slice": d["slice"][keep],
