@@ -36,6 +36,7 @@ Requires: numpy, scipy, pandas, matplotlib
 
 import argparse
 import os
+import sys
 
 import numpy as np
 import pandas as pd
@@ -45,6 +46,11 @@ import matplotlib as mpl
 
 mpl.use("Agg")
 import matplotlib.pyplot as plt
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from scope_profiles import EXVIVO_UM_PER_PX  # noqa: E402
+
+UM_PER_POS = 2 * EXVIVO_UM_PER_PX   # one pos unit = 2 full-res 40x pixels
 
 # ----------------------------------------------------------------- constants
 GREY = "#6E6E6E"
@@ -239,10 +245,10 @@ def fig_layer_call(Z, table, present, gene_names, path):
     plt.close(fig)
 
 
-def _section_panel(ax, d, colours, s_, flag=False, s=1.6):
+def _section_panel(ax, d, colours, s_, flag=False):
     rng = np.random.default_rng(0)
     o = rng.permutation(len(d))
-    ax.scatter(d["pos_x"].values[o], d["pos_y"].values[o], s=s,
+    ax.scatter(d["pos_x"].values[o], d["pos_y"].values[o], s=1.6,
                c=[colours[k] for k in d["_key"].values[o]], linewidths=0, rasterized=True)
     ax.set_aspect("equal")
     ax.invert_yaxis()
@@ -281,27 +287,53 @@ def fig_sections(assign, key, colours, legend, title, path, slices, ncol, figsiz
     plt.close(fig)
 
 
-def fig_per_slice(assign, panels, meta, outdir, dpi=200):
-    """One PNG per section, one panel per (key, colours, labels, title); legend counts are this section's."""
+def section_frames(d, um_per_pos):
+    """Window centre (um) per section from every cell with that slice number, before QC,
+    and one square span for all sections = the widest side; as plot_marker_slices.m."""
+    has = ~np.isnan(d["slice"])
+    xy = d["pos"][has, :2].astype(float) * um_per_pos
+    g = pd.DataFrame({"slice": d["slice"][has].astype(int),
+                      "x": xy[:, 0], "y": xy[:, 1]}).groupby("slice")
+    lo, hi = g.min(), g.max()
+    return (lo + hi) / 2, float((hi - lo).values.max())
+
+
+def fig_per_slice(assign, panels, meta, outdir, um_per_pos, centre, span, dpi=200):
+    """One PNG per section, one panel per (key, colours, labels, title); legend counts are
+    this section's. Axes are the same size in inches in every file and every section gets
+    the same span, so um per pixel is identical across files."""
     os.makedirs(outdir, exist_ok=True)
+    W, H, side = 15.0, 10.0, 6.3                       # inches; axes are side x side
+    rects = [[0.06, 0.30, side / W, side / H], [0.55, 0.30, side / W, side / H]]
     for s_ in meta.index:
-        d = assign[assign["slice"] == s_].copy()
-        fig, axes = plt.subplots(1, len(panels), figsize=(7.0 * len(panels), 8.0))
-        for ax, (key, colours, labels, title) in zip(np.atleast_1d(axes), panels):
-            d["_key"] = d[key]
-            _section_panel(ax, d, colours, s_, s=4.0)
+        d = assign[assign["slice"] == s_]
+        x = d["pos_x"].values * um_per_pos
+        y = d["pos_y"].values * um_per_pos
+        cx, cy = centre.loc[s_, "x"], centre.loc[s_, "y"]
+        o = np.random.default_rng(0).permutation(len(d))
+        fig = plt.figure(figsize=(W, H))
+        for rect, (key, colours, labels, title) in zip(rects, panels):
+            ax = fig.add_axes(rect)
+            ax.scatter(x[o], y[o], s=4.0, c=[colours[k] for k in d[key].values[o]],
+                       linewidths=0)
+            ax.set_aspect("equal")
+            ax.set_xlim(cx - span / 2, cx + span / 2)
+            ax.set_ylim(cy + span / 2, cy - span / 2)   # y down, as in the images
+            ax.set_xlabel("x (\u00b5m)")
+            ax.set_ylabel("y (\u00b5m)")
             n_k = d[key].value_counts()
             h = [plt.Line2D([], [], marker="o", ls="", ms=6, color=colours[k],
                             label="%s  (%s)" % (lab, format(int(n_k[k]), ",")))
                  for k, lab in labels.items() if k in n_k.index]
             ax.legend(handles=h, frameon=False, fontsize=7.5, loc="upper center",
-                      bbox_to_anchor=(0.5, -0.01), ncol=2, handletextpad=0.4)
+                      bbox_to_anchor=(0.5, -0.09), ncol=2, handletextpad=0.4)
             ax.set_title(title, fontsize=9, loc="left")
-        fig.suptitle("slice %d  (orig_slice %d)   n=%s" % (s_, int(meta.loc[s_, "orig"]),
-                     format(len(d), ",")), fontsize=10, x=0.01, ha="left")
-        fig.tight_layout()
-        fig.savefig(os.path.join(outdir, "slice%02d.png" % s_), dpi=dpi, bbox_inches="tight")
+        fig.suptitle("slice %d  (orig_slice %d)   n=%s   window %.0f \u00b5m, %.3f \u00b5m/px"
+                     % (s_, int(meta.loc[s_, "orig"]), format(len(d), ","), span,
+                        span / (side * dpi)), fontsize=10, x=0.06, y=0.97, ha="left")
+        fig.savefig(os.path.join(outdir, "slice%02d.png" % s_), dpi=dpi)
         plt.close(fig)
+    return span / (side * dpi)
 
 
 def fig_composition(assign, groups, colours, meta, path):
@@ -351,6 +383,8 @@ def main():
                     help="0-indexed expmat columns that are not genes (default: %(default)s)")
     ap.add_argument("--per-slice", action="store_true",
                     help="also write per_slice/slice{N}.png: clusters | layer classes, one per section")
+    ap.add_argument("--span-um", type=float,
+                    help="--per-slice window side in um (default: widest section, all cells)")
     args = ap.parse_args()
 
     if not args.recluster and not args.assignments:
@@ -434,11 +468,16 @@ def main():
         cluster_lab = {table["cluster"][i]: "%s  %s%s" % (table["cluster"][i], table["best_layer"][i],
                                                           MARKS[table["tier"][i]]) for i in range(K)}
         layer_lab = {g: "%s  (%s)" % (g, members[g]) for g in groups}
-        fig_per_slice(assign,
-                      [("cluster", cluster_cols, cluster_lab, "expression clusters"),
-                       ("layer_group", LAYER_COLOURS, layer_lab, "marker-based layer classes")],
-                      meta, out("per_slice"))
-        print("wrote %d per-section PNGs to %s" % (len(meta), out("per_slice")))
+        centre, span = section_frames(d, UM_PER_POS)
+        if args.span_um:
+            span = args.span_um
+        um_px = fig_per_slice(assign,
+                              [("cluster", cluster_cols, cluster_lab, "expression clusters"),
+                               ("layer_group", LAYER_COLOURS, layer_lab,
+                                "marker-based layer classes")],
+                              meta, out("per_slice"), UM_PER_POS, centre, span)
+        print("wrote %d per-section PNGs to %s: %.0f um window, %.3f um/px, %.4f um per pos unit"
+              % (len(meta), out("per_slice"), span, um_px, UM_PER_POS))
 
     comp = fig_composition(assign, groups, LAYER_COLOURS, meta,
                            out("layers_by_slice_composition.png"))
