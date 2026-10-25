@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """
-Measure the BARseq in-plane pixel size instead of declaring it.
+Cross-check the BARseq in-plane pixel size against the data.
 
-`EXVIVO_UM_PER_PX = 0.32` (scope_profiles.py) is the last unverified number in
-the scaling chain. The 2P side WAS settled at 200.19 um over 512 px until
-2026-08-30, when probe D read the stacks' own XResolution: 909090/1000000 with
-ImageJ unit um, i.e. 1.1000 um/px over a 563.2 um field. huang_lab and
-DOWNSAMPLE_XY are now 1.1000 and 3.4375. Nothing checks the BARseq side: raw
+`EXVIVO_UM_PER_PX = 0.33` (scope_profiles.py) comes from the collaborators'
+acquisition settings (2026-10-25): 0.33 um per pos40x / raw 40x pixel, 0.66 um
+per filt_neurons.pos unit. It replaced 0.32, which was never calibrated. These
+probes check it against the data; they do not set it.
+
+The 2P side WAS settled at 200.19 um over 512 px until 2026-08-30, when probe D
+read the stacks' own XResolution: 909090/1000000 with ImageJ unit um, i.e.
+1.1000 um/px over a 563.2 um field. huang_lab and DOWNSAMPLE_XY are now 1.1000
+and 3.3333. Nothing else checks the BARseq side: raw
 hyb TIFFs carry a 72-DPI placeholder, `is_plausible_xy` rejects it, and
-`assert_matches_metadata` silently returns. The constant also has no
-per-dataset knob -- it is declared "invariant across datasets" -- while BY95's
-filt_neurons.mat comes from collaborators, not the rig 0.32 was confirmed on.
+`assert_matches_metadata` silently returns. The constant has no per-dataset
+knob -- it is declared "invariant across datasets".
 
 Three probes:
 
@@ -22,7 +25,7 @@ B and C need no image metadata at all. B is decisive on the BARseq side: the FOV
 grid step is a physical stage displacement, so step_um / step_px IS the pixel
 size. It needs one number you supply, and it has a reference value to compare
 against (see below). C needs nothing but only resolves ~20%: it catches a 2x or
-2.8x and cannot separate 0.32 from 0.325.
+2.8x and cannot separate 0.32 from 0.33.
 
 D exists because a mismatch in APPARENT CELL SIZE between the two modalities is
 a different symptom from a mismatch in image extent, and it indicts the 2P, not
@@ -45,7 +48,7 @@ Read-only. Opens nothing for writing and touches no file under DATA_ROOT.
 
 Usage:
     python preprocessing/check_pixel_size.py
-    python preprocessing/check_pixel_size.py --step-um 788.8
+    python preprocessing/check_pixel_size.py --step-um 813.4
     python preprocessing/check_pixel_size.py --slice 22 --n-fovs 8 --soma-um 12
     python preprocessing/check_pixel_size.py --only C
     python preprocessing/check_pixel_size.py --only D --tif "C:\\path\\to\\2p_folder"
@@ -261,11 +264,10 @@ def probe_stage_step(filt_neurons, slice_id, step_um):
     rel = step_px / JH302_GRID_STEP_PX
     print(f"    BY95 / JH302 step ratio: {rel:.4f}")
     if abs(rel - 1.0) < 0.02:
-        print("    -> same stitching geometry. 0.32 um/px transfers from JH302,")
-        print("       to the extent JH302's own 0.32 was ever right.")
+        print("    -> same stitching geometry as JH302.")
     else:
-        print("    -> DIFFERENT geometry. 0.32 was confirmed on the JH302 rig and")
-        print("       does not automatically carry to this acquisition.")
+        print("    -> DIFFERENT geometry from JH302: Ben's 2465 px step does not")
+        print("       apply to this acquisition.")
 
     print()
     if step_um:
@@ -361,7 +363,7 @@ def probe_soma_size(hyb_root, channels_root, n_fovs, soma_um):
           f"{q[1] * EXVIVO_UM_PER_PX:.1f} um "
           f"(IQR {q[0] * EXVIVO_UM_PER_PX:.1f} - {q[2] * EXVIVO_UM_PER_PX:.1f} um)")
     print(f"  Cortical somas run ~10-15 um, so the median should land in range.")
-    print(f"  This resolves ~20%: it catches a 2x or 2.83x, not 0.32 vs 0.325.\n")
+    print(f"  This resolves ~20%: it catches a 2x or 2.83x, not 0.32 vs 0.33.\n")
 
     for um in sorted({10.0, float(soma_um), 15.0}):
         print(implied_line(f"if the median soma is {um:g} um", um / q[1]))
@@ -621,7 +623,7 @@ def main():
     print("=" * 72)
     print(f"  BARseq pitch  {EXVIVO_UM_PER_PX} um/px   EXVIVO_UM_PER_PX, "
           f"scope_profiles.py")
-    print(f"                -- hand-entered, no per-dataset knob, UNVERIFIED")
+    print(f"                -- collaborators' acquisition settings, 2026-10-25")
     print(f"  2P pitch      {TARGET_XY_UM_PER_PX:.4f} um/px   SCOPE = {SCOPE!r}")
     print(f"                -- from the stacks' own XResolution tag, 2026-08-30")
     print(f"  DOWNSAMPLE_XY {DOWNSAMPLE_XY:.4f}x")

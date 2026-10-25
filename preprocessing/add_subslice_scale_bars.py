@@ -8,7 +8,7 @@ subslices are already on disk; this reads them, burns the same bars
 somewhere nothing else looks. It stitches nothing -- `filt_neurons.mat`,
 `subslice_definitions.mat` and the raw FOVs are never opened.
 
-Input (written by stitch_subslices.py, step 2, full resolution, 0.32 um/px):
+Input (written by stitch_subslices.py, step 2, full resolution, 0.33 um/px):
 
     <OUTPUT_ROOT>/HYB_subslice_stitched_tif/slice{N}_subslice_{GCAMP,DAPI,MSCARLET}.tif
 
@@ -16,7 +16,7 @@ Output:
 
     <OUTPUT_ROOT>/HYB_subslice_stitched_tif_scalebar/slice{N}_subslice_{CHANNEL}.tif
 
-Each copy is an ImageJ TIFF calibrated at 0.32 um/px, so ImageJ opens it in um.
+Each copy is an ImageJ TIFF calibrated at 0.33 um/px, so ImageJ opens it in um.
 
 The input files are read and never written: the bars are drawn into the array in
 memory and only the copy is saved. `slice{N}_subslice_CELLMASK.h5` is not copied

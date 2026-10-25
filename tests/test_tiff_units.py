@@ -131,8 +131,8 @@ try:
 except ValueError as e:
     raised = 'BLOCK_STACK_SCOPE' in str(e)
 check("a 512 px pitch against the 1024 px block scope raises, naming BLOCK_STACK_SCOPE", raised)
-check("huang_lab resamples BARseq by 3.4375x",
-      close(sp.downsample_xy('huang_lab'), 3.4375))
+check("huang_lab resamples BARseq by 3.3333x (1.1000 / 0.33)",
+      close(sp.downsample_xy('huang_lab'), 10 / 3))
 
 print()
 print("FAILURES:", fails if fails else "none")

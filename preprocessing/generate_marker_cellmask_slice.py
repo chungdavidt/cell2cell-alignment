@@ -17,7 +17,7 @@ Input (stitch_slices.py --downsample, at the 2P pitch):
     <OUTPUT_ROOT>/HYB_slice_stitched_tif_downsampled_micronwise/slice{N}_CELLMASK.h5
 
 plus filt_neurons.mat for positions and counts. The full-resolution set in
-HYB_slice_stitched_tif/ is not read: it is 0.32 um/px, so it shares a grid with
+HYB_slice_stitched_tif/ is not read: it is 0.33 um/px, so it shares a grid with
 nothing else, and a section runs ~279 Mpx.
 
 Output:

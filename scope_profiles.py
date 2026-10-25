@@ -15,7 +15,7 @@ A subject whose ex vivo block was sampled at a different pitch also names
 That declaration is the source of truth for pixel size everywhere:
 
 - preprocessing resamples the BARseq images to the scope's XY pitch
-  (``DOWNSAMPLE_XY = xy_um_per_px / 0.32``)
+  (``DOWNSAMPLE_XY = xy_um_per_px / EXVIVO_UM_PER_PX``)
 - the graph builder stamps ``(z, xy, xy)`` on every 2P node and
   ``(20.0, xy, xy)`` on every BARseq subslice node
 - ``validate_mnn.py`` scores centroid distances in µm with the same pitch
@@ -107,8 +107,11 @@ MAX_PLAUSIBLE_XY_UM_PER_PX = 20.0
 # Physical thickness of a BARseq section, µm. Invariant across datasets.
 SECTION_THICKNESS_UM = 20.0
 
-# Ex vivo BARseq in-plane pixel size, µm/px. Invariant across datasets.
-EXVIVO_UM_PER_PX = 0.32
+# Ex vivo BARseq in-plane pixel size, µm/px: one raw 40x hyb pixel, the frame of
+# filt_neurons.pos40x and of every stitched canvas. filt_neurons.pos is in units
+# of two of these, 0.66 µm. From the collaborators' acquisition settings
+# (2026-10-25). Invariant across datasets.
+EXVIVO_UM_PER_PX = 0.33
 
 
 def resolve_scope_name(name: str) -> str:
@@ -196,7 +199,7 @@ def downsample_xy(scope: str, var_name: str = "SCOPE") -> float:
     """
     BARseq resample factor for `scope`, as a divisor: new = original / factor.
 
-    huang_lab (1.1000) → 3.4375x; li_lab (2.34) → 7.3125x.
+    huang_lab (1.1000) → 3.3333x; li_lab (2.34) → 7.0909x.
     """
     return get_profile(scope, var_name)['xy_um_per_px'] / EXVIVO_UM_PER_PX
 

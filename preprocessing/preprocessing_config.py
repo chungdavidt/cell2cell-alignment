@@ -159,7 +159,7 @@ SCOPE_PROFILE = get_profile(SCOPE)          # raises if blank or unknown
 TARGET_XY_UM_PER_PX = SCOPE_PROFILE['xy_um_per_px']
 
 # Isotropic downsample factor: new_size = original_size / DOWNSAMPLE_XY.
-# huang_lab (1.1000) -> 3.4375x, li_lab (2.34) -> 7.3125x.
+# huang_lab (1.1000) -> 3.3333x, li_lab (2.34) -> 7.0909x.
 DOWNSAMPLE_XY = TARGET_XY_UM_PER_PX / EXVIVO_UM_PER_PX
 
 # =============================================================================

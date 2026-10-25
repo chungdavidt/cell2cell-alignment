@@ -131,7 +131,7 @@ SLOPE_FIT_MIN_ROWS = 3
 # ------------------------------------------------------------------
 
 # Bar lengths in um, stacked in the bottom-left with the longest at the bottom.
-# At EXVIVO_UM_PER_PX (0.32) these are 62, 312 and 781 px, against a canvas over
+# At EXVIVO_UM_PER_PX (0.33) these are 61, 303 and 758 px, against a canvas over
 # 10,000 px wide -- read zoomed in on cells, not with the whole section on
 # screen. Edit freely.
 SCALE_BAR_LENGTHS_UM = (20.0, 100.0, 250.0)
@@ -142,13 +142,13 @@ SCALE_BAR_MARGIN_UM = 60.0
 SCALE_BAR_SPACING_UM = 40.0
 
 # One thickness for every bar, physical like the rest of these. Bars differ in
-# length only. 18 um is 16 px at 1.1 um/px and 56 px at EXVIVO_UM_PER_PX.
+# length only. 18 um is 16 px at 1.1 um/px and 55 px at EXVIVO_UM_PER_PX.
 # Was 6 um until 2026-10-21: 5 px bars were too thin on the 1.1 um/px stacks.
 SCALE_BAR_THICKNESS_UM = 18.0
 
 # Label height as a multiple of the bar thickness, so every label is the same
 # size too, and doubling the thickness doubles the text with it. 6.0 puts it at
-# 96 px against a 16 px bar at 1.1 um/px, 336 px against 56 px at 0.32 um/px.
+# 96 px against a 16 px bar at 1.1 um/px, 330 px against 55 px at 0.33 um/px.
 # Thickness and this were both tripled/divided on 2026-10-21 so the bars got
 # thicker without the text growing past the 90 px it had just been raised to.
 SCALE_BAR_LABEL_SCALE = 6.0

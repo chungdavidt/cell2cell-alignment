@@ -57,14 +57,14 @@ for ii = 1:size(CELLS, 1)
 end
 fn.expmat = sparse(expmat);
 
-UM = 0.64;   % 2 * EXVIVO_UM_PER_PX = 2 * 0.32
+UM = 0.66;   % 2 * EXVIVO_UM_PER_PX = 2 * 0.33
 % Bounding boxes over ALL cells of a slice, pos units:
 %   slice 1: x 100..2100 (c5 included), y 200..400  -> centre (1100, 300)
 %   slice 2: x 5000..5600,              y 5000..6000 -> centre (5300, 5500)
 %   slice 3: x 9000..9400,              y 100..900   -> centre (9200, 500)
-% Widest side: slice 1's x, 2000 pos = 1280 um. Without c5 it would be slice 2's
-% y, 1000 pos = 640 um; with c12 counted it would be ~46000 pos.
-SPAN = 1280;
+% Widest side: slice 1's x, 2000 pos = 1320 um. Without c5 it would be slice 2's
+% y, 1000 pos = 660 um; with c12 counted it would be ~46000 pos.
+SPAN = 1320;
 CENTRE = [1100 300; 5300 5500; 9200 500] * UM;
 
 base = struct();
@@ -148,15 +148,15 @@ n_fail = report(fig_ok, '2b. the saved .fig of slice 1 has that window in all 8 
     detail, n_fail);
 spans = cellfun(@(x) x.span_um, runs);
 n_fail = report(all(abs(spans - SPAN) < 1e-9), ...
-    '3a. span is 1280 um: slice 1 widened by the stray cell, the NaN-slice cell ignored', ...
+    '3a. span is 1320 um: slice 1 widened by the stray cell, the NaN-slice cell ignored', ...
     sprintf('spans %s', mat2str(spans)), n_fail);
 n_fail = report(abs(runs{1}.um_per_pos - UM) < 1e-12, ...
-    '3b. um_per_pos read from scope_profiles.py is 0.64', ...
+    '3b. um_per_pos read from scope_profiles.py is 0.66', ...
     sprintf('got %g', runs{1}.um_per_pos), n_fail);
 
 % -- 4. AXIS_SPAN_UM overrides the span, and clipping is counted ------------
 % 0/0, cutoff 0: all five slice-1 cells are on the figure. The window is
-% x 704 +- 50 um; the cells' x are 64, 192, 128, 160, 1344 um, all outside.
+% x 726 +- 50 um; the cells' x are 66, 198, 132, 165, 1386 um, all outside.
 c = base; c.READS_THRESH = 0; c.GENES_THRESH = 0; c.AXIS_SPAN_UM = 100;
 c.ANALYSIS_ROOT_OVERRIDE = fullfile(root, 'override');
 warning('off', 'plot_marker_slices:clipped');
@@ -195,7 +195,7 @@ n_fail = report(isequal(cd(:)', [0 0 1 3 15]), ...
     sprintf('CData %s', mat2str(cd(:)')), n_fail);
 n_fail = report(numel(xd) == 5 && max(abs(xd(:)' - [100 2100 250 300 200] * UM)) < 1e-9 && ...
     max(abs(yd(:)' - [200 200 300 250 400] * UM)) < 1e-9, ...
-    '8. plotted x/y are pos * 0.64, in the draw order', ...
+    '8. plotted x/y are pos * 0.66, in the draw order', ...
     sprintf('x %s', mat2str(xd(:)')), n_fail);
 % GCaMP 20/5 ge3, slice 2: c6 GCaMP 0, c7 GCaMP 4 -> 1 point, CData 4.
 [xd, ~, cd] = read_points(fullfile(runs{6}.out_dir, 'slice_002.fig'));

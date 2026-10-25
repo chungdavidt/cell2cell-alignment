@@ -36,7 +36,7 @@ script that wrote that canvas stored the pitch in its metadata:
     subslice   HYB_DOWNSAMPLED_DIR/slice{N}_subslice_CELLMASK.h5   TARGET_XY_UM_PER_PX  (step 3)
     slice      HYB_SLICE_DOWNSAMPLED_DIR/slice{N}_CELLMASK.h5      um_per_px  (stitch_slices.py --downsample)
 
-The bars use that recorded value, per slice: 0.32 um/px x DOWNSAMPLE_XY, i.e.
+The bars use that recorded value, per slice: 0.33 um/px x DOWNSAMPLE_XY, i.e.
 SCOPE's pitch. It raises if the record is missing, if it disagrees with this
 config's TARGET_XY_UM_PER_PX, if the ALIGN tif's shape is not that canvas's, or
 if the render folder is not under this config's OUTPUT_ROOT -- each means

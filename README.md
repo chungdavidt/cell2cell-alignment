@@ -144,7 +144,7 @@ What reads it:
 
 | Consumer | Uses |
 |---|---|
-| Preprocessing | `DOWNSAMPLE_XY = xy / 0.32` — the BARseq resample factor (1.1000 → 3.4375×, 2.34 → 7.3125×) |
+| Preprocessing | `DOWNSAMPLE_XY = xy / 0.33` — the BARseq resample factor (1.1000 → 3.3333×, 2.34 → 7.0909×) |
 | Graph builder | `(z, xy, xy)` on every 2P node, `(20.0, xy, xy)` on every BARseq subslice node |
 | `validate_mnn.py` | µm scale for MNN centroid distances |
 

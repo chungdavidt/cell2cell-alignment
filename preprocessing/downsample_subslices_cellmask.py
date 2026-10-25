@@ -11,11 +11,11 @@ separate X and Y factors it used replaced by one.
 Sections are cut in the 2P imaging plane, so both BARseq in-plane axes map to 2P
 XY and ONE isotropic factor covers both:
 
-    DOWNSAMPLE_XY = TARGET_XY_UM_PER_PX / 0.32
+    DOWNSAMPLE_XY = TARGET_XY_UM_PER_PX / EXVIVO_UM_PER_PX   (0.33)
 
 TARGET_XY_UM_PER_PX is the XY pitch of the scope named as SCOPE in
 local_config.py, looked up in scope_profiles.py. For huang_lab (1.1000 um/px) the
-factor is 3.4375x; for li_lab (2.34) it is 7.3125x.
+factor is 3.3333x; for li_lab (2.34) it is 7.0909x.
 
 Usage:
     python downsample_subslices_cellmask.py
@@ -38,7 +38,7 @@ Output:
         * downsample_metadata.mat (scale factor, timestamps)
 
 Downsampling:
-    - Both dimensions: DOWNSAMPLE_XY (0.32 -> TARGET_XY_UM_PER_PX um/px)
+    - Both dimensions: DOWNSAMPLE_XY (0.33 -> TARGET_XY_UM_PER_PX um/px)
     - Method: Bilinear for images, Nearest-neighbor for cellmask
 """
 

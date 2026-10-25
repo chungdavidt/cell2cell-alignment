@@ -177,7 +177,7 @@ GRAPH_PATH = ""
 # SCOPE — the microscope that acquired this subject's data.
 #
 # One declaration, and it is the source of truth for pixel size everywhere:
-#   preprocessing   BARseq resample factor (xy_um_per_px / 0.32)
+#   preprocessing   BARseq resample factor (xy_um_per_px / 0.33)
 #   graph builder   spacing on every 2P node and every BARseq subslice node
 #   validate_mnn    µm scale for centroid distances
 #
