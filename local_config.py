@@ -35,11 +35,11 @@ ANALYSIS_ROOT = r"D:\lab_local\projects\cell_type\analysis\BY108"
 # View XML for 16x zoom 2 at 512 px (in vivo), halved for the 1024 px block.
 # by84/by94/by89 named "huang_lab_566um", deleted 2026-08-30 — re-derive
 # their pitch from their own XResolution tags before running them again.
-SCOPE = "huang_lab"
+SCOPE = "huang_lab_bruker_512px"
 
 # The ex vivo block's scope when it was sampled at another pitch; applies to
 # the block_stack_* nodes only. Blank = SCOPE. BARseq is resampled to SCOPE's.
-BLOCK_STACK_SCOPE = ""
+BLOCK_STACK_SCOPE = "huang_lab_bruker_1024px"
 
 # ---------------------------------------------------------------------
 # Per-brain thresholds
