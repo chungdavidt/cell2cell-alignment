@@ -282,8 +282,10 @@ def describe_export(confocal_dir: Path, channel_name: str, read_pixels: bool,
             continue
         files = sorted(p for p in tile_dir.iterdir() if p.is_file())
         parsed = [(p, TILE_RE.match(p.name)) for p in files]
-        good = [(p, m) for p, m in parsed if m and m.group("sec") == name]
-        bad = [p.name for p, m in parsed if not (m and m.group("sec") == name)]
+        good = [(p, m) for p, m in parsed if m]
+        bad = [p.name for p, m in parsed if not m and not p.name.endswith("_metadata.xml")]
+        prefixes = sorted({m.group("sec") for _, m in good})
+        rec["prefixes"] = prefixes
         cs = Counter(int(m.group("c")) for _, m in good)
         zs = sorted({int(m.group("z")) for _, m in good})
         ms = sorted({int(m.group("m")) for _, m in good})
@@ -293,8 +295,10 @@ def describe_export(confocal_dir: Path, channel_name: str, read_pixels: bool,
             h = max(int(m.group("y")) + int(m.group("h")) for _, m in good)
             rec["canvas_xy"] = (w, h)
         if verbose:
-            print(f"      tiles: {len(files)} files, {len(good)} match TILE_RE; "
+            print(f"      tiles: {len(files)} files, {len(good)} match TILE_RE (prefix {prefixes}); "
                   f"c {dict(cs)}, z {zs}, {len(ms)} mosaic positions")
+            if len(prefixes) > 1:
+                print(f"{FLAG}more than one acquisition prefix in one tiles folder")
             if bad:
                 print(f"{FLAG}{len(bad)} tile names do not match TILE_RE, e.g. {bad[:3]}")
             if good:

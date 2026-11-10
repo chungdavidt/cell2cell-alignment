@@ -170,8 +170,9 @@ CONFOCAL_DIR = r"D:\lab_local\projects\cell_type\data\20261006 BY108\BY108 confo
 # ZEN XML Scaling is checked against it. Downsampled to SCOPE's pitch.
 CONFOCAL_SCOPE = "zeiss_lsm_zoom0.6_1024px"
 
-# ZEN channel name to project: the 2P red counterpart.
-CONFOCAL_CHANNEL = "tdTom-T2"
+# ZEN channel name to project: the 2P red counterpart. "tdTom" in the
+# "redo full slice" export; "tdTom-T2" in the 2026-10 export.
+CONFOCAL_CHANNEL = "tdTom"
 
 # Extra downsample of the confocal images fed to the graph, on top of
 # SCOPE / CONFOCAL_SCOPE (1.063 for BY108). Labels stay as they are. BY108:

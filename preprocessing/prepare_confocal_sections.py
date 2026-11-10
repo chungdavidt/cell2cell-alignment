@@ -7,13 +7,18 @@ Input is a ZEN TIFF export (local_config.CONFOCAL_DIR), one per section:
     S1.1.tiff                    stitched RGB, every channel merged (not used)
     S1.1.tiff_metadata.xml       ZEN metadata: Scaling, channels, image size
     S1.1.tiff_files/             tiles, one per z plane, channel and mosaic tile:
-        S1.1_h0s0t0z{z}c{c}x{x0}-{w}y{y0}-{h}m{m}.tiff
+        {prefix}_h0s0t0z{z}c{c}x{x0}-{w}y{y0}-{h}m{m}.tiff
+
+The tile prefix is the acquisition name, not the section name: "S1.1" in the
+2026-10 export, "BY108.1" ... "BY108.9" (and "108.3") in the 2026-11 re-export
+("redo full slice"). A tile belongs to the sub-stack whose tiles folder holds
+it; one folder must hold one prefix.
 
 The stitched S{n}.tiff merges the channels into one RGB in their display
 colours (tdTomato #FF4100 and DAPI #FF00FF both feed R), so it cannot give one
 channel back; a Fiji "Split Channels" red plane of it is tdTomato + DAPI. The
 tiles hold one channel each, written as grayscale RGB (R = G = B; measured on
-S1.1 with --inspect, 2026-10-14). Per sub-stack:
+S1.1 with --inspect, 2026-10-14); a single-plane tile is taken as is. Per sub-stack:
 
   1. channel   CONFOCAL_CHANNEL is looked up by name among the image's channels
                in the XML; its index is the tiles' c{c}. Tiles must be grayscale
@@ -143,15 +148,25 @@ def discover_sections(confocal_dir: Path) -> list:
 
 
 def section_tiles(tile_dir: Path, section: str, channel: int) -> dict:
-    """{z: [(path, x0, y0, w, h, m)]} for one channel of one section."""
+    """{z: [(path, x0, y0, w, h, m)]} for one channel of one section.
+
+    Membership is the folder; the filename prefix must be one value per folder.
+    """
     by_z = defaultdict(list)
+    prefixes = set()
     for p in tile_dir.iterdir():
         m = TILE_RE.match(p.name)
-        if not m or m.group("sec") != section or int(m.group("c")) != channel:
+        if not m:
+            continue
+        prefixes.add(m.group("sec"))
+        if int(m.group("c")) != channel:
             continue
         by_z[int(m.group("z"))].append(
             (p, int(m.group("x")), int(m.group("y")),
              int(m.group("w")), int(m.group("h")), int(m.group("m"))))
+    if len(prefixes) > 1:
+        raise ValueError(f"{section}: tiles folder holds more than one acquisition "
+                         f"prefix {sorted(prefixes)}: {tile_dir}")
     return dict(sorted(by_z.items()))
 
 
@@ -170,8 +185,8 @@ def read_tiff_as_is(path: Path):
         return np.asarray(im)
 
 
-def read_rgb_tile(path: Path):
-    """A tile as an (H, W, 3) array."""
+def read_tile(path: Path):
+    """A tile as an (H, W, 3) RGB array or an (H, W) single-plane array."""
     import numpy as np
     a = read_tiff_as_is(path)
     if a.ndim == 3 and a.shape[-1] == 4:
@@ -182,24 +197,28 @@ def read_rgb_tile(path: Path):
 def build_projection(tiles_by_z: dict, canvas_hw: tuple):
     """Stitch each z plane from its tiles (max in overlaps), then max over z.
 
-    Returns (image, grayscale error): the intensity is R; the error is the
-    largest per-tile mean |G - R| or |B - R|, ~0 for a grayscale tile.
+    Returns (image, grayscale error): the intensity is R of an RGB tile, or
+    the plane of a single-plane tile; the error is the largest per-tile mean
+    |G - R| or |B - R| over RGB tiles, ~0 for grayscale, 0 with none.
     """
     import numpy as np
     canvas = None
     errors = []
     for z, tiles in tiles_by_z.items():
         for path, x0, y0, w, h, _ in tiles:
-            rgb = read_rgb_tile(path)
-            if rgb.ndim != 3 or rgb.shape[-1] != 3:
-                raise ValueError(f"{path.name}: expected (H, W, 3) RGB, got {rgb.shape}")
-            if rgb.shape[:2] != (h, w):
-                raise ValueError(f"{path.name}: shape {rgb.shape[:2]} but name says {(h, w)}")
-            val = rgb[..., 0]
+            tile = read_tile(path)
+            if not (tile.ndim == 2 or (tile.ndim == 3 and tile.shape[-1] == 3)):
+                raise ValueError(f"{path.name}: expected (H, W) or (H, W, 3), got {tile.shape}")
+            if tile.shape[:2] != (h, w):
+                raise ValueError(f"{path.name}: shape {tile.shape[:2]} but name says {(h, w)}")
+            val = tile if tile.ndim == 2 else tile[..., 0]
             if canvas is None:
                 canvas = np.zeros(canvas_hw, dtype=val.dtype)
-            r = val.astype(np.int16)
-            errors += [np.abs(rgb[..., i].astype(np.int16) - r).mean() for i in (1, 2)]
+            elif val.dtype != canvas.dtype:
+                raise ValueError(f"{path.name}: dtype {val.dtype}, earlier tiles {canvas.dtype}")
+            if tile.ndim == 3:
+                r = val.astype(np.int32)
+                errors += [np.abs(tile[..., i].astype(np.int32) - r).mean() for i in (1, 2)]
             region = canvas[y0:y0 + h, x0:x0 + w]
             np.maximum(region, val, out=region)
     return canvas, (max(errors) if errors else 0.0)
@@ -215,7 +234,7 @@ def inspect_section(name: str, tile_dir: Path, confocal_dir: Path) -> None:
     files = []
     for z in (0, 1):
         for c in (0, 1):
-            hit = sorted(p for p in tile_dir.glob(f"{name}_h0s0t0z{z}c{c}*m0.tif*")
+            hit = sorted(p for p in tile_dir.glob(f"*_h0s0t0z{z}c{c}*m0.tif*")
                          if p.suffix.lower() in (".tif", ".tiff"))
             files += hit[:1]
     files += [confocal_dir / f"{name}.tiff"]
@@ -311,6 +330,15 @@ def main():
     if args.dry_run:
         print("DRY RUN -- no pixels read, nothing written")
 
+    sidecar = out_dir / "confocal_sections.json"
+    if sidecar.exists():
+        prior_dir = json.loads(sidecar.read_text()).get("confocal_dir")
+        if prior_dir != str(confocal_dir):
+            (print if args.dry_run else sys.exit)(f"{out_dir} holds outputs from another export:\n  {prior_dir}\n"
+                     f"CONFOCAL_DIR is now\n  {confocal_dir}\n"
+                     f"Move that folder to quarantine/ (and remove its nodes from the graph) "
+                     f"before writing this export's images.")
+
     wanted = set(args.section) if args.section else None
     records = []
     for slide, n, name, xml, tile_dir in sections:
@@ -341,8 +369,9 @@ def main():
         z_um = meta["scaling_um"].get("Z")
         out_path = out_dir / f"slice{slide}_confocal_{label}_part{n}.tif"
         print(f"\n  {name} -> {out_path.stem}: c{idx} {channel_name}")
+        z_text = f"{z_um:g} um apart" if z_um is not None else "no Z scaling in XML"
         print(f"    XML pitch {xy_meta:.5f} um/px, z planes {sorted(tiles_by_z)} "
-              f"({z_um:g} um apart), tiles per z {tiles_per_z}")
+              f"({z_text}), tiles per z {tiles_per_z}")
         print(f"    canvas {canvas_h} x {canvas_w} -> {out_hw[0]} x {out_hw[1]}  ({out_path.name})")
 
         record = {
@@ -383,7 +412,6 @@ def main():
 
     if args.dry_run or not records:
         return
-    sidecar = out_dir / "confocal_sections.json"
     previous = json.loads(sidecar.read_text()).get("sections", {}) if sidecar.exists() else {}
     previous.update({r["source"]: r for r in records})
     sidecar.write_text(json.dumps({
