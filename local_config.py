@@ -22,7 +22,7 @@ SUBSLICE_DIR's cutoff. Nothing in the notebook or the graph builder changes.
 # One root for every derived output — preprocessing/, alignment/, cellpose/,
 # plus orientation.json at its top level. Its folder name is the subject label
 # ("BY108"), which is what names the graph .db.
-ANALYSIS_ROOT = r"D:\lab_local\projects\cell_type\analysis\BY95"
+ANALYSIS_ROOT = r"D:\lab_local\projects\cell_type\analysis\BY108"
 
 # Microscope that acquired this subject's data; profiles in scope_profiles.py.
 # Source of truth for every pixel size — the BARseq resample factor, node
@@ -79,7 +79,7 @@ ALIGN_MIN_ROLONIES = 3
 # Blank = no BARseq for this subject yet: preprocessing will not run, and the
 # graph builder skips SUBSLICE_DIR and SUBSLICE_RAW_CHANNELS and builds from the
 # 2P paths alone.
-DATA_ROOT = r"D:\lab_local\projects\cell_type\data\050526 BY95\allen_transcriptomics\BY95"
+DATA_ROOT = r""
 
 # Per-FOV raw directory (the MAX_Pos*_*_* folders).
 # Blank -> auto-detect; BY95 resolves to <DATA_ROOT>/hyb_raw_files.
@@ -96,7 +96,7 @@ HYB_ROOT = r""
 OUTPUT_ROOT = r""
 
 # Blank -> <ANALYSIS_ROOT>/alignment/BY95_graph.db.
-GRAPH_PATH = r""
+GRAPH_PATH = r"D:\lab_local\projects\cell_type\analysis\BY108\alignment\BY108_graph.db"
 
 # ---------------------------------------------------------------------
 # What the graph ingests
@@ -151,12 +151,12 @@ SUBSLICE_RAW_CHANNELS = ["MSCARLET"]
 
 
 # Ex-vivo block, 2P volume of the tissue before slicing.
-BLOCK_STACK_PATH_RED = r"D:\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo red.tif"
-BLOCK_STACK_PATH_GREEN = r"D:\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo green.tif"
+BLOCK_STACK_PATH_RED = r"D:\lab_local\projects\cell_type\data\20261006 BY108\BY108 exvivo red X mirrored.tif"
+BLOCK_STACK_PATH_GREEN = r"D:\lab_local\projects\cell_type\data\20261006 BY108\BY108 exvivo green.tif"
 
 # In-vivo 2P stack.
-INVIVO_PATH_RED = r"D:\lab_local\projects\cell_type\data\050526 BY95\BY95 invivo run two crosstalk removed red.tif"
-INVIVO_PATH_GREEN = r"D:\lab_local\projects\cell_type\data\050526 BY95\BY95 invivo run two crosstalk removed green.tif"
+INVIVO_PATH_RED = r"D:\lab_local\projects\cell_type\data\20261006 BY108\BY108 invivo red.tif"
+INVIVO_PATH_GREEN = r"D:\lab_local\projects\cell_type\data\20261006 BY108\BY108 invivo green.tif"
 
 # ---------------------------------------------------------------------
 # Confocal sections (preprocessing/prepare_confocal_sections.py)
@@ -164,7 +164,7 @@ INVIVO_PATH_GREEN = r"D:\lab_local\projects\cell_type\data\050526 BY95\BY95 invi
 
 # ZEN TIFF export: S{slide}.{n}.tiff_metadata.xml + S{slide}.{n}.tiff_files/ per
 # section. Read-only. Blank = no confocal sections for this subject.
-CONFOCAL_DIR = r""
+CONFOCAL_DIR = r"D:\lab_local\projects\cell_type\data\20261006 BY108\BY108 confocal\redo full slice"
 
 # Pitch of the confocal export, a profile in scope_profiles.py; each section's
 # ZEN XML Scaling is checked against it. Downsampled to SCOPE's pitch.
