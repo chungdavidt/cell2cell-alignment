@@ -14,6 +14,12 @@ For every 1-plane node (a section) with a path to a 2P volume:
            tilt, fold (depth off the best flat plane) and nonlinear part (off the best affine),
            with a coarse map of the fold
   inverse  target -> section -> target and section -> target -> section round trips
+  domain   each nonlinear stage on the section -> viewer route that runs castalign's fast direction
+           (invert False) asserts every input point lies inside its triangulation (clicks + their
+           hull scaled x1000 for V, x100 for N): base.py "Points outside domain". Fed the 8 box
+           corners the graph viewer transforms first (origin_and_maxpos, 2-plane section) and the
+           section sheet; reports the click spread (one tiny singular value = clicks on a plane for
+           V, on a line for N) and the points left outside
   compose  hop-by-hop vs g.get_transform(section, viewer frame)
   render   a dot drawn on the section at each section click and at its centre, resampled with
            castalign's transform_image as the graph viewer cell does (2-plane path); its
@@ -45,6 +51,7 @@ for _p in (str(_ROOT), str(_HERE)):
         sys.path.insert(0, _p)
 
 import numpy as np
+import scipy.spatial
 import castalign as ca
 import castalign.utils as ca_utils
 
@@ -223,6 +230,60 @@ def roundtrip_report(fwd, inv, target_shape, sec_shape):
         print(f"    section -> target -> section max error {e2:.2e} vox")
     except Exception as e:
         print(f"    section -> target -> section failed: {type(e).__name__}: {e}")
+
+
+def flat_stages(t):
+    """Every leaf stage of t in application order (nested `a + b` compositions expanded)."""
+    if hasattr(t, "b"):
+        return flat_stages(t.pretransform()) + flat_stages(t.b)
+    return [t]
+
+
+def domain_report(label, t, sec_shape):
+    """Replay castalign's fast-direction containment test for every nonlinear stage of t."""
+    H, W = sec_shape[1], sec_shape[2]
+    corners = np.array([[z, y, x] for z in (0, 2) for y in (0, H) for x in (0, W)], dtype=float)
+    P = np.concatenate([corners, sheet_points(sec_shape)])
+    n_c = len(corners)
+    Q = P
+    found = False
+    for i, st in enumerate(flat_stages(t)):
+        if is_nonlinear(st) and hasattr(st, "all_points_start"):
+            found = True
+            flat = hasattr(st, "B")
+            inv = bool(st.params.get("invert"))
+            clicks = np.atleast_2d(np.asarray(st.points_start, dtype=float))
+            C = clicks @ st.B if flat else clicks
+            sv = np.linalg.svd(C - C.mean(axis=0), compute_uv=False)
+            print(f"    {label} stage {i}: {type(st).__name__}, {len(clicks)} pairs, invert {inv}")
+            print(f"      input-side clicks z {clicks[:, 0].min():.1f}..{clicks[:, 0].max():.1f}"
+                  f"  y {clicks[:, 1].min():.0f}..{clicks[:, 1].max():.0f}  x {clicks[:, 2].min():.0f}..{clicks[:, 2].max():.0f}")
+            print(f"      click spread, singular values{' in the projected plane' if flat else ' (z,y,x)'}: {fmt(sv, 2)}"
+                  + (f"   normal z,y,x {fmt(st.normal, 3)}" if flat else ""))
+            if inv:
+                print("      invert True: slow path, this direction has no 'Points outside domain' assert")
+            else:
+                tri = np.asarray(st.all_points_start, dtype=float)
+                try:
+                    if flat:
+                        out = scipy.spatial.Delaunay(tri @ st.B).find_simplex(Q @ st.B) < 0
+                    else:
+                        rns = np.random.RandomState(0).randn(*tri.shape) * .0001
+                        out = scipy.spatial.Delaunay(tri + rns).find_simplex(Q) < 0
+                except Exception as e:
+                    print(f"      containment test failed: {type(e).__name__}: {e}")
+                    return
+                print(f"      outside its domain: {int(out[:n_c].sum())}/{n_c} box corners, "
+                      f"{int(out[n_c:].sum())}/{len(P) - n_c} sheet points")
+                for k in np.flatnonzero(out[:n_c]):
+                    print(f"        corner {fmt(P[k], 0)} enters this stage at {fmt(Q[k])}")
+        try:
+            Q = np.asarray(st.transform(Q), dtype=float)
+        except Exception as e:
+            print(f"    {label} stage {i} {type(st).__name__}: transform failed: {type(e).__name__}: {e}")
+            return
+    if not found:
+        print(f"    {label}: no nonlinear stage")
 
 
 def compose_report(g, s, viewer, sec_shape):
@@ -430,11 +491,20 @@ def main():
         print(f"\n  [inverse]")
         roundtrip_report(fwd, inv, shapes[target], sec_shape)
 
-        if not g.has_transform(s, viewer):
+        print(f"\n  [domain]")
+        routed = g.has_transform(s, viewer)
+        domain_report(f"{s} -> {viewer if routed else target}",
+                      g.get_transform(s, viewer) if routed else inv, sec_shape)
+
+        if not routed:
             print(f"\n  no route from {s} to {viewer}; compose and render skipped")
             continue
         print(f"\n  [compose] {s} -> {viewer}")
-        t_view = compose_report(g, s, viewer, sec_shape)
+        try:
+            t_view = compose_report(g, s, viewer, sec_shape)
+        except Exception as e:
+            print(f"    compose failed: {type(e).__name__}: {e}; render skipped")
+            continue
 
         if not args.no_render:
             print(f"\n  [render] into {viewer}")
