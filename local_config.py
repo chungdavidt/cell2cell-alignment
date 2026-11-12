@@ -151,7 +151,7 @@ SUBSLICE_RAW_CHANNELS = ["MSCARLET"]
 
 
 # Ex-vivo block, 2P volume of the tissue before slicing.
-BLOCK_STACK_PATH_RED = r"D:\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo red.tif"
+BLOCK_STACK_PATH_RED = r"D:\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo red x flipped and rotated.tif"
 BLOCK_STACK_PATH_GREEN = r"D:\lab_local\projects\cell_type\data\050526 BY95\by95 exvivo green.tif"
 
 # In-vivo 2P stack.
